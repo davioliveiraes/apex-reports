@@ -1,0 +1,366 @@
+{% load static %}<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Apex — Relatórios de Tráfego Pago{% endblock %}</title>
+<style>
+  :root{
+    /* Faz o navegador desenhar barra de rolagem, seletores e demais controles
+       nativos no tema escuro — sem isso a barra do sistema sai clara sobre o
+       fundo preto. Padrão CSS, dispensa ::-webkit-scrollbar. */
+    color-scheme:dark;
+
+    /* escala de superfícies (preto → elevado) */
+    --ink:#0A0A0C;
+    --surface:#141518;
+    --surface-2:#1C1E22;
+    --line:#2A2D33;
+    --line-strong:#3A3E45;
+    /* texto */
+    --silver:#C7CBD1;
+    --silver-dim:#9AA0A8;
+    --white:#F5F6F7;
+    /* vermelho — só estado/ação */
+    --red:#D8232A;
+    --red-deep:#9B1C21;
+    --red-tint:#17110F;   /* superfície selecionada, quase imperceptível */
+
+    --sans:system-ui,"Segoe UI",Inter,Roboto,Arial,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","JetBrains Mono","SF Mono",Consolas,"DejaVu Sans Mono",monospace;
+
+    --col:820px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--ink);
+    color:var(--silver);
+    font:15px/1.55 var(--sans);
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* eyebrow / rótulo de instrumento — voz mono, usada com restrição */
+  .eyebrow{
+    font:600 11px/1.4 var(--mono);
+    text-transform:uppercase;letter-spacing:.16em;color:var(--silver-dim);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Cabeçalho                                                          */
+  /* ------------------------------------------------------------------ */
+  .topo{
+    position:relative;background:var(--ink);
+    border-bottom:1px solid var(--line);
+  }
+  /* tira de ticks sob o cabeçalho — vocabulário de régua, cor de linha */
+  .topo::after{
+    content:"";position:absolute;left:0;right:0;bottom:-1px;height:7px;
+    background:repeating-linear-gradient(90deg,
+      var(--line-strong) 0 1px, transparent 1px 9px);
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);
+            mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);
+    pointer-events:none;
+  }
+  .topo-inner{
+    max-width:var(--col);margin:0 auto;
+    display:flex;align-items:center;gap:14px;padding:16px 24px;
+  }
+  .topo img{width:44px;height:44px;border-radius:5px}
+  .marca{
+    font:800 20px/1 var(--sans);letter-spacing:.14em;
+    color:var(--white);text-transform:uppercase;
+  }
+  .marca span{color:var(--red)}
+  .marca-sub{margin-top:5px;font:600 11px/1 var(--mono);
+    letter-spacing:.15em;text-transform:uppercase;color:var(--silver-dim)}
+
+  main{max-width:var(--col);margin:0 auto;padding:34px 24px 40px}
+
+  /* ------------------------------------------------------------------ */
+  /* Régua de etapas — ELEMENTO ASSINATURA                              */
+  /* Estações nas pontas; ticks cor de linha; segmento atingido = vermelho */
+  /* ------------------------------------------------------------------ */
+  .etapas{
+    position:relative;display:grid;grid-template-columns:1fr 1fr;
+    margin-bottom:30px;
+  }
+  .etapas span{
+    position:relative;padding-top:26px;
+    font:600 11px/1.3 var(--mono);text-transform:uppercase;letter-spacing:.14em;
+    color:var(--silver-dim);
+  }
+  .etapas span:first-child{justify-self:start;text-align:left}
+  .etapas span:last-child{justify-self:end;text-align:right}
+  .etapas span.ativa{color:var(--white)}
+  /* trilho base — ticks de régua */
+  .etapas::before{
+    content:"";position:absolute;top:9px;left:7px;right:7px;height:2px;
+    background:repeating-linear-gradient(90deg,
+      var(--line-strong) 0 2px, transparent 2px 7px);
+  }
+  /* segmento atingido (progresso) — só vermelho quando a etapa final está ativa */
+  .etapas::after{
+    content:"";position:absolute;top:9px;left:7px;right:7px;height:2px;
+    background:var(--red);transform:scaleX(0);transform-origin:left;
+    transition:transform .35s ease;
+  }
+  .etapas:has(span:last-child.ativa)::after{transform:scaleX(1)}
+  /* estações (pontos) */
+  .etapas span::before{
+    content:"";position:absolute;top:3px;width:13px;height:13px;border-radius:50%;
+    border:2px solid var(--line-strong);background:var(--ink);
+  }
+  .etapas span:first-child::before{left:0}
+  .etapas span:last-child::before{right:0}
+  /* atingida = atual ou anterior à atual */
+  .etapas span.ativa::before,
+  .etapas span:has(~ .ativa)::before{border-color:var(--red);background:var(--red)}
+  .etapas span.ativa::before{box-shadow:0 0 0 4px rgba(216,35,42,.16)}
+
+  h1{font:700 27px/1.2 var(--sans);letter-spacing:-.01em;color:var(--white);margin-bottom:6px}
+  .sub{color:var(--silver-dim);max-width:60ch;margin-bottom:26px}
+
+  /* ------------------------------------------------------------------ */
+  /* Cartão                                                             */
+  /* ------------------------------------------------------------------ */
+  .cartao{
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:3px;padding:26px;
+    box-shadow:0 1px 0 rgba(255,255,255,.02) inset, 0 12px 32px -20px #000;
+  }
+
+  /* rótulo de seção do formulário = eyebrow com índice de instrumento */
+  label{display:block;margin:22px 0 8px;
+    font:600 11px/1.4 var(--mono);text-transform:uppercase;
+    letter-spacing:.16em;color:var(--silver-dim)}
+  .cartao form > label:first-of-type,
+  .cartao form > div:first-child > label{margin-top:0}
+  .rot-idx{color:var(--red);margin-right:8px}
+
+  input[type=text],textarea,select{
+    width:100%;background:var(--surface-2);border:1px solid var(--line);
+    color:var(--white);padding:11px 13px;font:15px/1.5 var(--sans);border-radius:3px;
+  }
+  input[type=text]::placeholder,textarea::placeholder{color:var(--silver-dim)}
+  input[type=text]:focus-visible,textarea:focus-visible,select:focus-visible{
+    outline:2px solid var(--red);outline-offset:1px;border-color:var(--red)}
+  /* seta própria: o select nativo em dark herda o triângulo claro do SO */
+  select{
+    appearance:none;cursor:pointer;padding-right:34px;
+    background-image:linear-gradient(45deg,transparent 50%,var(--silver-dim) 50%),
+                     linear-gradient(135deg,var(--silver-dim) 50%,transparent 50%);
+    background-position:calc(100% - 18px) 21px,calc(100% - 13px) 21px;
+    background-size:5px 5px,5px 5px;background-repeat:no-repeat;
+  }
+  select optgroup{background:var(--surface);color:var(--silver-dim);font-style:normal}
+  select option{background:var(--surface-2);color:var(--white)}
+  textarea{resize:vertical;min-height:120px}
+  .ajuda{font:13px/1.5 var(--sans);color:var(--silver-dim);margin-top:6px}
+
+  /* ------------------------------------------------------------------ */
+  /* Cards de modo — 4 iguais (2×2), seleção inequívoca, navegável por teclado */
+  /* ------------------------------------------------------------------ */
+  .modos{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:0}
+  .modo-card{
+    position:relative;display:flex;flex-direction:column;gap:7px;
+    background:var(--surface-2);border:1px solid var(--line);border-radius:3px;
+    padding:15px 15px 15px 17px;cursor:pointer;margin:0;
+    text-transform:none;letter-spacing:normal;
+    transition:border-color .12s,background .12s;
+  }
+  .modo-card input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+  .modo-top{display:flex;align-items:center;gap:9px}
+  .modo-marca{flex-shrink:0;width:14px;height:14px;border-radius:50%;
+    border:2px solid var(--line-strong);background:var(--ink);transition:border-color .12s}
+  .modo-card strong{font:700 14px/1.2 var(--sans);color:var(--white)}
+  .modo-desc{font:12.5px/1.45 var(--sans);color:var(--silver-dim)}
+  .modo-card:hover{border-color:var(--silver-dim)}
+  .modo-card:has(input:checked){border-color:var(--red);background:var(--red-tint)}
+  .modo-card:has(input:checked)::before{
+    content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+    background:var(--red);border-radius:3px 0 0 3px}
+  .modo-card:has(input:checked) .modo-marca{
+    border-color:var(--red);box-shadow:inset 0 0 0 3px var(--ink),inset 0 0 0 7px var(--red)}
+  .modo-card:has(input:focus-visible){outline:2px solid var(--red);outline-offset:2px}
+
+  /* ------------------------------------------------------------------ */
+  /* Dropzone + lista de anexos como linhas de planilha                 */
+  /* ------------------------------------------------------------------ */
+  .dropzone{
+    margin-top:0;border:1.5px dashed var(--line-strong);background:var(--surface-2);
+    border-radius:4px;padding:30px 20px;text-align:center;cursor:pointer;
+    display:flex;flex-direction:column;align-items:center;gap:10px;
+    transition:border-color .12s,background .12s;
+  }
+  .dropzone:hover,.dropzone.arrastando{border-color:var(--red);background:var(--red-tint)}
+  .dropzone:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+  .dropzone svg{width:26px;height:26px;color:var(--silver-dim)}
+  .dropzone.arrastando svg,.dropzone:hover svg{color:var(--red)}
+  .dropzone-txt{font:14px/1.5 var(--sans);color:var(--silver)}
+  .dropzone-txt strong{color:var(--white);font-weight:700}
+  .dropzone-meta{font:600 10.5px/1 var(--mono);letter-spacing:.14em;
+    text-transform:uppercase;color:var(--silver-dim)}
+  .dropzone input{display:none}
+
+  .lista-arquivos{list-style:none;margin-top:12px}
+  .lista-arquivos:empty{margin:0}
+  .lista-arquivos li{
+    display:flex;align-items:center;gap:0;
+    background:var(--surface-2);border:1px solid var(--line);border-top:0;
+    font:13.5px/1 var(--sans);
+  }
+  .lista-arquivos li:first-child{border-top:1px solid var(--line)}
+  .arq-num{flex-shrink:0;align-self:stretch;display:flex;align-items:center;
+    padding:0 11px;border-right:1px solid var(--line);
+    font:600 12px/1 var(--mono);color:var(--silver-dim);
+    font-variant-numeric:tabular-nums;background:rgba(255,255,255,.015)}
+  .arq-nome{flex:1;min-width:0;padding:11px 12px;color:var(--white);
+    font-family:var(--mono);font-size:13px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .arq-tam{flex-shrink:0;padding:0 12px;font:12px/1 var(--mono);
+    color:var(--silver-dim);font-variant-numeric:tabular-nums}
+  .arq-remover{
+    flex-shrink:0;margin:0 8px;background:none;border:1px solid var(--line);
+    color:var(--silver-dim);width:26px;height:26px;line-height:1;cursor:pointer;
+    font-size:15px;border-radius:3px;transition:color .12s,border-color .12s}
+  .arq-remover:hover{color:var(--red);border-color:var(--red)}
+  .arq-remover:focus-visible{outline:2px solid var(--red);outline-offset:1px}
+
+  .contador-arquivos{margin-top:10px;font:600 11px/1.4 var(--mono);
+    letter-spacing:.1em;text-transform:uppercase;color:var(--silver-dim)}
+  .contador-arquivos.excedido{color:var(--red)}
+
+  /* ------------------------------------------------------------------ */
+  /* Ação primária — sem paralelogramo, com glifo de "executar"         */
+  /* ------------------------------------------------------------------ */
+  .botao{
+    display:inline-flex;align-items:center;gap:9px;margin-top:26px;
+    background:var(--red);color:#fff;border:0;cursor:pointer;border-radius:3px;
+    font:700 13px/1 var(--sans);letter-spacing:.06em;text-transform:uppercase;
+    padding:14px 26px;transition:background .12s;
+  }
+  .botao::before{content:"▸";font-size:12px;line-height:1}
+  .botao:hover{background:var(--red-deep)}
+  .botao:focus-visible{outline:2px solid var(--white);outline-offset:2px}
+  .botao:disabled{background:var(--surface-2);color:var(--silver-dim);
+    cursor:not-allowed;border:1px solid var(--line)}
+  .botao.carregando{background:var(--surface-2);color:var(--silver);cursor:progress}
+  .botao.carregando::before{content:"";width:12px;height:12px;border-radius:50%;
+    border:2px solid var(--line-strong);border-top-color:var(--red);
+    animation:girar .7s linear infinite}
+  @keyframes girar{to{transform:rotate(360deg)}}
+  .botao-sec{background:transparent;border:1px solid var(--line);color:var(--silver);
+    text-decoration:none}
+  .botao-sec::before{content:none}
+  .botao-sec:hover{background:var(--surface-2);border-color:var(--silver-dim)}
+
+  /* ------------------------------------------------------------------ */
+  /* Mensagens                                                          */
+  /* ------------------------------------------------------------------ */
+  .erro,.aviso{border-radius:3px;padding:13px 15px;margin-bottom:18px;
+    font:14px/1.5 var(--sans);display:flex;gap:10px}
+  .erro::before,.aviso::before{font:600 11px/1.5 var(--mono);
+    letter-spacing:.12em;text-transform:uppercase;flex-shrink:0}
+  .erro{background:#22100F;border:1px solid var(--red);color:#F3B7BA}
+  .erro::before{content:"erro";color:var(--red)}
+  .aviso{background:#221B0D;border:1px solid #C98A19;color:#F1C878}
+  .aviso::before{content:"atenção";color:#E0A22B}
+  .errorlist{list-style:none;color:#F3B7BA;font:13px/1.5 var(--sans);margin-top:6px}
+
+  /* ------------------------------------------------------------------ */
+  /* Revisão — KPIs, tabelas, seções (números tabulares)                */
+  /* ------------------------------------------------------------------ */
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
+    background:var(--line);border:1px solid var(--line);
+    border-bottom:2px solid var(--line-strong);border-radius:3px;overflow:hidden;margin-bottom:8px}
+  .kpi{background:var(--surface);padding:16px;text-align:center}
+  .kpi small{display:block;font:600 10.5px/1.3 var(--mono);letter-spacing:.14em;
+    text-transform:uppercase;color:var(--silver-dim)}
+  .kpi b{display:block;font:700 22px/1.2 var(--sans);color:var(--white);margin-top:5px;
+    font-variant-numeric:tabular-nums}
+  .metricas{font:13px/1.5 var(--sans);color:var(--silver-dim);text-align:center;margin-bottom:26px}
+
+  table{width:100%;border-collapse:collapse;font:13.5px/1.5 var(--sans);margin:8px 0 4px;
+    font-variant-numeric:tabular-nums}
+  th{background:var(--surface-2);color:var(--white);text-align:left;
+    padding:10px;border-bottom:2px solid var(--line-strong);
+    font:600 11px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+  td{padding:10px;border-bottom:1px solid var(--line)}
+  tr.melhor td:first-child{color:#34D399;font-weight:700}
+  .legenda{font:12px/1.5 var(--sans);color:var(--silver-dim);font-style:italic;margin-bottom:22px}
+
+  .secao-titulo{margin:26px 0 6px;padding-left:11px;border-left:2px solid var(--line-strong);
+    font:600 12px/1.4 var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--white)}
+
+  /* ------------------------------------------------------------------ */
+  /* Barra de status — mostrador de instrumento (preenche o vazio)      */
+  /* ------------------------------------------------------------------ */
+  .barra-status{max-width:var(--col);margin:0 auto;padding:14px 24px 30px}
+  .barra-status .linha{display:flex;align-items:center;gap:11px;
+    padding-top:14px;border-top:1px solid var(--line)}
+  .status-eixo{flex-shrink:0;width:8px;height:8px;border-radius:50%;
+    background:var(--line-strong)}
+  .status-eixo.ativo{background:var(--red);box-shadow:0 0 0 3px rgba(216,35,42,.18)}
+  .status-txt{font:600 11px/1.5 var(--mono);letter-spacing:.1em;
+    text-transform:uppercase;color:var(--silver-dim)}
+  .status-txt.excedido{color:var(--red)}
+
+  /* ------------------------------------------------------------------ */
+  /* Modo compacto — painel enxuto, status ancorado no fim da tela       */
+  /* ------------------------------------------------------------------ */
+  /* Sticky footer, não viewport travada: `min-height` deixa o body crescer
+     quando o conteúdo passa da tela (foi o que aconteceu com os 4 cards de
+     modo em 2x2), e a rolagem continua sendo a do documento — uma barra só.
+     Com `height:100dvh` + `overflow:hidden` aqui e `overflow-y:auto` no
+     <main>, o painel rolava dentro de si mesmo e abria uma segunda barra
+     colada ao card (o <main> é a coluna de 820px, não a janela). */
+  body.compacta{min-height:100dvh;display:flex;flex-direction:column}
+  body.compacta .topo-inner{padding:10px 24px}
+  body.compacta .topo img{width:38px;height:38px}
+  /* flex:1 0 auto — cresce para empurrar a barra de status até o rodapé da
+     tela quando sobra espaço; nunca encolhe abaixo do próprio conteúdo. */
+  body.compacta main{flex:1 0 auto;width:100%;padding:16px 24px 10px}
+  body.compacta .etapas{margin-bottom:13px}
+  body.compacta h1{font-size:21px;margin-bottom:3px}
+  body.compacta .sub{margin-bottom:12px;font-size:14px}
+  body.compacta .cartao{padding:15px 20px}
+  body.compacta .cartao label{margin:13px 0 6px}
+  body.compacta .modo-card{padding:11px 12px 11px 14px;gap:5px}
+  body.compacta .dropzone{padding:15px 20px;gap:7px}
+  body.compacta .dropzone svg{width:22px;height:22px}
+  body.compacta .botao{margin-top:14px;padding:12px 24px}
+  body.compacta .barra-status{flex-shrink:0;width:100%;padding:0 24px 12px}
+  body.compacta .barra-status .linha{padding-top:11px}
+
+  @media (max-width:640px){
+    .modos{grid-template-columns:1fr}
+    .kpis{grid-template-columns:1fr}
+    .etapas span{font-size:10px;letter-spacing:.1em}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important;animation:none!important;scroll-behavior:auto!important}
+    .etapas::after{transition:none}
+  }
+</style>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <div class="topo">
+    <div class="topo-inner">
+      <img src="{% static 'logo_apex.png' %}" alt="Logo Apex">
+      <div>
+        <div class="marca"><span>A</span>pex</div>
+        <div class="marca-sub">Relatórios de tráfego pago</div>
+      </div>
+    </div>
+  </div>
+  <main>{% block conteudo %}{% endblock %}</main>
+  <footer class="barra-status">
+    <div class="linha">
+      <span class="status-eixo{% block status_ativo %}{% endblock %}" aria-hidden="true"></span>
+      {% block status %}<span class="status-txt">Pronto</span>{% endblock %}
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+db.sqlite3
+.env
+claude_resume.txt
+# PDFs de exemplo ignorados; a pasta de imagens (logo) é versionada
+docs/*
+!docs/img/
+venv

@@ -1,0 +1,195 @@
+{% extends "relatorios/base.html" %}
+{% block body_class %}compacta{% endblock %}
+{% block conteudo %}
+<div class="etapas"><span class="ativa">01 · Importar dados</span><span>02 · Revisar e gerar</span></div>
+
+<h1>Painel de relatórios</h1>
+<p class="sub">Escolha o modo, envie os .xlsx exportados do Gerenciador de Anúncios e gere o PDF.</p>
+
+{% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
+
+<div class="cartao">
+  <form method="post" enctype="multipart/form-data" id="form-painel">
+    {% csrf_token %}
+
+    <label><span class="rot-idx">a</span>Modo do relatório</label>
+    <div class="modos" id="modos">
+      <label class="modo-card">
+        <input type="radio" name="modo" value="unico" checked>
+        <span class="modo-top"><span class="modo-marca" aria-hidden="true"></span><strong>Anexo único</strong></span>
+        <span class="modo-desc">1 arquivo — relatório individual com funil e análise</span>
+      </label>
+      <label class="modo-card">
+        <input type="radio" name="modo" value="consolidado">
+        <span class="modo-top"><span class="modo-marca" aria-hidden="true"></span><strong>Consolidado</strong></span>
+        <span class="modo-desc">2 a 20 contas somadas — funil do grupo e análise geral</span>
+      </label>
+      <label class="modo-card">
+        <input type="radio" name="modo" value="listagem">
+        <span class="modo-top"><span class="modo-marca" aria-hidden="true"></span><strong>Listagem</strong></span>
+        <span class="modo-desc">até 20 contas — tabela comparativa, uma linha por conta</span>
+      </label>
+      <label class="modo-card">
+        <input type="radio" name="modo" value="indicador">
+        <span class="modo-top"><span class="modo-marca" aria-hidden="true"></span><strong>Indicador Único</strong></span>
+        <span class="modo-desc">2 a 20 contas — compara uma métrica específica entre unidades</span>
+      </label>
+    </div>
+    {{ form.modo.errors }}
+
+    <div id="campo-cliente">
+      <label for="{{ form.cliente.id_for_label }}"><span class="rot-idx">b</span>Cliente / grupo</label>
+      {{ form.cliente }}
+      {{ form.cliente.errors }}
+    </div>
+
+    <div id="campo-titulo" hidden>
+      <label for="{{ form.titulo.id_for_label }}"><span class="rot-idx">b</span>Título do relatório (opcional)</label>
+      {{ form.titulo }}
+      <p class="ajuda">Aparece no topo do PDF — em branco, usa "Relatório de Listagem".</p>
+      {{ form.titulo.errors }}
+    </div>
+
+    <div id="campo-metrica" hidden>
+      <label for="{{ form.metrica.id_for_label }}"><span class="rot-idx">c</span>Métrica comparada</label>
+      {{ form.metrica }}
+      <p class="ajuda">{{ form.metrica.help_text }}</p>
+      {{ form.metrica.errors }}
+    </div>
+
+    <label><span class="rot-idx" id="idx-arquivos">c</span>Arquivos · xlsx · até 20</label>
+    <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Selecionar arquivos .xlsx">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
+        <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
+      </svg>
+      <span class="dropzone-txt"><strong>Arraste os .xlsx aqui</strong> ou clique para escolher</span>
+      <span class="dropzone-meta">a ordem de envio é a ordem das linhas</span>
+      {{ form.arquivos }}
+    </div>
+    <ul class="lista-arquivos" id="lista-arquivos"></ul>
+    <p class="contador-arquivos" id="contador-arquivos" hidden></p>
+    {{ form.arquivos.errors }}
+
+    <button class="botao" type="submit" id="btn-enviar" disabled>Ler planilhas</button>
+  </form>
+</div>
+{% endblock %}
+
+{% block status %}<span class="status-txt" id="status-txt">Nenhum anexo — arraste os .xlsx para começar</span>{% endblock %}
+
+{% block scripts %}
+<script>
+  // Alternância dos campos por modo: cliente (todos menos listagem) × título
+  // (listagem) × métrica (indicador único). O índice do rótulo de anexos anda
+  // junto, para a sequência a·b·c… continuar correta em cada modo.
+  const modos = document.getElementById('modos');
+  const campoCliente = document.getElementById('campo-cliente');
+  const campoTitulo = document.getElementById('campo-titulo');
+  const campoMetrica = document.getElementById('campo-metrica');
+  const idxArquivos = document.getElementById('idx-arquivos');
+
+  function atualizarModo() {
+    const modo = modos.querySelector('input[name=modo]:checked').value;
+    campoCliente.hidden = modo === 'listagem';
+    campoTitulo.hidden = modo !== 'listagem';
+    campoMetrica.hidden = modo !== 'indicador';
+    idxArquivos.textContent = modo === 'indicador' ? 'd' : 'c';
+  }
+  modos.addEventListener('change', atualizarModo);
+  atualizarModo();
+
+  const dz = document.getElementById('dropzone');
+  const input = dz.querySelector('input[type=file]');
+  const lista = document.getElementById('lista-arquivos');
+  const contador = document.getElementById('contador-arquivos');
+  const btn = document.getElementById('btn-enviar');
+  const statusTxt = document.getElementById('status-txt');
+  const statusEixo = document.querySelector('.status-eixo');
+  const MAX = 20;
+  let arquivos = [];   // fonte da verdade; o input é sincronizado via DataTransfer
+
+  const tamanho = bytes => bytes < 1024 * 1024
+    ? `${(bytes / 1024).toFixed(0)} KB`
+    : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const pad = n => String(n).padStart(2, '0');
+
+  function atualizarStatus() {
+    const n = arquivos.length;
+    const excedido = n > MAX;
+    statusEixo.classList.toggle('ativo', n > 0 && !excedido);
+    statusTxt.classList.toggle('excedido', excedido);
+    if (!n) {
+      statusTxt.textContent = 'Nenhum anexo — arraste os .xlsx para começar';
+    } else if (excedido) {
+      statusTxt.textContent = `${n}/${MAX} anexos — remova ${n - MAX} para continuar`;
+    } else {
+      statusTxt.textContent = `${pad(n)}/${MAX} anexos · pronto para ler`;
+    }
+  }
+
+  function sincronizar() {
+    const dt = new DataTransfer();
+    arquivos.forEach(f => dt.items.add(f));
+    input.files = dt.files;
+
+    lista.innerHTML = '';
+    arquivos.forEach((f, i) => {
+      const li = document.createElement('li');
+      const num = document.createElement('span');
+      num.className = 'arq-num';
+      num.textContent = pad(i + 1);
+      const nome = document.createElement('span');
+      nome.className = 'arq-nome';
+      nome.textContent = f.name;
+      nome.title = f.name;
+      const tam = document.createElement('span');
+      tam.className = 'arq-tam';
+      tam.textContent = tamanho(f.size);
+      const rem = document.createElement('button');
+      rem.type = 'button';
+      rem.className = 'arq-remover';
+      rem.textContent = '×';
+      rem.setAttribute('aria-label', `Remover ${f.name}`);
+      rem.addEventListener('click', () => { arquivos.splice(i, 1); sincronizar(); });
+      li.append(num, nome, tam, rem);
+      lista.appendChild(li);
+    });
+
+    const n = arquivos.length;
+    contador.hidden = !n;
+    contador.textContent = `${n} de ${MAX} arquivo(s)` +
+      (n > MAX ? ' — remova o excedente para continuar' : '');
+    contador.classList.toggle('excedido', n > MAX);
+
+    btn.disabled = n === 0 || n > MAX;
+    atualizarStatus();
+  }
+
+  function adicionar(novos) {
+    for (const f of novos) {
+      if (!arquivos.some(a => a.name === f.name && a.size === f.size)) arquivos.push(f);
+    }
+    sincronizar();
+  }
+
+  dz.addEventListener('click', () => input.click());
+  dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+  input.addEventListener('change', () => adicionar([...input.files]));
+  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('arrastando'); }));
+  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('arrastando'); }));
+  dz.addEventListener('drop', e => adicionar([...e.dataTransfer.files]));
+
+  document.getElementById('form-painel').addEventListener('submit', () => {
+    if (btn.disabled) return;
+    btn.classList.add('carregando');
+    btn.textContent = 'Lendo planilhas…';
+    btn.disabled = true;
+    statusEixo.classList.add('ativo');
+    statusTxt.textContent = 'Lendo planilhas…';
+  });
+
+  atualizarStatus();
+</script>
+{% endblock %}

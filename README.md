@@ -1,0 +1,79 @@
+# Gerador de Relatórios PDF — Apex (Meta Ads)
+
+Aplicação Django que lê o export **.xlsx** do Meta Ads Manager e gera o
+relatório em PDF no padrão visual da Apex.
+
+## Fluxo
+O painel inicial oferece quatro modos:
+
+1. **Anexo único** — 1 `.xlsx` → relatório individual. A aplicação lê KPIs
+   (investimento, resultados, custo/resultado, impressões, alcance,
+   frequência, CPM), monta o funil e o desempenho por campanha e sugere a
+   Análise do Período em linguagem de cliente (números e continuidade;
+   status de veiculação nunca aparece no relatório) — tudo editável na
+   etapa de revisão antes de gerar o PDF.
+2. **Consolidado** — 2 a 20 `.xlsx` (um por conta/unidade) → soma os totais,
+   recalcula as taxas sobre os totais e gera o funil do grupo + composição
+   por unidade + análise geral, com revisão antes do PDF.
+3. **Listagem** — até 20 `.xlsx` → PDF direto (paisagem) com uma tabela,
+   uma linha por conta, na ordem de envio dos anexos. Sem consolidação,
+   sem análise e sem ranking; título configurável (default "Relatório de
+   Listagem").
+4. **Indicador Único** — 2 a 20 `.xlsx` + **uma métrica escolhida** → PDF
+   direto comparando só essa métrica entre as contas: tabela ordenada pela
+   direção de "melhor" da métrica (melhor unidade em verde), gráfico de
+   barras e total do grupo. Atende o pedido "me manda só os números de X de
+   todas as unidades" sem gerar o relatório completo.
+
+## Rodando
+```bash
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver
+```
+Acesse http://127.0.0.1:8000/
+
+### Dependências de sistema (WeasyPrint)
+O PDF é renderizado com **WeasyPrint**, que precisa das bibliotecas nativas
+Pango/Cairo/GDK-Pixbuf. No Debian/Ubuntu:
+```bash
+sudo apt install libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0
+```
+(Em outras distros/macOS, veja https://doc.courtbouillon.org/weasyprint/stable/first_steps.html.)
+As fontes usadas são do sistema (Helvetica/DejaVu Sans) — sem fontes web.
+
+## Estrutura
+- `relatorios/parser_xlsx.py` — leitura do export (colunas em PT ou EN,
+  identificadas por palavra-chave; ignora linhas de total)
+- `relatorios/benchmarks.py` — faixas de referência das métricas (CTR, CPC,
+  CPM, taxa de conversão, frequência), editáveis por vertical/objetivo;
+  a classificação alimenta as leituras dos cards e a análise sugerida
+- `relatorios/gerador_pdf.py` — gerador do PDF individual/consolidado
+  (HTML + CSS → WeasyPrint, layout dark de dashboard em 1 página; donut
+  via matplotlib embutido)
+- `relatorios/gerador_listagem.py` — gerador do PDF de listagem (paisagem,
+  tabela 1 linha por conta, paginação no rodapé)
+- `relatorios/metricas.py` — **registro central das métricas** do modo
+  Indicador Único (`METRICS_REGISTRY`): rótulo, unidade, estágio do funil,
+  regra de agregação (`soma` × `recalculo` + fórmula) e direção do ranking.
+  Fonte única do seletor da UI e do motor de agregação — acrescentar uma
+  métrica é acrescentar uma entrada ao dicionário
+- `relatorios/gerador_indicador.py` — gerador do PDF de indicador único
+  (tabela ordenada + barras horizontais via matplotlib)
+- `relatorios/templates/relatorios/pdf_relatorio.html` — template do PDF
+  individual/consolidado; `pdf_listagem.html` — listagem;
+  `pdf_indicador.html` — indicador único
+- `relatorios/views.py` — painel de modos → (revisão →) PDF
+- `docs/img/logo_apex.png` — logo usado no cabeçalho do PDF
+- `docs/exemplo_*.pdf` — PDFs de exemplo (individual, consolidado, 20 unidades)
+
+## Observações
+- Alcance total é a soma das linhas do export (pode haver sobreposição
+  de audiência entre anúncios; o Meta desduplica, a soma não).
+- Métricas de taxa (CTR, CPM, CPA, CPC, frequência, taxa de conversão)
+  **nunca** são média das médias: tanto no consolidado quanto no indicador
+  único o total é recalculado sobre os brutos somados de todas as contas.
+- No indicador único, conta cujo export não traz a coluna necessária entra
+  como "—", fica fora do total e é listada no rodapé do PDF.
+- `ALLOWED_HOSTS` está liberado para desenvolvimento — ajustar em produção,
+  junto com `DEBUG=False` e `SECRET_KEY` via variável de ambiente.

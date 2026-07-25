@@ -1,0 +1,107 @@
+{# PDF de Listagem (Modo 3) — paisagem A4, tabela 1 linha por conta (WeasyPrint) #}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4 landscape;
+    margin: 10mm 10mm 16mm;
+    background: #0B0B0D;
+    @bottom-left {
+      content: "{{ rodape }}";
+      color: #8A8F98; font-family: "Helvetica", "DejaVu Sans", sans-serif;
+      font-size: 7pt;
+    }
+    @bottom-right {
+      content: "Página " counter(page) " de " counter(pages);
+      color: #C7CBD1; font-family: "Helvetica", "DejaVu Sans", sans-serif;
+      font-size: 7.5pt; font-weight: 700;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    color: #C7CBD1;
+    font-family: "Helvetica", "DejaVu Sans", sans-serif;
+    font-size: 9pt; line-height: 1.35;
+  }
+
+  /* ---------- Cabeçalho com a diagonal vermelha da marca ---------- */
+  .topo {
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; gap: 5mm;
+    border-bottom: 1px solid #2A2D33;
+    padding: 2mm 0 4mm;
+    margin-bottom: 5mm;
+  }
+  .topo::after {
+    content: ""; position: absolute; right: -6mm; top: -16mm;
+    width: 60mm; height: 40mm;
+    background: linear-gradient(115deg, transparent 46%,
+                #9B1C21 46%, #D8232A 54%, transparent 54%);
+  }
+  .topo .logo { width: 15mm; height: 15mm; border-radius: 2.5mm; border: 1px solid #2A2D33; }
+  .topo h1 { font-size: 17pt; color: #E8EAEE; font-weight: 800; line-height: 1.1; }
+  .topo .sub { margin-top: 1.2mm; font-size: 8.5pt; color: #8A8F98; }
+
+  /* ---------- Tabela: cabeçalho vermelho + zebra ---------- */
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }   /* repete em toda página */
+  th {
+    background: #D8232A; color: #fff; font-weight: 700; font-size: 8.2pt;
+    text-align: left; padding: 2.4mm 2.6mm;
+  }
+  th.num { text-align: right; }
+  td {
+    padding: 2.2mm 2.6mm; border-bottom: 1px solid #24262C;
+    color: #C7CBD1; vertical-align: middle;
+  }
+  td.conta { color: #FFFFFF; font-weight: 700; }
+  td.num { text-align: right; white-space: nowrap; }
+  td.custo { color: #FF6B70; font-weight: 700; }
+  tbody tr:nth-child(even) td { background: #17181C; }
+  tbody tr:nth-child(odd) td { background: #101114; }
+  tr { break-inside: avoid; }
+</style>
+</head>
+<body>
+
+  <div class="topo">
+    {% if logo_b64 %}<img class="logo" src="data:image/png;base64,{{ logo_b64 }}" alt="Apex">{% endif %}
+    <div>
+      <h1>{{ titulo }}</h1>
+      <div class="sub">{{ subtitulo }}</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Conta</th>
+        <th>Resultado</th>
+        <th class="num">Investimento (R$)</th>
+        <th class="num">Nº Resultados</th>
+        <th class="num">Custo/Resultado (R$)</th>
+        <th class="num">Alcance</th>
+        <th class="num">Impressões</th>
+        <th class="num">CTR (%)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in linhas %}
+      <tr>
+        <td class="conta">{{ l.conta }}</td>
+        <td>{{ l.resultado_label }}</td>
+        <td class="num">{{ l.investimento }}</td>
+        <td class="num">{{ l.resultados }}</td>
+        <td class="num custo">{{ l.custo }}</td>
+        <td class="num">{{ l.alcance }}</td>
+        <td class="num">{{ l.impressoes }}</td>
+        <td class="num">{{ l.ctr }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+</body>
+</html>

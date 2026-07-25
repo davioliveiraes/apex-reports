@@ -1,0 +1,155 @@
+{# PDF de Indicador Único (Modo 4) — retrato A4, 1 linha por conta (WeasyPrint) #}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 10mm 12mm 16mm;
+    background: #0B0B0D;
+    @bottom-left {
+      content: "{{ rodape }}";
+      color: #8A8F98; font-family: "Helvetica", "DejaVu Sans", sans-serif;
+      font-size: 7pt;
+    }
+    @bottom-right {
+      content: "Página " counter(page) " de " counter(pages);
+      color: #C7CBD1; font-family: "Helvetica", "DejaVu Sans", sans-serif;
+      font-size: 7.5pt; font-weight: 700;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    color: #C7CBD1;
+    font-family: "Helvetica", "DejaVu Sans", sans-serif;
+    font-size: 9pt; line-height: 1.35;
+  }
+
+  /* ---------- Cabeçalho ----------
+     Sem a diagonal da listagem: aqui o canto superior direito é do badge da
+     métrica, como no relatório individual — a diagonal apareceria recortada
+     em volta dele. */
+  .topo {
+    display: flex; align-items: center; gap: 5mm;
+    border-bottom: 1px solid #2A2D33;
+    padding: 2mm 0 4mm;
+    margin-bottom: 5mm;
+  }
+  .topo .logo { width: 15mm; height: 15mm; border-radius: 2.5mm; border: 1px solid #2A2D33; }
+  .topo .titulos { flex: 1; }
+  .topo h1 { font-size: 17pt; color: #E8EAEE; font-weight: 800; line-height: 1.1; }
+  .topo .sub { margin-top: 1.2mm; font-size: 8.5pt; color: #8A8F98; }
+  .topo .sub .cliente { color: #D8232A; font-weight: 800; text-transform: uppercase; }
+
+  /* Badge da métrica — mesmo desenho do indicador de resultado do relatório */
+  .badge {
+    background: #141518; border: 1px solid #2A2D33; border-radius: 3mm;
+    border-bottom: 2px solid #D8232A;
+    padding: 2.6mm 4mm; text-align: right; flex-shrink: 0; max-width: 58mm;
+  }
+  .badge .numero { font-size: 17pt; font-weight: 800; color: #FFFFFF; line-height: 1.05; }
+  .badge .rotulo { font-size: 7pt; color: #8A8F98; margin-top: 0.8mm; }
+  .badge .rotulo .metrica { display: block; color: #D8232A; font-weight: 700; font-size: 8pt; }
+
+  /* ---------- Tabela: cabeçalho vermelho + zebra ---------- */
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }   /* repete em toda página */
+  th {
+    background: #D8232A; color: #fff; font-weight: 700; font-size: 8.2pt;
+    text-align: left; padding: 2.4mm 2.6mm;
+  }
+  th.num { text-align: right; }
+  td {
+    padding: 2.2mm 2.6mm; border-bottom: 1px solid #24262C;
+    color: #C7CBD1; vertical-align: middle;
+  }
+  td.conta { color: #FFFFFF; font-weight: 700; }
+  td.num { text-align: right; white-space: nowrap; }
+  td.valor { color: #FFFFFF; font-weight: 700; }
+  tbody tr:nth-child(even) td { background: #17181C; }
+  tbody tr:nth-child(odd) td { background: #101114; }
+  tbody tr.melhor td { background: #10201A; }
+  tbody tr.melhor td.conta, tbody tr.melhor td.valor { color: #34D399; }
+  tbody tr.indisponivel td { color: #6E737B; }
+  tr { break-inside: avoid; }
+  tfoot td {
+    background: #1B1D22; border-top: 2px solid #D8232A; border-bottom: 0;
+    color: #FFFFFF; font-weight: 800; font-size: 9.5pt; padding: 2.8mm 2.6mm;
+  }
+
+  /* ---------- Gráfico + notas ---------- */
+  .grafico { margin-top: 6mm; text-align: center; break-inside: avoid; }
+  .grafico img { width: 100%; max-width: 175mm; }
+  .grafico .cap {
+    margin-top: 1.5mm; font-size: 7.5pt; color: #8A8F98;
+  }
+  .notas {
+    margin-top: 6mm; border-top: 1px solid #2A2D33; padding-top: 2.5mm;
+    font-size: 7.5pt; color: #8A8F98;
+  }
+  .notas p + p { margin-top: 1.2mm; }
+</style>
+</head>
+<body>
+
+  <div class="topo">
+    {% if logo_b64 %}<img class="logo" src="data:image/png;base64,{{ logo_b64 }}" alt="Apex">{% endif %}
+    <div class="titulos">
+      <h1>{{ metrica_label }}</h1>
+      <div class="sub">
+        <span class="cliente">{{ cliente }}</span>
+        {% if periodo %} &nbsp;•&nbsp; Período: {{ periodo }}{% endif %}
+        &nbsp;•&nbsp; {{ subtitulo }}
+      </div>
+    </div>
+    <div class="badge">
+      <div class="numero">{{ total_fmt }}</div>
+      <div class="rotulo">{{ total_rotulo }}
+        <span class="metrica">{{ metrica_label }}</span></div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Unidade</th>
+        <th class="num">{{ coluna_valor }}</th>
+        {% if mostrar_share %}<th class="num">% do total</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in linhas %}
+      <tr class="{% if l.destaque %}melhor{% endif %}{% if l.indisponivel %} indisponivel{% endif %}">
+        <td class="conta">{{ l.conta }}</td>
+        <td class="num valor">{{ l.valor_fmt }}</td>
+        {% if mostrar_share %}
+        <td class="num">{% if l.indisponivel %}—{% else %}{{ l.share|floatformat:1 }}%{% endif %}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>{{ total_rotulo }}</td>
+        <td class="num">{{ total_fmt }}</td>
+        {% if mostrar_share %}<td class="num">100,0%</td>{% endif %}
+      </tr>
+    </tfoot>
+  </table>
+
+  {% if grafico_b64 %}
+  <div class="grafico">
+    <img src="data:image/png;base64,{{ grafico_b64 }}" alt="">
+    <div class="cap">{{ metrica_label }} por unidade</div>
+  </div>
+  {% endif %}
+
+  {% if notas %}
+  <div class="notas">
+    {% for n in notas %}<p>{{ n }}</p>{% endfor %}
+  </div>
+  {% endif %}
+
+</body>
+</html>

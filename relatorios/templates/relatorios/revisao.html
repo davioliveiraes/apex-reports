@@ -1,0 +1,106 @@
+{% extends "relatorios/base.html" %}
+{% block conteudo %}
+<div class="etapas"><span>1 · Importar dados</span><span class="ativa">2 · Revisar e gerar PDF</span></div>
+
+<h1>Revisar relatório — {{ dados.cliente }}</h1>
+{% if modo_grupo %}
+<p class="sub">Consolidado de {{ dados.unidades|length }} unidades. Ajuste os nomes e a análise geral e gere o PDF final.</p>
+{% else %}
+<p class="sub">Dados lidos da planilha. Ajuste os textos se quiser e gere o PDF final.</p>
+{% endif %}
+
+{% if dados.aviso_indicador %}<div class="aviso">{{ dados.aviso_indicador }}</div>{% endif %}
+
+<div class="kpis">
+  {% for k in dados.kpis %}
+  <div class="kpi"><small>{{ k.label }}</small><b>{{ k.valor }}</b></div>
+  {% endfor %}
+</div>
+
+{% if dados.funil %}
+{% if modo_grupo %}<p class="metricas" style="text-align:left;margin:20px 0 0">Funil de Vendas — Geral (todas as unidades somadas)</p>{% endif %}
+{% for etapa in dados.funil.etapas %}
+<div class="secao-titulo">{{ etapa.titulo }}</div>
+<table>
+  <tr><th>Métrica</th><th>Valor</th><th>Leitura</th></tr>
+  {% for linha in etapa.linhas %}
+  <tr><td><b>{{ linha.0 }}</b></td><td>{{ linha.1 }}</td><td>{{ linha.2 }}</td></tr>
+  {% endfor %}
+</table>
+{% endfor %}
+{% if dados.funil.legenda %}<p class="legenda">{{ dados.funil.legenda }}</p>{% endif %}
+{% endif %}
+
+{% if modo_grupo %}
+
+{% if dados.composicao %}
+<div class="secao-titulo">{{ dados.composicao.titulo }}</div>
+<table>
+  <tr><th>Unidade</th><th>Resultados</th><th>Participação</th></tr>
+  {% for item in dados.composicao.itens %}
+  <tr>
+    <td>{{ item.nome }}</td><td>{{ item.texto }}</td><td>{{ item.share|floatformat:0 }}%</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="legenda">No PDF, esta composição vira um gráfico de barras horizontais.</p>
+{% endif %}
+
+<div class="cartao" style="margin-top:26px">
+  <form method="post">
+    {% csrf_token %}
+    <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
+    {{ form.cliente }} {{ form.cliente.errors }}
+
+    <label for="{{ form.periodo.id_for_label }}">{{ form.periodo.label }}</label>
+    {{ form.periodo }} {{ form.periodo.errors }}
+
+    {% for u, campo in pares_unidades %}
+    <label for="{{ campo.id_for_label }}">{{ campo.label }}</label>
+    {{ campo }} {{ campo.errors }}
+    <p class="ajuda">
+      {% for k in u.kpis %}{{ k.label }}: <b>{{ k.valor }}</b>{% if not forloop.last %} &nbsp;·&nbsp; {% endif %}{% endfor %}
+    </p>
+    {% endfor %}
+
+    <label for="{{ form.analise.id_for_label }}">{{ form.analise.label }}</label>
+    {{ form.analise }}
+    <p class="ajuda">{{ form.analise.help_text }}</p>
+
+    <button class="botao" type="submit">Gerar PDF consolidado</button>
+    <a class="botao botao-sec" href="{% url 'index' %}" style="margin-left:10px">Importar outros arquivos</a>
+  </form>
+</div>
+
+{% else %}
+
+{% if dados.detalhes_campanha %}
+<div class="secao-titulo">{{ dados.detalhes_campanha.titulo }}</div>
+<table>
+  <tr>{% for h in dados.detalhes_campanha.header %}<th>{{ h }}</th>{% endfor %}</tr>
+  {% for linha in dados.detalhes_campanha.linhas %}
+  <tr>{% for c in linha %}<td>{{ c }}</td>{% endfor %}</tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<div class="cartao" style="margin-top:26px">
+  <form method="post">
+    {% csrf_token %}
+    <label for="{{ form.cliente.id_for_label }}">Cliente</label>
+    {{ form.cliente }} {{ form.cliente.errors }}
+
+    <label for="{{ form.periodo.id_for_label }}">Período</label>
+    {{ form.periodo }} {{ form.periodo.errors }}
+
+    <label for="{{ form.analise.id_for_label }}">{{ form.analise.label }}</label>
+    {{ form.analise }}
+    <p class="ajuda">{{ form.analise.help_text }}</p>
+
+    <button class="botao" type="submit">Gerar PDF</button>
+    <a class="botao botao-sec" href="{% url 'index' %}" style="margin-left:10px">Importar outro arquivo</a>
+  </form>
+</div>
+
+{% endif %}
+{% endblock %}

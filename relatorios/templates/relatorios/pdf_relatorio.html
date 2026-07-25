@@ -1,0 +1,267 @@
+{# Relatório PDF Apex — layout dark de dashboard, UMA página A4 (WeasyPrint) #}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 0; background: #0B0B0D; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 210mm; height: 297mm; background: #0B0B0D; }
+  body {
+    background: #0B0B0D;
+    color: #C7CBD1;
+    font-family: "Helvetica", "DejaVu Sans", sans-serif;
+    font-size: 8pt;
+    line-height: 1.35;
+  }
+  /* Bloco com altura fixa (flex-coluna com height não é confiável no WeasyPrint) */
+  .pagina {
+    position: relative;
+    width: 210mm; height: 297mm;
+    padding: 7mm 7mm 16mm;
+    overflow: hidden;            /* regra de ouro: nada vaza para uma 2ª página */
+  }
+  .pagina > div { margin-bottom: 3.4mm; }
+  b { color: #D8232A; font-weight: 700; }
+
+  /* ---------- Cabeçalho ---------- */
+  .topo { display: flex; align-items: center; gap: 5mm; }
+  .topo .logo {
+    width: 17mm; height: 17mm; border-radius: 3mm;
+    border: 1px solid #2A2D33;
+  }
+  .topo .titulos { flex: 1; }
+  .topo h1 {
+    font-size: 21pt; line-height: 1.04; color: #E8EAEE;
+    font-weight: 800; letter-spacing: .2px;
+  }
+  .topo .sub { margin-top: 1.6mm; font-size: 8.5pt; }
+  .topo .sub .cliente { color: #D8232A; font-weight: 800; text-transform: uppercase; }
+  .badge {
+    background: #141518; border: 1px solid #2A2D33; border-radius: 3mm;
+    padding: 3mm 5mm; display: flex; align-items: center; gap: 4mm;
+    border-bottom: 2px solid #D8232A;
+  }
+  .badge .numero { font-size: 24pt; font-weight: 800; color: #FFFFFF; line-height: 1; }
+  .badge .rotulo { font-size: 7.5pt; max-width: 26mm; }
+  .badge .rotulo .indicador { color: #D8232A; font-weight: 700; font-size: 8.5pt; }
+
+  /* ---------- Seções ---------- */
+  .secao-cabecalho { display: flex; align-items: center; gap: 3mm; margin-bottom: 1.8mm; }
+  .secao-cabecalho .num {
+    background: #D8232A; color: #fff; font-weight: 800; font-size: 10pt;
+    width: 6.5mm; height: 6.5mm; border-radius: 2mm;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .secao-cabecalho h2 { color: #E8EAEE; font-size: 12.5pt; font-weight: 800; }
+  .secao-cabecalho h2 small { color: #8A8F98; font-weight: 400; font-size: 8.5pt; }
+  .secao-cabecalho .risco { flex: 1; border-top: 1px solid #2A2D33; }
+  .painel {
+    background: #141518; border: 1px solid #2A2D33; border-radius: 3.5mm;
+    padding: 3.5mm;
+  }
+
+  /* ---------- Funil: 3 cards com setas ----------
+     Layout de tabela (não flex): o WeasyPrint não mede alturas de flex
+     aninhado com confiança e o texto das leituras vazava do card.
+     Como célula de tabela, o card cresce junto com o conteúdo. */
+  .funil { display: table; width: 100%; table-layout: fixed; border-collapse: separate; }
+  .card-funil {
+    display: table-cell; vertical-align: top;
+    background: #1B1D22; border: 1px solid #2A2D33; border-radius: 3mm;
+    padding: 3mm;
+  }
+  .seta {
+    display: table-cell; width: 5mm; vertical-align: middle; text-align: center;
+    color: #D8232A; font-size: 12pt; font-weight: 800;
+  }
+  .card-funil h3 { color: #D8232A; font-size: 9pt; font-weight: 800; margin-bottom: 2.2mm; }
+  .metrica {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 2mm;
+    padding: 1.35mm 0; border-bottom: 1px solid #24262C;
+  }
+  .metrica:last-child { border-bottom: 0; }
+  .metrica .r { color: #C7CBD1; font-size: 7.5pt; }
+  .metrica .v { color: #FFFFFF; font-weight: 700; font-size: 8.5pt; white-space: nowrap; }
+  .leituras {
+    margin-top: 2mm; background: #14161A; border: 1px solid #24262C;
+    border-radius: 2mm; padding: 2mm 2.4mm; font-size: 7pt; color: #A6ABB3;
+  }
+  .leituras p + p { margin-top: 1mm; }
+  .leituras b { font-size: 7pt; }
+
+  /* ---------- Seção 2: tabela + donut ---------- */
+  .sec2 { display: flex; gap: 3.5mm; align-items: stretch; }
+  .sec2 .col-tabela { flex: 1.45; }
+  .sec2 .col-donut {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 1.5mm;
+  }
+  table.campanhas { width: 100%; border-collapse: collapse; font-size: 7.5pt; }
+  table.campanhas th {
+    background: #D8232A; color: #fff; font-weight: 700; text-align: left;
+    padding: 1.8mm 2mm; font-size: 7.2pt;
+  }
+  table.campanhas th:first-child { border-radius: 1.5mm 0 0 0; }
+  table.campanhas th:last-child { border-radius: 0 1.5mm 0 0; }
+  table.campanhas td {
+    padding: 1.7mm 2mm; border-bottom: 1px solid #24262C; color: #C7CBD1;
+    vertical-align: middle;
+  }
+  table.campanhas td.num { white-space: nowrap; }
+  table.campanhas td.custo { color: #D8232A; font-weight: 700; white-space: nowrap; }
+  table.campanhas tr.destaque td:first-child { color: #FFFFFF; font-weight: 700; }
+  .barra {
+    width: 17mm; height: 1.6mm; background: #2A2D33; border-radius: 1mm;
+    margin-top: 0.8mm; overflow: hidden;
+  }
+  .barra i { display: block; height: 100%; background: #D8232A; border-radius: 1mm; }
+  .donut-img { width: 52mm; }
+  .sec2.consolidado { justify-content: center; align-items: center; gap: 8mm; }
+  .sec2.consolidado .donut-img { width: 58mm; }
+  .legenda-donut { font-size: 7.5pt; }
+  .legenda-donut li { list-style: none; margin: 1.2mm 0; }
+  .legenda-donut .dot {
+    display: inline-block; width: 2.4mm; height: 2.4mm; border-radius: 50%;
+    margin-right: 1.6mm; vertical-align: middle;
+  }
+  .legenda-donut .destaque { color: #FFFFFF; font-weight: 700; }
+  .total-donut { font-size: 7.5pt; color: #A6ABB3; text-align: center; }
+
+  /* ---------- Análise ---------- */
+  .analise p { font-size: 8.6pt; color: #D7DAE0; }
+  .analise p + p { margin-top: 1.6mm; }
+
+  /* ---------- Rodapé ---------- */
+  .rodape {
+    position: absolute; left: 7mm; right: 7mm; bottom: 6mm;
+    border-top: 1px solid #2A2D33; padding-top: 2.2mm;
+    display: flex; align-items: flex-end; gap: 6mm; font-size: 6.8pt; color: #8A8F98;
+  }
+  .rodape .texto { flex: 1; }
+  .rodape .marca { color: #C7CBD1; font-weight: 800; font-size: 8.5pt; white-space: nowrap; }
+  .rodape .marca span { color: #D8232A; }
+</style>
+</head>
+<body>
+<div class="pagina">
+
+  <!-- Cabeçalho -->
+  <div class="topo">
+    {% if logo_b64 %}<img class="logo" src="data:image/png;base64,{{ logo_b64 }}" alt="Apex">{% endif %}
+    <div class="titulos">
+      <h1>Relatório de<br>Tráfego Pago</h1>
+      <div class="sub">
+        <span class="cliente">{{ cliente }}</span>
+        {% if subtitulo_extra %} &nbsp;•&nbsp; {{ subtitulo_extra }}{% endif %}
+        {% if periodo %} &nbsp;•&nbsp; Período: {{ periodo }}{% endif %}
+      </div>
+    </div>
+    {% if badge %}
+    <div class="badge">
+      <div class="numero">{{ badge.valor }}</div>
+      <div class="rotulo">Indicador de resultado:<br>
+        <span class="indicador">{{ badge.indicador }}</span></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- 1 · Funil de Vendas -->
+  <div>
+    <div class="secao-cabecalho">
+      <div class="num">1</div>
+      <h2>Funil de Vendas <small>(Métricas-Chave)</small></h2>
+      <div class="risco"></div>
+    </div>
+    <div class="funil">
+      {% for card in cards %}
+      <div class="card-funil">
+        <h3>{{ card.titulo }}</h3>
+        <div class="metricas">
+          {% for m in card.linhas %}
+          <div class="metrica"><span class="r">{{ m.rotulo }}</span>
+            <span class="v">{{ m.valor }}</span></div>
+          {% endfor %}
+        </div>
+        {% if card.leituras %}
+        <div class="leituras">
+          {% for l in card.leituras %}<p>{{ l|safe }}</p>{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% if not forloop.last %}<div class="seta">&#9656;</div>{% endif %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- 2 · Desempenho por Campanha / Composição por Unidade -->
+  {% if tabela or donut %}
+  <div>
+    <div class="secao-cabecalho">
+      <div class="num">2</div>
+      <h2>{% if modo_grupo %}Composição por Unidade{% else %}Desempenho por Campanha{% endif %}</h2>
+      <div class="risco"></div>
+    </div>
+    <div class="painel">
+      <div class="sec2 {% if modo_grupo %}consolidado{% endif %}">
+        {% if tabela %}
+        <div class="col-tabela">
+          <table class="campanhas">
+            <tr><th>Campanha</th><th>Resultados</th><th>% dos Resultados</th>
+                <th>Investimento</th><th>Custo/Resultado</th></tr>
+            {% for l in tabela %}
+            <tr {% if l.destaque %}class="destaque"{% endif %}>
+              <td>{{ l.nome }}</td>
+              <td class="num">{{ l.res_fmt }}</td>
+              <td class="num">{{ l.share|floatformat:0 }}%
+                <div class="barra"><i style="width:{{ l.share|floatformat:0 }}%"></i></div></td>
+              <td class="num">{{ l.inv_fmt }}</td>
+              <td class="custo">{{ l.custo_fmt }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+        {% endif %}
+        {% if donut %}
+        <div class="col-donut">
+          <img class="donut-img" src="data:image/png;base64,{{ donut.png_b64 }}" alt="">
+          <div class="total-donut">{{ donut.total_texto }}</div>
+        </div>
+        {% if modo_grupo %}
+        <ul class="legenda-donut">
+          {% for f in donut.fatias %}
+          <li{% if f.destaque %} class="destaque"{% endif %}>
+            <span class="dot" style="background:{{ f.cor }}"></span>
+            {{ f.nome }} — {{ f.texto }} ({{ f.share|floatformat:0 }}%)</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- 3 · Análise do Período -->
+  {% if analise %}
+  <div>
+    <div class="secao-cabecalho">
+      <div class="num">3</div>
+      <h2>Análise do Período</h2>
+      <div class="risco"></div>
+    </div>
+    <div class="painel analise">
+      {% for p in analise %}<p>{{ p|safe }}</p>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Rodapé -->
+  <div class="rodape">
+    <div class="texto">{{ rodape }}</div>
+    <div class="marca"><span>A</span>PEX — Gestão de Tráfego Pago</div>
+  </div>
+
+</div>
+</body>
+</html>
