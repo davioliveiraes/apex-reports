@@ -15,15 +15,22 @@ O painel inicial oferece quatro modos:
 2. **Consolidado** — 2 a 20 `.xlsx` (um por conta/unidade) → soma os totais,
    recalcula as taxas sobre os totais e gera o funil do grupo + composição
    por unidade + análise geral, com revisão antes do PDF.
-3. **Listagem** — até 20 `.xlsx` → PDF direto (paisagem) com uma tabela,
-   uma linha por conta, na ordem de envio dos anexos. Sem consolidação,
-   sem análise e sem ranking; título configurável (default "Relatório de
+3. **Listagem** — até 20 `.xlsx` → PDF em paisagem com uma tabela, uma
+   linha por conta, na ordem de envio dos anexos. Sem consolidação, sem
+   análise e sem ranking; título configurável (default "Relatório de
    Listagem").
 4. **Indicador Único** — 2 a 20 `.xlsx` + **uma métrica escolhida** → PDF
-   direto comparando só essa métrica entre as contas: tabela ordenada pela
-   direção de "melhor" da métrica (melhor unidade em verde), gráfico de
-   barras e total do grupo. Atende o pedido "me manda só os números de X de
-   todas as unidades" sem gerar o relatório completo.
+   comparando só essa métrica entre as contas: tabela ordenada pela direção
+   de "melhor" da métrica (melhor unidade em verde), gráfico de barras e
+   total do grupo. Atende o pedido "me manda só os números de X de todas as
+   unidades" sem gerar o relatório completo. Aceita ainda um **recorte de
+   campanhas** (todas / somente ativas / somente inativas) lido da coluna
+   "Veiculação da campanha" do export. Métrica e recorte são reeditáveis na
+   revisão, sem reenviar os anexos.
+
+Os quatro modos seguem o mesmo fluxo de duas etapas — **01 Importar dados**
+→ **02 Revisar e gerar** — e o nome de cada conta pode ser digitado já no
+painel, por anexo (em branco, cai no nome do arquivo).
 
 ## Rodando
 ```bash
@@ -75,5 +82,13 @@ As fontes usadas são do sistema (Helvetica/DejaVu Sans) — sem fontes web.
   único o total é recalculado sobre os brutos somados de todas as contas.
 - No indicador único, conta cujo export não traz a coluna necessária entra
   como "—", fica fora do total e é listada no rodapé do PDF.
+- O recorte de veiculação filtra as LINHAS do export antes de qualquer soma,
+  então todo número do PDF (inclusive os recalculados) sai do recorte. Conta
+  sem campanhas no recorte fica fora do total; export sem a coluna entra com
+  todas as campanhas e é sinalizado no rodapé.
+- A prévia da revisão de listagem/indicador é montada pelas mesmas funções
+  que alimentam o PDF (`gerador_listagem.linha_conta`,
+  `gerador_indicador.montar_tabela`) — o que se confere na tela é o que sai
+  no arquivo.
 - `ALLOWED_HOSTS` está liberado para desenvolvimento — ajustar em produção,
   junto com `DEBUG=False` e `SECRET_KEY` via variável de ambiente.

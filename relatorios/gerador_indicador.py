@@ -26,8 +26,11 @@ from weasyprint import HTML
 
 from . import metricas
 from .gerador_pdf import VERMELHO, _logo_b64
+from .parser_xlsx import VEICULACAO_TODAS, VEICULACOES
 
 VERDE = "#34D399"   # destaque da melhor unidade (mesmo tom de `tr.melhor` na UI)
+
+_ROTULO_VEICULACAO = dict(VEICULACOES)
 
 
 def _linhas(chave, contas):
@@ -42,7 +45,9 @@ def _linhas(chave, contas):
         num = dados.get("_num") or {}
         valor = (metricas.valor_conta(chave, num)
                  if metricas.disponivel(chave, dados.get("_colunas")) else None)
-        linhas.append({"conta": conta["nome"], "valor": valor, "num": num})
+        linhas.append({"conta": conta["nome"], "valor": valor, "num": num,
+                       "sem_campanhas": conta.get("sem_campanhas", False),
+                       "filtro_ignorado": conta.get("filtro_ignorado", False)})
     return linhas
 
 
@@ -121,12 +126,16 @@ def _barras_png(linhas):
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def gerar_indicador(cliente, chave, contas, arquivo_saida):
+def montar_tabela(chave, contas, veiculacao=VEICULACAO_TODAS):
     """
-    Gera o PDF do Indicador Único em `arquivo_saida` (caminho ou file-like).
+    Tabela da métrica: linhas ordenadas, destaque, total agregado e notas.
 
-    `chave`:  chave de metricas.METRICS_REGISTRY
-    `contas`: [{"nome": str, "dados": dict de ler_export_meta}] na ordem de envio
+    Usada pelo PDF e pela prévia da etapa de revisão — as duas leem daqui, de
+    modo que a conferência na tela é exatamente o que sai no arquivo.
+
+    `veiculacao` não filtra nada aqui: as contas já chegam consolidadas no
+    filtro escolhido (views._contas_veiculacao). Serve para declarar no PDF
+    qual recorte de campanhas gerou aqueles números.
     """
     metrica = metricas.METRICS_REGISTRY[chave]
     linhas = metricas.ordenar(_linhas(chave, contas), chave)
@@ -148,11 +157,36 @@ def gerar_indicador(cliente, chave, contas, arquivo_saida):
         linha["share"] = (linha["valor"] / total * 100
                           if soma and total and linha["valor"] is not None else None)
 
-    indisponiveis = [l["conta"] for l in linhas if l["valor"] is None]
+    # Três motivos distintos para uma conta não somar; cada um vira sua nota,
+    # para o leitor do PDF não confundir "não veiculou" com "falta a coluna".
+    sem_campanhas = [l["conta"] for l in linhas if l["sem_campanhas"]]
+    filtro_ignorado = [l["conta"] for l in linhas if l["filtro_ignorado"]]
+    indisponiveis = [l["conta"] for l in linhas
+                     if l["valor"] is None and not l["sem_campanhas"]]
+
     notas = []
+    if veiculacao != VEICULACAO_TODAS:
+        notas.append(
+            f"Recorte: {_ROTULO_VEICULACAO[veiculacao].lower()}, conforme a "
+            "coluna de veiculação do export. Campanhas fora do recorte não "
+            "entram em nenhum número deste relatório."
+        )
     aviso = _aviso_objetivo(chave, contas)
     if aviso:
         notas.append(aviso)
+    if sem_campanhas:
+        notas.append(
+            f"Sem campanhas no recorte em: {', '.join(sem_campanhas)} — "
+            f"{'estas contas ficaram' if len(sem_campanhas) > 1 else 'esta conta ficou'} "
+            "fora do total do grupo."
+        )
+    if filtro_ignorado:
+        notas.append(
+            f"O export de {', '.join(filtro_ignorado)} não traz a coluna de "
+            "veiculação da campanha: o recorte não pôde ser aplicado e "
+            f"{'estas contas entram' if len(filtro_ignorado) > 1 else 'esta conta entra'} "
+            "com todas as campanhas."
+        )
     if indisponiveis:
         notas.append(
             f"Dado indisponível no export de: {', '.join(indisponiveis)} — "
@@ -166,21 +200,38 @@ def gerar_indicador(cliente, chave, contas, arquivo_saida):
             "valores individuais."
         )
 
-    periodo = _periodo_curto(contas)
-    contexto = {
-        "cliente": cliente,
-        "periodo": periodo,
-        "logo_b64": _logo_b64(),
+    return {
         "metrica_label": metrica["label"],
         "coluna_valor": metricas.rotulo_coluna(chave),
         "mostrar_share": soma,
         "linhas": linhas,
         "total_fmt": metricas.formatar(chave, total),
         "total_rotulo": "Total geral" if soma else "Geral (recalculado)",
-        "subtitulo": (f"{len(contas)} conta{'s' if len(contas) != 1 else ''}"
-                      f" — gerado em {datetime.now():%d-%m-%Y}"),
-        "grafico_b64": _barras_png(linhas),
         "notas": notas,
+    }
+
+
+def gerar_indicador(cliente, chave, contas, arquivo_saida,
+                    veiculacao=VEICULACAO_TODAS):
+    """
+    Gera o PDF do Indicador Único em `arquivo_saida` (caminho ou file-like).
+
+    `chave`:  chave de metricas.METRICS_REGISTRY
+    `contas`: [{"nome": str, "dados": dict de ler_export_meta}] na ordem de envio
+    `veiculacao`: recorte de campanhas já aplicado às contas — declarado no PDF
+    """
+    periodo = _periodo_curto(contas)
+    tabela = montar_tabela(chave, contas, veiculacao)
+    recorte = ("" if veiculacao == VEICULACAO_TODAS
+               else f" — {_ROTULO_VEICULACAO[veiculacao].lower()}")
+    contexto = {
+        **tabela,
+        "cliente": cliente,
+        "periodo": periodo,
+        "logo_b64": _logo_b64(),
+        "subtitulo": (f"{len(contas)} conta{'s' if len(contas) != 1 else ''}"
+                      f"{recorte} — gerado em {datetime.now():%d-%m-%Y}"),
+        "grafico_b64": _barras_png(tabela["linhas"]),
         "rodape": "Relatório gerado a partir de dados exportados do Meta Ads Manager.",
     }
     html = render_to_string("relatorios/pdf_indicador.html", contexto)

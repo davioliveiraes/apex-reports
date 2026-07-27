@@ -1,8 +1,6 @@
 {% extends "relatorios/base.html" %}
 {% block body_class %}compacta{% endblock %}
 {% block conteudo %}
-<div class="etapas"><span class="ativa">01 · Importar dados</span><span>02 · Revisar e gerar</span></div>
-
 <h1>Painel de relatórios</h1>
 <p class="sub">Escolha o modo, envie os .xlsx exportados do Gerenciador de Anúncios e gere o PDF.</p>
 
@@ -57,6 +55,13 @@
       {{ form.metrica.errors }}
     </div>
 
+    <div id="campo-veiculacao" hidden>
+      <label for="{{ form.veiculacao.id_for_label }}"><span class="rot-idx">d</span>Campanhas</label>
+      {{ form.veiculacao }}
+      <p class="ajuda">{{ form.veiculacao.help_text }}</p>
+      {{ form.veiculacao.errors }}
+    </div>
+
     <label><span class="rot-idx" id="idx-arquivos">c</span>Arquivos · xlsx · até 20</label>
     <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Selecionar arquivos .xlsx">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -88,6 +93,7 @@
   const campoCliente = document.getElementById('campo-cliente');
   const campoTitulo = document.getElementById('campo-titulo');
   const campoMetrica = document.getElementById('campo-metrica');
+  const campoVeiculacao = document.getElementById('campo-veiculacao');
   const idxArquivos = document.getElementById('idx-arquivos');
 
   function atualizarModo() {
@@ -95,7 +101,10 @@
     campoCliente.hidden = modo === 'listagem';
     campoTitulo.hidden = modo !== 'listagem';
     campoMetrica.hidden = modo !== 'indicador';
-    idxArquivos.textContent = modo === 'indicador' ? 'd' : 'c';
+    campoVeiculacao.hidden = modo !== 'indicador';
+    idxArquivos.textContent = modo === 'indicador' ? 'e' : 'c';
+    // No anexo único o nome da conta não vai para o PDF: some o campo por linha.
+    document.getElementById('lista-arquivos').classList.toggle('sem-nomes', modo === 'unico');
   }
   modos.addEventListener('change', atualizarModo);
   atualizarModo();
@@ -140,10 +149,26 @@
       const num = document.createElement('span');
       num.className = 'arq-num';
       num.textContent = pad(i + 1);
+
+      // Nome da conta como aparece no PDF; o nome do arquivo vira legenda.
+      // Persistido no próprio File (f.nomeConta) para sobreviver ao rebuild
+      // da lista quando outro anexo é adicionado ou removido.
+      const corpo = document.createElement('div');
+      corpo.className = 'arq-corpo';
+      const conta = document.createElement('input');
+      conta.type = 'text';
+      conta.className = 'arq-conta';
+      conta.name = 'nome_conta';
+      conta.placeholder = 'Nome da conta no relatório';
+      conta.value = f.nomeConta || '';
+      conta.setAttribute('aria-label', `Nome da conta do arquivo ${f.name}`);
+      conta.addEventListener('input', () => { f.nomeConta = conta.value; });
       const nome = document.createElement('span');
       nome.className = 'arq-nome';
       nome.textContent = f.name;
       nome.title = f.name;
+      corpo.append(conta, nome);
+
       const tam = document.createElement('span');
       tam.className = 'arq-tam';
       tam.textContent = tamanho(f.size);
@@ -153,7 +178,7 @@
       rem.textContent = '×';
       rem.setAttribute('aria-label', `Remover ${f.name}`);
       rem.addEventListener('click', () => { arquivos.splice(i, 1); sincronizar(); });
-      li.append(num, nome, tam, rem);
+      li.append(num, corpo, tam, rem);
       lista.appendChild(li);
     });
 
@@ -181,6 +206,8 @@
   ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('arrastando'); }));
   dz.addEventListener('drop', e => adicionar([...e.dataTransfer.files]));
 
+  // Todos os modos navegam para a revisão: o estado de carregamento vive só até
+  // a resposta chegar e trocar a página.
   document.getElementById('form-painel').addEventListener('submit', () => {
     if (btn.disabled) return;
     btn.classList.add('carregando');

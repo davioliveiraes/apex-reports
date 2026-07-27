@@ -16,7 +16,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from openpyxl import Workbook
 
-from . import benchmarks, metricas
+from . import benchmarks, metricas, parser_xlsx
 from .parser_xlsx import consolidar_grupo, ler_export_meta
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -47,6 +47,19 @@ def _planilha(campanhas, inicio="2026-07-01", fim="2026-07-15", indicador=INDICA
 
 def _arquivo(nome, campanhas, **kw):
     return SimpleUploadedFile(nome, _planilha(campanhas, **kw), content_type=XLSX_MIME)
+
+
+def _planilha_sem_veiculacao(campanhas, inicio="2026-07-01", fim="2026-07-15"):
+    """Export legado, sem a coluna de veiculação da campanha."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append([c for c in CABECALHO if c != "Veiculação da campanha"])
+    for c in campanhas:
+        ws.append([c["nome"], c.get("res"), INDICADOR, c.get("inv"), c.get("imp"),
+                   c.get("alc"), c.get("cliques"), inicio, fim])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _bytes_pdf(resposta):
@@ -465,28 +478,54 @@ class ValidacaoUploadTest(TestCase):
 
 
 class FluxoListagemTest(TestCase):
-    """Modo 3: PDF direto com uma tabela — 1 linha por conta, na ordem de envio,
-    sem consolidação, sem análise e sem destaque de melhor conta."""
+    """Modo 3: tabela com 1 linha por conta, na ordem de envio, sem
+    consolidação, sem análise e sem destaque de melhor conta. Como os demais
+    modos, passa pela revisão antes de gerar o PDF."""
 
-    def _post_listagem(self, titulo=""):
-        contas = [
-            ("unidade_centro.xlsx", 40, 80.0, 4000, 2500, 300),
-            ("unidade_norte.xlsx", 10, 55.5, 2000, 900, 100),
-            ("unidade_sul.xlsx", 25, 100.0, 5000, 3000, 250),
-        ]
+    CONTAS = [
+        ("unidade_centro.xlsx", 40, 80.0, 4000, 2500, 300),
+        ("unidade_norte.xlsx", 10, 55.5, 2000, 900, 100),
+        ("unidade_sul.xlsx", 25, 100.0, 5000, 3000, 250),
+    ]
+
+    def _upload(self, titulo="", nomes=None):
         arquivos = [
             _arquivo(nome, [{"nome": "C", "res": res, "inv": inv,
                              "imp": imp, "alc": alc, "cliques": cli}])
-            for nome, res, inv, imp, alc, cli in contas
+            for nome, res, inv, imp, alc, cli in self.CONTAS
         ]
-        return self.client.post(
-            "/", {"modo": "listagem", "titulo": titulo, "arquivos": arquivos})
+        post = {"modo": "listagem", "titulo": titulo, "arquivos": arquivos}
+        if nomes:
+            post["nome_conta"] = nomes
+        return self.client.post("/", post)
 
-    def test_gera_pdf_direto_sem_revisao(self):
+    def _post_listagem(self, titulo="", nomes=None):
+        """Fluxo completo: painel → revisão → PDF."""
+        self._upload(titulo, nomes)
+        return self.client.post("/revisao/", {"titulo": titulo})
+
+    def test_upload_leva_a_revisao_antes_do_pdf(self):
+        r = self._upload()
+        self.assertRedirects(r, "/revisao/")
+        # A revisão mostra a prévia da tabela que vai ao PDF
+        html = self.client.get("/revisao/").content.decode()
+        self.assertIn("Revisar listagem", html)
+        self.assertIn("unidade centro", html)
+
+    def test_gera_pdf_na_revisao(self):
         r = self._post_listagem()
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
         self.assertIn("Relatorio-de-Listagem", r["Content-Disposition"])
+
+    def test_nomes_editados_na_revisao_vao_para_o_pdf(self):
+        self._upload()
+        r = self.client.post("/revisao/", {
+            "titulo": "", "unidade_0": "Loja Centro",
+            "unidade_1": "Loja Norte", "unidade_2": "Loja Sul"})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("Loja Centro", texto)
+        self.assertNotIn("unidade centro", texto)
 
     def test_titulo_padrao_e_customizado(self):
         texto = _texto_pdf(_bytes_pdf(self._post_listagem()))
@@ -578,26 +617,90 @@ class FluxoIndicadorTest(TestCase):
     direção de `melhor` no registro, com total agregado conforme a regra da
     métrica (soma × recálculo sobre os brutos)."""
 
-    def _post(self, metrica, cliente="TIM Brasil", arquivos=None):
+    def _upload(self, metrica, cliente="TIM Brasil", arquivos=None, nomes=None):
         if arquivos is None:
             arquivos = [
                 _arquivo(nome, [{"nome": "C", "res": res, "inv": inv,
                                  "imp": imp, "alc": alc, "cliques": cli}])
                 for nome, res, inv, imp, alc, cli in CONTAS_INDICADOR
             ]
-        return self.client.post("/", {"modo": "indicador", "cliente": cliente,
-                                      "metrica": metrica, "arquivos": arquivos})
+        post = {"modo": "indicador", "cliente": cliente,
+                "metrica": metrica, "arquivos": arquivos}
+        if nomes:
+            post["nome_conta"] = nomes
+        return self.client.post("/", post)
+
+    def _post(self, metrica, cliente="TIM Brasil", arquivos=None, **extra):
+        """Fluxo completo: painel → revisão → PDF."""
+        self._upload(metrica, cliente, arquivos)
+        return self.client.post("/revisao/",
+                                {"cliente": cliente, "metrica": metrica, **extra})
 
     def _texto(self, metrica, **kw):
         return _texto_pdf(_bytes_pdf(self._post(metrica, **kw)))
 
-    def test_gera_pdf_direto_sem_revisao(self):
+    def test_upload_leva_a_revisao_com_previa(self):
+        r = self._upload("conversas_iniciadas")
+        self.assertRedirects(r, "/revisao/")
+        html = self.client.get("/revisao/").content.decode()
+        self.assertIn("Revisar indicador", html)
+        self.assertIn("75", html)          # total já calculado na prévia
+
+    def test_gera_pdf_na_revisao(self):
         r = self._post("conversas_iniciadas")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
         # Nome do arquivo: cliente + métrica + período em hífen
         self.assertIn("TIM-Brasil-Conversas-Iniciadas", r["Content-Disposition"])
-        self.assertNotIn("relatorio_apex", self.client.session)
+
+    def test_trocar_metrica_na_revisao_nao_exige_reenviar_anexos(self):
+        self._upload("conversas_iniciadas")
+        r = self.client.post("/revisao/", {"cliente": "TIM", "metrica": "cpa"})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("R$ 3,14", texto)    # CPA geral recalculado
+        self.assertIn("Custo por Resultado", texto)
+
+    def test_cookie_sinaliza_download_quando_ha_token(self):
+        # O front manda um token; o PDF volta com esse token num cookie, sinal
+        # de que o arquivo saiu — é o que fecha a etapa 02 na tela.
+        self._upload("cpa")
+        r = self.client.post("/revisao/", {"cliente": "TIM", "metrica": "cpa",
+                                           "download_token": "abc123"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.cookies["apex_download"].value, "abc123")
+
+    def test_sem_token_nao_ha_cookie(self):
+        r = self._post("cpa")
+        self.assertNotIn("apex_download", r.cookies)
+
+    def test_nome_digitado_no_painel_substitui_o_nome_do_arquivo(self):
+        # Cada anexo carrega o nome da conta digitado no painel; é ele que vai
+        # ao PDF, não o "unidade_centro" derivado do arquivo.
+        self._upload("conversas_iniciadas",
+                     nomes=["Loja Centro", "Loja Norte", "Loja Sul"])
+        r = self.client.post("/revisao/",
+                             {"cliente": "TIM", "metrica": "conversas_iniciadas"})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("Loja Centro", texto)
+        self.assertNotIn("unidade centro", texto)
+
+    def test_nome_em_branco_cai_no_nome_do_arquivo(self):
+        # Campo vazio → mantém o comportamento antigo (nome derivado do arquivo).
+        self._upload("conversas_iniciadas", nomes=["", "Loja Norte", ""])
+        r = self.client.post("/revisao/",
+                             {"cliente": "TIM", "metrica": "conversas_iniciadas"})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("unidade centro", texto)   # fallback do arquivo
+        self.assertIn("Loja Norte", texto)       # digitado
+
+    def test_nome_editado_na_revisao_vence_o_do_painel(self):
+        self._upload("conversas_iniciadas", nomes=["Loja Centro", "N", "S"])
+        r = self.client.post("/revisao/", {
+            "cliente": "TIM", "metrica": "conversas_iniciadas",
+            "unidade_0": "Centro Revisado", "unidade_1": "N", "unidade_2": "S"})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("Centro Revisado", texto)
+        self.assertNotIn("Loja Centro", texto)
 
     def test_metrica_aditiva_soma_e_mostra_share(self):
         texto = self._texto("conversas_iniciadas")
@@ -644,8 +747,8 @@ class FluxoIndicadorTest(TestCase):
                              "imp": imp, "alc": alc, "cliques": cli}])
             for nome, res, inv, imp, alc, cli in CONTAS_INDICADOR
         ]
-        listagem = _texto_pdf(_bytes_pdf(
-            self.client.post("/", {"modo": "listagem", "arquivos": arquivos})))
+        self.client.post("/", {"modo": "listagem", "arquivos": arquivos})
+        listagem = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
         for nome in ("unidade centro", "unidade norte", "unidade sul"):
             self.assertIn(nome, indicador)
             self.assertIn(nome, listagem)
@@ -751,11 +854,131 @@ class RegistroMetricasTest(TestCase):
                                  "imp": imp, "alc": alc, "cliques": cli}])
                 for nome, res, inv, imp, alc, cli in CONTAS_INDICADOR
             ]
-            r = self.client.post("/", {
+            self.client.post("/", {
                 "modo": "indicador", "cliente": "TIM",
                 "metrica": "custo_por_mil_alcancados", "arquivos": arquivos})
+            r = self.client.post("/revisao/", {
+                "cliente": "TIM", "metrica": "custo_por_mil_alcancados"})
             self.assertEqual(r["Content-Type"], "application/pdf")
             texto = _texto_pdf(_bytes_pdf(r))
             self.assertIn("Custo por Mil Alcançados", texto)
             self.assertIn("R$ 36,80", texto)
 
+
+
+class VeiculacaoTest(TestCase):
+    """Filtro pela coluna "Veiculação da campanha" do export (active/inactive)
+    no modo Indicador Único: recorta as linhas ANTES de qualquer soma, então
+    todos os números do PDF — inclusive os recalculados — saem do recorte."""
+
+    # Por conta: uma campanha ativa + uma inativa, com resultados distintos
+    CONTAS = [
+        ("centro.xlsx", [
+            {"nome": "Ativa", "status": "active", "res": 30, "inv": 60.0,
+             "imp": 3000, "alc": 2000, "cliques": 200},
+            {"nome": "Parada", "status": "inactive", "res": 10, "inv": 20.0,
+             "imp": 1000, "alc": 500, "cliques": 100},
+        ]),
+        ("norte.xlsx", [
+            {"nome": "Ativa", "status": "active", "res": 20, "inv": 40.0,
+             "imp": 2000, "alc": 1500, "cliques": 150},
+            {"nome": "Parada", "status": "inactive", "res": 5, "inv": 15.5,
+             "imp": 500, "alc": 300, "cliques": 50},
+        ]),
+    ]
+
+    def _pdf(self, veiculacao, metrica="conversas_iniciadas", contas=None):
+        arquivos = [_arquivo(nome, campanhas)
+                    for nome, campanhas in (contas or self.CONTAS)]
+        self.client.post("/", {"modo": "indicador", "cliente": "TIM",
+                               "metrica": metrica, "veiculacao": veiculacao,
+                               "arquivos": arquivos})
+        r = self.client.post("/revisao/", {"cliente": "TIM", "metrica": metrica,
+                                           "veiculacao": veiculacao})
+        return _texto_pdf(_bytes_pdf(r))
+
+    # ---- classificação do status ------------------------------------
+    def test_inactive_nao_e_confundido_com_active(self):
+        # "inactive" contém "active": a ordem de teste no parser importa
+        self.assertIs(parser_xlsx.campanha_ativa("active"), True)
+        self.assertIs(parser_xlsx.campanha_ativa("inactive"), False)
+        self.assertIs(parser_xlsx.campanha_ativa("Inactive"), False)
+        self.assertIs(parser_xlsx.campanha_ativa("campaign_paused"), False)
+        self.assertIs(parser_xlsx.campanha_ativa("Ativa"), True)
+        self.assertIs(parser_xlsx.campanha_ativa("Inativa"), False)
+        # Sem status ou status desconhecido: não afirma nada
+        self.assertIsNone(parser_xlsx.campanha_ativa(""))
+        self.assertIsNone(parser_xlsx.campanha_ativa(None))
+        self.assertIsNone(parser_xlsx.campanha_ativa("em analise"))
+
+    # ---- o recorte muda os totais -----------------------------------
+    def test_todas_soma_ativas_e_inativas(self):
+        texto = self._pdf("todas")
+        self.assertIn("65", texto)          # 30 + 10 + 20 + 5
+
+    def test_somente_ativas(self):
+        texto = self._pdf("ativas")
+        self.assertIn("50", texto)          # 30 + 20
+        self.assertIn("somente campanhas ativas", texto)
+
+    def test_somente_inativas(self):
+        texto = self._pdf("inativas")
+        self.assertIn("15", texto)          # 10 + 5
+        self.assertIn("somente campanhas inativas", texto)
+
+    def test_metrica_de_razao_recalculada_dentro_do_recorte(self):
+        # CPA das ativas = (60 + 40) / (30 + 20) = 2,00 — e não os 2,08 do total
+        texto = self._pdf("ativas", metrica="cpa")
+        self.assertIn("R$ 2,00", texto)
+        self.assertNotIn("R$ 2,08", texto)
+
+    def test_recorte_declarado_no_pdf(self):
+        texto = self._pdf("ativas")
+        self.assertIn("Campanhas fora do recorte não entram", texto)
+        # No recorte padrão não há nota nenhuma sobre veiculação
+        self.assertNotIn("Campanhas fora do recorte", self._pdf("todas"))
+
+    # ---- casos de borda ---------------------------------------------
+    def test_conta_sem_campanhas_no_recorte_fica_fora_do_total(self):
+        contas = list(self.CONTAS) + [
+            ("sul.xlsx", [{"nome": "Parada", "status": "inactive", "res": 99,
+                           "inv": 500.0, "imp": 9000, "alc": 8000,
+                           "cliques": 900}]),
+        ]
+        texto = self._pdf("ativas", contas=contas)
+        self.assertIn("Sem campanhas no recorte em: sul", texto)
+        self.assertIn("50", texto)          # total segue 30 + 20
+        self.assertNotIn("149", texto)      # a conta sem ativas não entrou
+
+    def test_export_sem_a_coluna_entra_com_tudo_e_e_sinalizado(self):
+        sem_coluna = SimpleUploadedFile(
+            "legado.xlsx",
+            _planilha_sem_veiculacao([{"nome": "C", "res": 7, "inv": 14.0,
+                                       "imp": 700, "alc": 600, "cliques": 70}]),
+            content_type=XLSX_MIME)
+        arquivos = [_arquivo(n, c) for n, c in self.CONTAS] + [sem_coluna]
+        self.client.post("/", {"modo": "indicador", "cliente": "TIM",
+                               "metrica": "conversas_iniciadas",
+                               "veiculacao": "ativas", "arquivos": arquivos})
+        r = self.client.post("/revisao/", {"cliente": "TIM", "veiculacao": "ativas",
+                                           "metrica": "conversas_iniciadas"})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("não traz a coluna de veiculação", texto)
+        self.assertIn("57", texto)          # 30 + 20 + 7 (a legado entra inteira)
+
+    def test_trocar_o_recorte_na_revisao_nao_exige_reenviar_anexos(self):
+        arquivos = [_arquivo(n, c) for n, c in self.CONTAS]
+        self.client.post("/", {"modo": "indicador", "cliente": "TIM",
+                               "metrica": "conversas_iniciadas",
+                               "veiculacao": "todas", "arquivos": arquivos})
+        r = self.client.post("/revisao/", {"cliente": "TIM", "veiculacao": "inativas",
+                                           "metrica": "conversas_iniciadas"})
+        self.assertIn("15", _texto_pdf(_bytes_pdf(r)))
+
+    def test_outros_modos_ignoram_o_filtro(self):
+        # Listagem não expõe o campo: segue com todas as campanhas
+        arquivos = [_arquivo(n, c) for n, c in self.CONTAS]
+        self.client.post("/", {"modo": "listagem", "veiculacao": "ativas",
+                               "arquivos": arquivos})
+        texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
+        self.assertIn("R$ 80,00", texto)    # centro inteira: 60 + 20

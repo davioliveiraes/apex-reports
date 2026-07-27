@@ -1,13 +1,100 @@
 {% extends "relatorios/base.html" %}
+{% block cls_etapa1 %}concluida{% endblock %}
+{% block cls_etapa2 %}ativa{% endblock %}
 {% block conteudo %}
-<div class="etapas"><span>1 · Importar dados</span><span class="ativa">2 · Revisar e gerar PDF</span></div>
-
+{% if modo_listagem %}
+<h1>Revisar listagem</h1>
+<p class="sub">{{ dados.contas|length }} contas na ordem de envio. Ajuste o título e os nomes das contas e gere o PDF final.</p>
+{% elif modo_indicador %}
+<h1>Revisar indicador — {{ dados.cliente }}</h1>
+<p class="sub">Confira os valores, ajuste os nomes das contas e gere o PDF final. Trocar a métrica não exige reenviar os anexos.</p>
+{% else %}
 <h1>Revisar relatório — {{ dados.cliente }}</h1>
 {% if modo_grupo %}
 <p class="sub">Consolidado de {{ dados.unidades|length }} unidades. Ajuste os nomes e a análise geral e gere o PDF final.</p>
 {% else %}
 <p class="sub">Dados lidos da planilha. Ajuste os textos se quiser e gere o PDF final.</p>
 {% endif %}
+{% endif %}
+
+{% if modo_listagem or modo_indicador %}
+
+{% if modo_indicador and previa_indicador %}
+<div class="secao-titulo">Prévia — {{ previa_indicador.metrica_label }}</div>
+<table>
+  <tr>
+    <th>Unidade</th><th>{{ previa_indicador.coluna_valor }}</th>
+    {% if previa_indicador.mostrar_share %}<th>% do total</th>{% endif %}
+  </tr>
+  {% for l in previa_indicador.linhas %}
+  <tr{% if l.destaque %} class="melhor"{% endif %}>
+    <td>{{ l.conta }}</td><td>{{ l.valor_fmt }}</td>
+    {% if previa_indicador.mostrar_share %}
+    <td>{% if l.indisponivel %}—{% else %}{{ l.share|floatformat:1 }}%{% endif %}</td>
+    {% endif %}
+  </tr>
+  {% endfor %}
+  <tr>
+    <td><b>{{ previa_indicador.total_rotulo }}</b></td>
+    <td><b>{{ previa_indicador.total_fmt }}</b></td>
+    {% if previa_indicador.mostrar_share %}<td><b>100,0%</b></td>{% endif %}
+  </tr>
+</table>
+{% for n in previa_indicador.notas %}<p class="legenda">{{ n }}</p>{% endfor %}
+{% endif %}
+
+{% if modo_listagem %}
+<div class="secao-titulo">Prévia — uma linha por conta</div>
+<table>
+  <tr><th>Conta</th><th>Investimento</th><th>Resultados</th><th>Custo / Result.</th><th>CTR</th></tr>
+  {% for l in previa %}
+  <tr>
+    <td>{{ l.conta }}</td><td>{{ l.investimento }}</td><td>{{ l.resultados }}</td>
+    <td>{{ l.custo }}</td><td>{{ l.ctr }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="legenda">O PDF sai em paisagem, com as colunas de alcance e impressões também.</p>
+{% endif %}
+
+<div class="cartao" style="margin-top:26px">
+  <form method="post" id="form-revisao">
+    {% csrf_token %}
+    {% if modo_listagem %}
+    <label for="{{ form.titulo.id_for_label }}">{{ form.titulo.label }}</label>
+    {{ form.titulo }}
+    <p class="ajuda">{{ form.titulo.help_text }}</p>
+    {{ form.titulo.errors }}
+    {% else %}
+    <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
+    {{ form.cliente }} {{ form.cliente.errors }}
+
+    <label for="{{ form.metrica.id_for_label }}">{{ form.metrica.label }}</label>
+    {{ form.metrica }}
+    <p class="ajuda">{{ form.metrica.help_text }}</p>
+    {{ form.metrica.errors }}
+
+    <label for="{{ form.veiculacao.id_for_label }}">{{ form.veiculacao.label }}</label>
+    {{ form.veiculacao }}
+    <p class="ajuda">{{ form.veiculacao.help_text }}</p>
+    {{ form.veiculacao.errors }}
+    {% endif %}
+
+    {% for c, campo in pares_unidades %}
+    <label for="{{ campo.id_for_label }}">{{ campo.label }}</label>
+    {{ campo }} {{ campo.errors }}
+    <p class="ajuda">
+      {% for k in c.dados.kpis %}{{ k.label }}: <b>{{ k.valor }}</b>{% if not forloop.last %} &nbsp;·&nbsp; {% endif %}{% endfor %}
+    </p>
+    {% endfor %}
+
+    <input type="hidden" name="download_token" id="download-token">
+    <button class="botao" type="submit" id="btn-gerar">Gerar PDF</button>
+    <a class="botao botao-sec" href="{% url 'index' %}" style="margin-left:10px">Importar outros arquivos</a>
+  </form>
+</div>
+
+{% else %}
 
 {% if dados.aviso_indicador %}<div class="aviso">{{ dados.aviso_indicador }}</div>{% endif %}
 
@@ -47,7 +134,7 @@
 {% endif %}
 
 <div class="cartao" style="margin-top:26px">
-  <form method="post">
+  <form method="post" id="form-revisao">
     {% csrf_token %}
     <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
     {{ form.cliente }} {{ form.cliente.errors }}
@@ -67,7 +154,8 @@
     {{ form.analise }}
     <p class="ajuda">{{ form.analise.help_text }}</p>
 
-    <button class="botao" type="submit">Gerar PDF consolidado</button>
+    <input type="hidden" name="download_token" id="download-token">
+    <button class="botao" type="submit" id="btn-gerar">Gerar PDF consolidado</button>
     <a class="botao botao-sec" href="{% url 'index' %}" style="margin-left:10px">Importar outros arquivos</a>
   </form>
 </div>
@@ -85,7 +173,7 @@
 {% endif %}
 
 <div class="cartao" style="margin-top:26px">
-  <form method="post">
+  <form method="post" id="form-revisao">
     {% csrf_token %}
     <label for="{{ form.cliente.id_for_label }}">Cliente</label>
     {{ form.cliente }} {{ form.cliente.errors }}
@@ -97,10 +185,55 @@
     {{ form.analise }}
     <p class="ajuda">{{ form.analise.help_text }}</p>
 
-    <button class="botao" type="submit">Gerar PDF</button>
+    <input type="hidden" name="download_token" id="download-token">
+    <button class="botao" type="submit" id="btn-gerar">Gerar PDF</button>
     <a class="botao botao-sec" href="{% url 'index' %}" style="margin-left:10px">Importar outro arquivo</a>
   </form>
 </div>
 
 {% endif %}
+{% endif %}
+{% endblock %}
+
+{% block status %}<span class="status-txt" id="status-txt">Revise os dados e gere o PDF</span>{% endblock %}
+
+{% block scripts %}
+<script>
+  // O PDF volta como download e a página não navega: o servidor devolve um
+  // cookie com este token junto do arquivo. Ao vê-lo sabemos que o PDF saiu e
+  // fechamos a etapa 02 na régua, em vez de deixar o botão preso em "Gerando…".
+  const form = document.getElementById('form-revisao');
+  const btn = document.getElementById('btn-gerar');
+  const tokenInput = document.getElementById('download-token');
+  const statusTxt = document.getElementById('status-txt');
+  const statusEixo = document.querySelector('.status-eixo');
+  const etapa2 = document.getElementById('etapa-2');
+  const rotulo = btn.textContent;
+  let sonda = null;
+
+  const lerCookie = nome =>
+    document.cookie.split('; ').find(c => c.startsWith(nome + '='))?.split('=')[1];
+
+  form.addEventListener('submit', () => {
+    btn.classList.add('carregando');
+    btn.textContent = 'Gerando PDF…';
+    btn.disabled = true;
+    statusEixo.classList.add('ativo');
+    statusTxt.textContent = 'Gerando PDF…';
+
+    const token = (crypto?.randomUUID?.() || String(Date.now() + Math.random()));
+    tokenInput.value = token;
+    clearInterval(sonda);
+    sonda = setInterval(() => {
+      if (lerCookie('apex_download') !== token) return;
+      clearInterval(sonda);
+      document.cookie = 'apex_download=; Max-Age=0; path=/';
+      btn.classList.remove('carregando');
+      btn.textContent = rotulo;
+      btn.disabled = false;
+      etapa2.className = 'etapa concluida';
+      statusTxt.textContent = 'PDF baixado — ajuste e gere de novo, ou importe outros arquivos';
+    }, 400);
+  });
+</script>
 {% endblock %}

@@ -16,7 +16,7 @@ from .gerador_pdf import _logo_b64
 from .parser_xlsx import _fmt_dec, _fmt_int, _fmt_moeda
 
 
-def _linha_conta(nome, dados):
+def linha_conta(nome, dados):
     """Linha da tabela a partir da saída normalizada do parser (1 conta)."""
     n = dados.get("_num") or {}
     inv = n.get("investimento") or 0.0
@@ -48,7 +48,7 @@ def gerar_listagem(titulo, contas, arquivo_saida):
     contexto = {
         "titulo": titulo,
         "logo_b64": _logo_b64(),
-        "linhas": [_linha_conta(c["nome"], c["dados"]) for c in contas],
+        "linhas": [linha_conta(c["nome"], c["dados"]) for c in contas],
         "subtitulo": (f"{len(contas)} conta{'s' if len(contas) != 1 else ''}"
                       f" — gerado em {datetime.now():%d/%m/%Y}"),
         "rodape": "Relatório gerado a partir de dados exportados do "

@@ -2,6 +2,7 @@
 from django import forms
 
 from . import metricas
+from .parser_xlsx import VEICULACAO_TODAS, VEICULACOES
 
 
 class MultipleFileInput(forms.ClearableFileInput):
@@ -54,6 +55,14 @@ class UploadForm(forms.Form):
         label="Métrica", choices=metricas.opcoes_agrupadas, required=False,
         help_text="A métrica comparada entre as contas no PDF.",
     )
+    # Filtra as linhas pela coluna "Veiculação da campanha" do export
+    # (valores "active"/"inactive", mesmo com o cabeçalho em português).
+    veiculacao = forms.ChoiceField(
+        label="Campanhas", choices=VEICULACOES, required=False,
+        initial=VEICULACAO_TODAS,
+        help_text="Quais campanhas entram na comparação, pelo status de "
+                  "veiculação no export.",
+    )
     arquivos = MultipleFileField(
         label="Exports do Meta Ads Manager (.xlsx)",
         widget=MultipleFileInput(attrs={"accept": ".xlsx", "multiple": True}),
@@ -101,6 +110,7 @@ class UploadForm(forms.Form):
                                "menos 2 arquivos.")
             if not cd.get("metrica"):
                 self.add_error("metrica", "Escolha a métrica a comparar.")
+            cd["veiculacao"] = cd.get("veiculacao") or VEICULACAO_TODAS
 
         if modo == self.MODO_LISTAGEM:
             cd["titulo"] = (cd.get("titulo") or "").strip() or self.TITULO_LISTAGEM_PADRAO
@@ -121,7 +131,31 @@ class RevisaoForm(forms.Form):
     )
 
 
-class RevisaoGrupoForm(forms.Form):
+class _ComUnidades(forms.Form):
+    """Base dos modos multi-conta: um campo de nome por unidade, na ordem de
+    envio dos anexos. O nome digitado no painel chega como `initial`."""
+
+    def __init__(self, *args, nomes_unidades=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n_unidades = len(nomes_unidades)
+        for i, nome in enumerate(nomes_unidades):
+            # required=False: campo em branco preserva o nome que já vinha
+            # (do painel ou do arquivo) — ver nomes_finais().
+            self.fields[f"unidade_{i}"] = forms.CharField(
+                label=f"Nome da unidade {i + 1}", max_length=120, initial=nome,
+                required=False,
+            )
+
+    def campos_unidades(self):
+        return [self[f"unidade_{i}"] for i in range(self.n_unidades)]
+
+    def nomes_finais(self, atuais):
+        """Nomes revisados; campo em branco preserva o nome que já vinha."""
+        return [(self.cleaned_data.get(f"unidade_{i}") or "").strip() or atual
+                for i, atual in enumerate(atuais)]
+
+
+class RevisaoGrupoForm(_ComUnidades):
     """Etapa 2 no modo consolidado (2+ anexos): nomes das unidades + análise geral."""
     cliente = forms.CharField(label="Nome do grupo / cliente", max_length=120)
     periodo = forms.CharField(label="Período", max_length=80, required=False)
@@ -132,13 +166,38 @@ class RevisaoGrupoForm(forms.Form):
                   "Um parágrafo por bloco (separe com linha em branco). Aceita <b> e <i>.",
     )
 
-    def __init__(self, *args, nomes_unidades=(), **kwargs):
-        super().__init__(*args, **kwargs)
-        self.n_unidades = len(nomes_unidades)
-        for i, nome in enumerate(nomes_unidades):
-            self.fields[f"unidade_{i}"] = forms.CharField(
-                label=f"Nome da unidade {i + 1}", max_length=120, initial=nome,
-            )
 
-    def campos_unidades(self):
-        return [self[f"unidade_{i}"] for i in range(self.n_unidades)]
+class RevisaoListagemForm(_ComUnidades):
+    """Etapa 2 do modo Listagem: título do PDF + nomes das contas."""
+    titulo = forms.CharField(
+        label="Título do relatório", max_length=120, required=False,
+        widget=forms.TextInput(
+            attrs={"placeholder": UploadForm.TITULO_LISTAGEM_PADRAO}),
+        help_text="Em branco, usa "
+                  f'"{UploadForm.TITULO_LISTAGEM_PADRAO}".',
+    )
+
+    def clean_titulo(self):
+        return (self.cleaned_data["titulo"] or "").strip() \
+            or UploadForm.TITULO_LISTAGEM_PADRAO
+
+
+class RevisaoIndicadorForm(_ComUnidades):
+    """Etapa 2 do modo Indicador Único: cliente, métrica e nomes das contas.
+
+    A métrica é reeditável aqui — trocar de indicador na revisão não exige
+    reenviar os anexos, já que o parser rodou inteiro em cada um."""
+    cliente = forms.CharField(label="Cliente / grupo", max_length=120)
+    metrica = forms.ChoiceField(
+        label="Métrica comparada", choices=metricas.opcoes_agrupadas,
+        help_text="Trocar a métrica aqui regera o PDF sem reenviar os anexos.",
+    )
+    veiculacao = forms.ChoiceField(
+        label="Campanhas", choices=VEICULACOES, required=False,
+        initial=VEICULACAO_TODAS,
+        help_text="Filtro pelo status de veiculação no export — também "
+                  "reeditável sem reenviar os anexos.",
+    )
+
+    def clean_veiculacao(self):
+        return self.cleaned_data["veiculacao"] or VEICULACAO_TODAS
