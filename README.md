@@ -41,13 +41,40 @@ python manage.py runserver
 Acesse http://127.0.0.1:8000/
 
 ### Dependências de sistema (WeasyPrint)
-O PDF é renderizado com **WeasyPrint**, que precisa das bibliotecas nativas
-Pango/Cairo/GDK-Pixbuf. No Debian/Ubuntu:
+O PDF é renderizado com **WeasyPrint**, que desenha o texto com Pango/HarfBuzz.
+No Debian/Ubuntu:
 ```bash
-sudo apt install libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0
+sudo apt install libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core
 ```
 (Em outras distros/macOS, veja https://doc.courtbouillon.org/weasyprint/stable/first_steps.html.)
-As fontes usadas são do sistema (Helvetica/DejaVu Sans) — sem fontes web.
+As fontes são as do sistema — os templates do PDF pedem Helvetica e caem em
+DejaVu Sans, daí o `fonts-dejavu-core`; sem ele o PDF sai com outra fonte.
+
+## Deploy na VPS
+`deploy/deploy.sh` publica a aplicação numa VPS Ubuntu 24.04 sem domínio: o
+painel responde em `http://<ip-da-vps>`, atrás de nginx com senha, servido por
+gunicorn sob systemd (sobe no boot, reinicia sozinho se cair).
+
+Na VPS, como usuário com sudo:
+```bash
+git clone git@github.com:davioliveiraes/apex-reports.git
+sudo apex-reports/deploy/deploy.sh
+```
+Na primeira execução o script gera uma chave de deploy, mostra a pública e
+para — basta cadastrá-la em **Settings → Deploy keys** do repositório (sem
+write access) e rodar de novo. Ele também gera o `SECRET_KEY`, a senha do
+painel e imprime tudo no fim.
+
+O script é idempotente e é o próprio mecanismo de atualização: rodar de novo
+faz `git pull`, reinstala dependências, aplica migrações, recolhe estáticos e
+reinicia o serviço.
+```bash
+sudo /opt/apex-reports/deploy/deploy.sh              # publica versão nova
+sudo /opt/apex-reports/deploy/deploy.sh --senha 'x'  # troca a senha do painel
+sudo journalctl -u apex-reports -f                   # logs
+```
+Sem domínio não há HTTPS: o tráfego trafega em texto puro entre o navegador e a
+VPS. A senha do nginx impede o uso por terceiros, mas não criptografa.
 
 ## Estrutura
 - `relatorios/parser_xlsx.py` — leitura do export (colunas em PT ou EN,
@@ -90,5 +117,10 @@ As fontes usadas são do sistema (Helvetica/DejaVu Sans) — sem fontes web.
   que alimentam o PDF (`gerador_listagem.linha_conta`,
   `gerador_indicador.montar_tabela`) — o que se confere na tela é o que sai
   no arquivo.
-- `ALLOWED_HOSTS` está liberado para desenvolvimento — ajustar em produção,
-  junto com `DEBUG=False` e `SECRET_KEY` via variável de ambiente.
+- `SECRET_KEY`, `DEBUG` e `ALLOWED_HOSTS` vêm do ambiente
+  (`DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`). Sem nenhuma
+  variável valem os padrões de desenvolvimento (debug ligado, qualquer host);
+  na VPS o systemd carrega os valores de produção de `/etc/apex-reports/env`.
+- A aplicação não tem modelos próprios, mas a sessão que liga a importação à
+  tela de revisão é gravada no banco — `migrate` é obrigatório também em
+  produção.

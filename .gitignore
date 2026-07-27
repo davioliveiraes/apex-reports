@@ -7,3 +7,4 @@ claude_resume.txt
 docs/*
 !docs/img/
 venv
+staticfiles/

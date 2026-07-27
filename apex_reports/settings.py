@@ -10,22 +10,29 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
+# Os três ajustes de produção vêm do ambiente — na VPS o systemd carrega
+# /etc/apex-reports/env (ver deploy/deploy.sh). Os padrões abaixo são os de
+# desenvolvimento: `python manage.py runserver` sem nenhuma variável continua
+# funcionando como antes.
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-l6hgb-u!f)@$gv_=--*=&2kq5btic7+70a60_#&m&pr=*9%kll'
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-l6hgb-u!f)@$gv_=--*=&2kq5btic7+70a60_#&m&pr=*9%kll")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DJANGO_DEBUG", "1").strip().lower() not in ("0", "false", "no")
 
-ALLOWED_HOSTS = ["*"]  # ajuste em produção
+# Em produção recebe o IP da VPS; sem a variável, aceita qualquer host (dev).
+ALLOWED_HOSTS = [h.strip() for h in
+                 os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
 
 
 # Application definition
@@ -116,6 +123,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Destino do `collectstatic` em produção — na VPS o nginx serve esta pasta
+# direto, sem passar pelo Django.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Logo servido tanto no PDF (lido do disco) quanto na interface web (via
 # {% static %}) a partir de uma única fonte: docs/img/.
