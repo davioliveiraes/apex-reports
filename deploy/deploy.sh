@@ -13,13 +13,14 @@
 #   sudo ./deploy.sh --ip 203.0.113.10     # ou informe o IP na mão
 #   sudo ./deploy.sh --senha 'nova-senha'  # troca a senha do painel
 #   sudo ./deploy.sh --branch outra        # publica outro branch
+#   sudo ./deploy.sh --dir /outro/caminho  # ou --usuario, para mudar o destino
 #
 set -euo pipefail
 
 REPO="git@github.com:davioliveiraes/apex-reports.git"
 BRANCH="main"
-DESTINO="/opt/apex-reports"
-USUARIO_APP="apex"          # dono dos arquivos e do processo, sem shell
+USUARIO_APP=""              # vazio: o usuário que chamou o sudo
+DESTINO=""                  # vazio: ~/apex-reports desse usuário
 USUARIO_PAINEL="apex"       # login da senha do nginx
 SERVICO="apex-reports"
 PORTA_APP="127.0.0.1:8000"  # só loopback: quem fala com a internet é o nginx
@@ -28,16 +29,21 @@ AMBIENTE="$ETC/env"
 CHAVE="$ETC/deploy_key"
 CONHECIDOS="$ETC/known_hosts"
 HTPASSWD="/etc/nginx/${SERVICO}.htpasswd"
+# Estáticos fora do home: assim o nginx os alcança sem precisar de permissão
+# de travessia na pasta pessoal do usuário.
+ESTATICOS="/var/www/$SERVICO/static"
 IP=""
 SENHA=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --ip)     IP="$2"; shift 2 ;;
-    --senha)  SENHA="$2"; shift 2 ;;
-    --branch) BRANCH="$2"; shift 2 ;;
-    --repo)   REPO="$2"; shift 2 ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    --ip)      IP="$2"; shift 2 ;;
+    --senha)   SENHA="$2"; shift 2 ;;
+    --branch)  BRANCH="$2"; shift 2 ;;
+    --repo)    REPO="$2"; shift 2 ;;
+    --dir)     DESTINO="$2"; shift 2 ;;
+    --usuario) USUARIO_APP="$2"; shift 2 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "opção desconhecida: $1" >&2; exit 1 ;;
   esac
 done
@@ -45,6 +51,13 @@ done
 [[ $EUID -eq 0 ]] || { echo "rode com sudo: sudo $0 $*" >&2; exit 1; }
 
 passo() { printf '\n\033[1;31m▸\033[0m \033[1m%s\033[0m\n' "$1"; }
+
+# Por padrão a aplicação fica no home de quem rodou o sudo — o projeto aparece
+# ao lado dos outros, e o `git pull` usa a chave SSH que o usuário já tem.
+USUARIO_APP="${USUARIO_APP:-${SUDO_USER:-root}}"
+CASA=$(getent passwd "$USUARIO_APP" | cut -d: -f6)
+[[ -n "$CASA" ]] || { echo "usuário $USUARIO_APP não existe" >&2; exit 1; }
+DESTINO="${DESTINO:-$CASA/apex-reports}"
 
 # IP de saída da máquina — na KVM1 é o mesmo IP público que a Hostinger mostra
 # no painel. Se a VPS estiver atrás de NAT isso devolve um IP interno; nesse
@@ -68,30 +81,35 @@ apt-get install -y -qq \
   fonts-dejavu-core >/dev/null
 
 
-passo "Usuário e diretórios"
-id -u "$USUARIO_APP" &>/dev/null || useradd \
-  --system --create-home --home-dir "/home/$USUARIO_APP" \
-  --shell /usr/sbin/nologin "$USUARIO_APP"
+passo "Diretórios"
 install -d -m 750 -o root -g "$USUARIO_APP" "$ETC"
+install -d -m 755 -o "$USUARIO_APP" -g "$USUARIO_APP" "$ESTATICOS"
+echo "  aplicação em $DESTINO (usuário $USUARIO_APP)"
 
 
-passo "Chave de deploy do GitHub"
-if [[ ! -f "$CHAVE" ]]; then
-  ssh-keygen -q -t ed25519 -N "" -C "apex-reports deploy" -f "$CHAVE"
-  chown "$USUARIO_APP:$USUARIO_APP" "$CHAVE" "$CHAVE.pub"
-  chmod 600 "$CHAVE"
-fi
-if [[ ! -s "$CONHECIDOS" ]]; then
-  ssh-keyscan -t ed25519 github.com > "$CONHECIDOS" 2>/dev/null
-  chown "$USUARIO_APP:$USUARIO_APP" "$CONHECIDOS"
-fi
+passo "Acesso ao repositório"
+GIT_SSH_COMMAND=""
+como_app() { sudo -u "$USUARIO_APP" env HOME="$CASA" \
+             ${GIT_SSH_COMMAND:+GIT_SSH_COMMAND="$GIT_SSH_COMMAND"} "$@"; }
 
-export GIT_SSH_COMMAND="ssh -i $CHAVE -o IdentitiesOnly=yes -o UserKnownHostsFile=$CONHECIDOS"
-como_app() { sudo -u "$USUARIO_APP" env HOME="/home/$USUARIO_APP" \
-             GIT_SSH_COMMAND="$GIT_SSH_COMMAND" "$@"; }
+if como_app git ls-remote "$REPO" &>/dev/null; then
+  # O usuário já tem uma chave SSH que o GitHub aceita (a mesma dos outros
+  # projetos dele) — não há por que criar uma chave de deploy só para isto.
+  echo "  usando a chave SSH que $USUARIO_APP já tem"
+else
+  if [[ ! -f "$CHAVE" ]]; then
+    ssh-keygen -q -t ed25519 -N "" -C "apex-reports deploy" -f "$CHAVE"
+    chown "$USUARIO_APP:$USUARIO_APP" "$CHAVE" "$CHAVE.pub"
+    chmod 600 "$CHAVE"
+  fi
+  if [[ ! -s "$CONHECIDOS" ]]; then
+    ssh-keyscan -t ed25519 github.com > "$CONHECIDOS" 2>/dev/null
+    chown "$USUARIO_APP:$USUARIO_APP" "$CONHECIDOS"
+  fi
+  GIT_SSH_COMMAND="ssh -i $CHAVE -o IdentitiesOnly=yes -o UserKnownHostsFile=$CONHECIDOS"
 
-if ! como_app git ls-remote "$REPO" &>/dev/null; then
-  cat <<AVISO
+  if ! como_app git ls-remote "$REPO" &>/dev/null; then
+    cat <<AVISO
 
   A VPS ainda não tem permissão de ler o repositório.
 
@@ -101,9 +119,11 @@ if ! como_app git ls-remote "$REPO" &>/dev/null; then
   4. Rode este script de novo — ele continua de onde parou.
 
 AVISO
-  cat "$CHAVE.pub"
-  echo
-  exit 1
+    cat "$CHAVE.pub"
+    echo
+    exit 1
+  fi
+  echo "  usando a chave de deploy em $CHAVE"
 fi
 
 
@@ -139,12 +159,13 @@ cat > "$AMBIENTE" <<EOF
 DJANGO_SECRET_KEY=$SEGREDO
 DJANGO_DEBUG=0
 DJANGO_ALLOWED_HOSTS=$HOSTS
+DJANGO_STATIC_ROOT=$ESTATICOS
 EOF
 chown root:"$USUARIO_APP" "$AMBIENTE"
 chmod 640 "$AMBIENTE"
 
 manage() { como_app env DJANGO_SECRET_KEY="$SEGREDO" DJANGO_DEBUG=0 \
-           DJANGO_ALLOWED_HOSTS="$HOSTS" \
+           DJANGO_ALLOWED_HOSTS="$HOSTS" DJANGO_STATIC_ROOT="$ESTATICOS" \
            "$DESTINO/venv/bin/python" "$DESTINO/manage.py" "$@"; }
 # O app não tem modelos próprios, mas a sessão que liga a importação à tela de
 # revisão é gravada no banco — sem migrate o segundo passo do fluxo quebra.
@@ -212,7 +233,7 @@ server {
     auth_basic_user_file $HTPASSWD;
 
     location /static/ {
-        alias $DESTINO/staticfiles/;
+        alias $ESTATICOS/;
         access_log off;
         expires 7d;
     }

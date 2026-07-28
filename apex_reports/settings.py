@@ -124,9 +124,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-# Destino do `collectstatic` em produção — na VPS o nginx serve esta pasta
-# direto, sem passar pelo Django.
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Destino do `collectstatic` em produção — na VPS fica fora do projeto, em
+# /var/www, para o nginx servir os estáticos sem precisar de permissão dentro
+# da pasta pessoal do usuário que roda a aplicação.
+STATIC_ROOT = Path(os.environ.get("DJANGO_STATIC_ROOT", BASE_DIR / 'staticfiles'))
 
 # Logo servido tanto no PDF (lido do disco) quanto na interface web (via
 # {% static %}) a partir de uma única fonte: docs/img/.

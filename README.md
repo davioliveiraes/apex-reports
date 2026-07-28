@@ -55,26 +55,37 @@ DejaVu Sans, daí o `fonts-dejavu-core`; sem ele o PDF sai com outra fonte.
 painel responde em `http://<ip-da-vps>`, atrás de nginx com senha, servido por
 gunicorn sob systemd (sobe no boot, reinicia sozinho se cair).
 
-Na VPS, como usuário com sudo:
+Na VPS, no home do usuário com sudo que vai rodar a aplicação:
 ```bash
 git clone git@github.com:davioliveiraes/apex-reports.git
 sudo apex-reports/deploy/deploy.sh
 ```
-Na primeira execução o script gera uma chave de deploy, mostra a pública e
-para — basta cadastrá-la em **Settings → Deploy keys** do repositório (sem
-write access) e rodar de novo. Ele também gera o `SECRET_KEY`, a senha do
-painel e imprime tudo no fim.
+A aplicação fica em `~/apex-reports` desse usuário, e é como ele que o serviço
+roda — o projeto aparece ao lado dos outros no home, não escondido em `/opt`
+(`--dir` e `--usuario` mudam isso). Só os estáticos vão para fora, em
+`/var/www/apex-reports/static`, para o nginx não precisar de permissão de
+travessia dentro do home.
+
+Para clonar, o script usa a chave SSH que o usuário já tiver. Se ela não
+alcançar o repositório, ele gera uma chave de deploy, mostra a pública e para:
+basta cadastrá-la em **Settings → Deploy keys** (sem write access) e rodar de
+novo. Ele também gera o `SECRET_KEY`, a senha do painel e imprime tudo no fim.
 
 O script é idempotente e é o próprio mecanismo de atualização: rodar de novo
 faz `git pull`, reinstala dependências, aplica migrações, recolhe estáticos e
 reinicia o serviço.
 ```bash
-sudo /opt/apex-reports/deploy/deploy.sh              # publica versão nova
-sudo /opt/apex-reports/deploy/deploy.sh --senha 'x'  # troca a senha do painel
-sudo journalctl -u apex-reports -f                   # logs
+sudo ~/apex-reports/deploy/deploy.sh              # publica versão nova
+sudo ~/apex-reports/deploy/deploy.sh --senha 'x'  # troca a senha do painel
+sudo journalctl -u apex-reports -f                # logs
 ```
 Sem domínio não há HTTPS: o tráfego trafega em texto puro entre o navegador e a
 VPS. A senha do nginx impede o uso por terceiros, mas não criptografa.
+
+Como o acesso é por IP puro, o bloco do nginx se declara `default_server` na
+porta 80 e remove o site `default`. Se um dia outra aplicação dividir essa VPS,
+uma das duas terá que ganhar domínio ou mudar de porta — só um `default_server`
+pode existir por porta.
 
 ## Estrutura
 - `relatorios/parser_xlsx.py` — leitura do export (colunas em PT ou EN,
