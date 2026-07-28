@@ -38,6 +38,8 @@ ESTATICOS="/var/www/$SERVICO/static"
 IP=""
 SENHA=""
 
+ARGUMENTOS=("$@")   # guardados para o re-exec depois do pull (ver "Código")
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ip)      IP="$2"; shift 2 ;;
@@ -132,6 +134,8 @@ fi
 
 
 passo "Código ($BRANCH)"
+EU="$DESTINO/deploy/$(basename "$0")"
+ANTES=$(sha256sum "$EU" 2>/dev/null | cut -d' ' -f1 || true)
 if [[ -d "$DESTINO/.git" ]]; then
   # A VPS é alvo de publicação, não área de trabalho: o que estiver alterado
   # lá dentro é descartado em favor do que está no GitHub.
@@ -142,6 +146,16 @@ else
   como_app git clone --quiet --branch "$BRANCH" "$REPO" "$DESTINO"
 fi
 echo "  $(como_app git -C "$DESTINO" log -1 --format='%h %s')"
+
+# O pull acabou de trocar o arquivo que este bash está lendo. Se o próprio script
+# mudou, o resto da execução seria a lógica velha aplicada ao código novo (e o
+# bash ainda lê o arquivo sob demanda, por posição de byte). Então recomeça com a
+# versão nova; a variável impede que isso vire um laço.
+DEPOIS=$(sha256sum "$EU" 2>/dev/null | cut -d' ' -f1 || true)
+if [[ -n "$ANTES" && -n "$DEPOIS" && "$ANTES" != "$DEPOIS" && -z "${APEX_REEXEC:-}" ]]; then
+  echo "  o deploy.sh mudou nesse pull — recomeçando com a versão nova"
+  exec env APEX_REEXEC=1 bash "$EU" "${ARGUMENTOS[@]}"
+fi
 
 
 passo "Dependências Python"
