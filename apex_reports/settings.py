@@ -34,6 +34,17 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "1").strip().lower() not in ("0", "false"
 ALLOWED_HOSTS = [h.strip() for h in
                  os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
 
+# Subcaminho em que a aplicação é publicada (ex.: /apex-reports). O nginx tira o
+# prefixo antes de repassar, então é daqui que o Django aprende a recolocá-lo em
+# tudo que ele gera: {% url %}, redirects e {% static %}. Vazio em dev = raiz.
+FORCE_SCRIPT_NAME = os.environ.get("DJANGO_SCRIPT_NAME", "").rstrip("/") or None
+
+# Com prefixo, os cookies ficam restritos a ele: outra aplicação no mesmo IP tem
+# seu próprio sessionid/csrftoken e os dois não se sobrescrevem.
+if FORCE_SCRIPT_NAME:
+    SESSION_COOKIE_PATH = FORCE_SCRIPT_NAME
+    CSRF_COOKIE_PATH = FORCE_SCRIPT_NAME
+
 
 # Application definition
 

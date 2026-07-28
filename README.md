@@ -52,8 +52,8 @@ DejaVu Sans, daí o `fonts-dejavu-core`; sem ele o PDF sai com outra fonte.
 
 ## Deploy na VPS
 `deploy/deploy.sh` publica a aplicação numa VPS Ubuntu 24.04 sem domínio: o
-painel responde em `http://<ip-da-vps>`, atrás de nginx com senha, servido por
-gunicorn sob systemd (sobe no boot, reinicia sozinho se cair).
+painel responde em `http://<ip-da-vps>/apex-reports`, atrás de nginx com senha,
+servido por gunicorn sob systemd (sobe no boot, reinicia sozinho se cair).
 
 Na VPS, no home do usuário com sudo que vai rodar a aplicação:
 ```bash
@@ -82,10 +82,16 @@ sudo journalctl -u apex-reports -f                # logs
 Sem domínio não há HTTPS: o tráfego trafega em texto puro entre o navegador e a
 VPS. A senha do nginx impede o uso por terceiros, mas não criptografa.
 
-Como o acesso é por IP puro, o bloco do nginx se declara `default_server` na
-porta 80 e remove o site `default`. Se um dia outra aplicação dividir essa VPS,
-uma das duas terá que ganhar domínio ou mudar de porta — só um `default_server`
-pode existir por porta.
+O subcaminho `/apex-reports` (mudável com `--caminho`) identifica a aplicação na
+URL e deixa a raiz do IP livre para outra. O nginx tira o prefixo antes de
+repassar ao gunicorn; quem o recoloca em tudo que o Django gera — `{% url %}`,
+redirects, `{% static %}` — é o `FORCE_SCRIPT_NAME`, alimentado pela variável
+`DJANGO_SCRIPT_NAME`. Os cookies de sessão e CSRF ficam restritos ao prefixo,
+para não colidirem com os de outra aplicação no mesmo IP.
+
+Por ora quem digita só o IP é redirecionado ao painel, e o bloco se declara
+`default_server` na porta 80 (removendo o site `default` do nginx). Quando outra
+aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
 
 ## Estrutura
 - `relatorios/parser_xlsx.py` — leitura do export (colunas em PT ou EN,
@@ -128,10 +134,11 @@ pode existir por porta.
   que alimentam o PDF (`gerador_listagem.linha_conta`,
   `gerador_indicador.montar_tabela`) — o que se confere na tela é o que sai
   no arquivo.
-- `SECRET_KEY`, `DEBUG` e `ALLOWED_HOSTS` vêm do ambiente
-  (`DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`). Sem nenhuma
-  variável valem os padrões de desenvolvimento (debug ligado, qualquer host);
-  na VPS o systemd carrega os valores de produção de `/etc/apex-reports/env`.
+- Os ajustes de produção vêm do ambiente: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`,
+  `DJANGO_ALLOWED_HOSTS`, `DJANGO_STATIC_ROOT` e `DJANGO_SCRIPT_NAME`. Sem
+  nenhuma variável valem os padrões de desenvolvimento (debug ligado, qualquer
+  host, aplicação na raiz); na VPS o systemd carrega os valores de produção de
+  `/etc/apex-reports/env`.
 - A aplicação não tem modelos próprios, mas a sessão que liga a importação à
   tela de revisão é gravada no banco — `migrate` é obrigatório também em
   produção.

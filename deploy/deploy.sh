@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Deploy do Apex Reports numa VPS Ubuntu 24.04 (Hostinger KVM1), sem domínio:
-# o painel passa a responder em http://<ip-da-vps>, atrás do nginx com senha,
-# e sobe sozinho no boot — não é mais preciso deixar um `runserver` aberto.
+# o painel passa a responder em http://<ip-da-vps>/apex-reports, atrás do nginx
+# com senha, e sobe sozinho no boot — não é mais preciso deixar um `runserver`
+# aberto. O subcaminho identifica a aplicação e deixa a raiz livre para outra.
 #
 # Roda NA VPS, com sudo. Pode ser executado quantas vezes quiser: cada passo
 # confere o estado antes de agir, e o segredo do Django, a senha do painel e a
@@ -14,6 +15,7 @@
 #   sudo ./deploy.sh --senha 'nova-senha'  # troca a senha do painel
 #   sudo ./deploy.sh --branch outra        # publica outro branch
 #   sudo ./deploy.sh --dir /outro/caminho  # ou --usuario, para mudar o destino
+#   sudo ./deploy.sh --caminho /relatorios # muda o subcaminho ( / = na raiz)
 #
 set -euo pipefail
 
@@ -24,6 +26,7 @@ DESTINO=""                  # vazio: ~/apex-reports desse usuário
 USUARIO_PAINEL="apex"       # login da senha do nginx
 SERVICO="apex-reports"
 PORTA_APP="127.0.0.1:8000"  # só loopback: quem fala com a internet é o nginx
+PREFIXO="/$SERVICO"         # subcaminho: http://<ip>/apex-reports (vazio = raiz)
 ETC="/etc/apex-reports"
 AMBIENTE="$ETC/env"
 CHAVE="$ETC/deploy_key"
@@ -43,6 +46,7 @@ while [[ $# -gt 0 ]]; do
     --repo)    REPO="$2"; shift 2 ;;
     --dir)     DESTINO="$2"; shift 2 ;;
     --usuario) USUARIO_APP="$2"; shift 2 ;;
+    --caminho) PREFIXO="/${2#/}"; PREFIXO="${PREFIXO%/}"; shift 2 ;;
     -h|--help) sed -n '2,19p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "opção desconhecida: $1" >&2; exit 1 ;;
   esac
@@ -160,12 +164,14 @@ DJANGO_SECRET_KEY=$SEGREDO
 DJANGO_DEBUG=0
 DJANGO_ALLOWED_HOSTS=$HOSTS
 DJANGO_STATIC_ROOT=$ESTATICOS
+DJANGO_SCRIPT_NAME=$PREFIXO
 EOF
 chown root:"$USUARIO_APP" "$AMBIENTE"
 chmod 640 "$AMBIENTE"
 
 manage() { como_app env DJANGO_SECRET_KEY="$SEGREDO" DJANGO_DEBUG=0 \
            DJANGO_ALLOWED_HOSTS="$HOSTS" DJANGO_STATIC_ROOT="$ESTATICOS" \
+           DJANGO_SCRIPT_NAME="$PREFIXO" \
            "$DESTINO/venv/bin/python" "$DESTINO/manage.py" "$@"; }
 # O app não tem modelos próprios, mas a sessão que liga a importação à tela de
 # revisão é gravada no banco — sem migrate o segundo passo do fluxo quebra.
@@ -220,6 +226,14 @@ chmod 640 "$HTPASSWD"
 
 
 passo "nginx"
+# Com subcaminho, duas cortesias: quem digita só o IP é mandado para o painel, e
+# quem digita o caminho sem a barra final ganha a barra. Sem prefixo (--caminho /)
+# nenhuma das duas existe — a primeira viraria um redirect de / para / .
+ATALHOS=""
+if [[ -n "$PREFIXO" ]]; then
+  ATALHOS="location = / { return 302 $PREFIXO/; }
+    location = $PREFIXO { return 301 $PREFIXO/; }"
+fi
 cat > "/etc/nginx/sites-available/$SERVICO" <<EOF
 server {
     listen 80 default_server;
@@ -232,14 +246,19 @@ server {
     auth_basic "Apex Reports";
     auth_basic_user_file $HTPASSWD;
 
-    location /static/ {
+    $ATALHOS
+
+    location $PREFIXO/static/ {
         alias $ESTATICOS/;
         access_log off;
         expires 7d;
     }
 
-    location / {
-        proxy_pass http://$PORTA_APP;
+    location $PREFIXO/ {
+        # A barra no fim do proxy_pass tira o prefixo antes de repassar: o Django
+        # recebe /. Quem recoloca o prefixo nos links que ele gera é o
+        # FORCE_SCRIPT_NAME (DJANGO_SCRIPT_NAME no env).
+        proxy_pass http://$PORTA_APP/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -274,7 +293,7 @@ codigo() { curl -s -o /dev/null -m 10 -w '%{http_code}' "$1" || echo 000; }
 # Direto no gunicorn: 200 prova que o Django subiu. Pelo nginx sem senha: 401
 # prova que a porta 80 está no ar E que a proteção está valendo.
 APP=$(codigo "http://$PORTA_APP/")
-WEB=$(codigo "http://127.0.0.1/")
+WEB=$(codigo "http://127.0.0.1$PREFIXO/")
 ok() { [[ "$1" == "$2" ]] && echo "✓" || echo "✗ (esperado $2)"; }
 echo "  Django no gunicorn ... HTTP $APP $(ok "$APP" 200)"
 echo "  nginx com senha ..... HTTP $WEB $(ok "$WEB" 401)"
@@ -282,7 +301,7 @@ echo "  nginx com senha ..... HTTP $WEB $(ok "$WEB" 401)"
 cat <<FIM
 
 ────────────────────────────────────────────────────────────
-  Apex Reports no ar:  http://$IP
+  Apex Reports no ar:  http://$IP$PREFIXO
   Usuário: $USUARIO_PAINEL
 FIM
 if [[ -n "$GERADA" ]]; then
