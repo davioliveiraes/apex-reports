@@ -138,13 +138,21 @@
   .cartao form > div:first-child > label{margin-top:0}
   .rot-idx{color:var(--red);margin-right:8px}
 
-  input[type=text],textarea,select{
+  input[type=text],input[type=date],textarea,select{
     width:100%;background:var(--surface-2);border:1px solid var(--line);
     color:var(--white);padding:11px 13px;font:15px/1.5 var(--sans);border-radius:3px;
   }
   input[type=text]::placeholder,textarea::placeholder{color:var(--silver-dim)}
-  input[type=text]:focus-visible,textarea:focus-visible,select:focus-visible{
+  input[type=text]:focus-visible,input[type=date]:focus-visible,
+  textarea:focus-visible,select:focus-visible{
     outline:2px solid var(--red);outline-offset:1px;border-color:var(--red)}
+  /* o ícone de calendário do input nativo vem escuro sobre fundo escuro */
+  input[type=date]::-webkit-calendar-picker-indicator{
+    filter:invert(1);opacity:.55;cursor:pointer}
+
+  /* par de datas do período lado a lado, empilhando em telas estreitas */
+  .par-datas{display:flex;gap:14px;flex-wrap:wrap}
+  .par-datas > div{flex:1 1 160px}
   /* seta própria: o select nativo em dark herda o triângulo claro do SO */
   select{
     appearance:none;cursor:pointer;padding-right:34px;

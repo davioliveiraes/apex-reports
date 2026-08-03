@@ -168,7 +168,7 @@ class RevisaoGrupoForm(_ComUnidades):
 
 
 class RevisaoListagemForm(_ComUnidades):
-    """Etapa 2 do modo Listagem: título do PDF + nomes das contas."""
+    """Etapa 2 do modo Listagem: título do PDF, período e nomes das contas."""
     titulo = forms.CharField(
         label="Título do relatório", max_length=120, required=False,
         widget=forms.TextInput(
@@ -176,10 +176,37 @@ class RevisaoListagemForm(_ComUnidades):
         help_text="Em branco, usa "
                   f'"{UploadForm.TITULO_LISTAGEM_PADRAO}".',
     )
+    # `format` explícito: o input nativo de data só entende ISO, e a locale
+    # pt-BR faria o widget renderizar o valor inicial como dd/mm/aaaa —
+    # o campo apareceria vazio. Na entrada, o pt-BR aceita as duas formas.
+    inicio = forms.DateField(
+        label="Início do período", required=False,
+        widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+    )
+    fim = forms.DateField(
+        label="Fim do período", required=False,
+        widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+    )
 
     def clean_titulo(self):
         return (self.cleaned_data["titulo"] or "").strip() \
             or UploadForm.TITULO_LISTAGEM_PADRAO
+
+    def clean(self):
+        cd = super().clean()
+        inicio, fim = cd.get("inicio"), cd.get("fim")
+        # Meia data no cabeçalho ("01/07/2026 — ") é pior que nenhuma.
+        if bool(inicio) != bool(fim):
+            self.add_error("fim" if inicio else "inicio",
+                           "Informe as duas datas do período, ou nenhuma.")
+        elif inicio and fim < inicio:
+            self.add_error("fim", "O fim do período é anterior ao início.")
+        return cd
+
+    def periodo(self):
+        """Rótulo do cabeçalho do PDF; vazio quando as datas não foram dadas."""
+        inicio, fim = self.cleaned_data.get("inicio"), self.cleaned_data.get("fim")
+        return f"{inicio:%d/%m/%Y} — {fim:%d/%m/%Y}" if inicio and fim else ""
 
 
 class RevisaoIndicadorForm(_ComUnidades):
