@@ -4,7 +4,7 @@
 {% block conteudo %}
 {% if modo_listagem %}
 <h1>Revisar listagem</h1>
-<p class="sub">{{ dados.contas|length }} contas na ordem de envio. Ajuste o título e os nomes das contas e gere o PDF final.</p>
+<p class="sub">{{ dados.contas|length }} contas ranqueadas por número de resultados. Ajuste o título e os nomes das contas e gere o PDF final.</p>
 {% elif modo_indicador %}
 <h1>Revisar indicador — {{ dados.cliente }}</h1>
 <p class="sub">Confira os valores, ajuste os nomes das contas e gere o PDF final. Trocar a métrica não exige reenviar os anexos.</p>
@@ -46,15 +46,15 @@
 {% if modo_listagem %}
 <div class="secao-titulo">Prévia — uma linha por conta</div>
 <table>
-  <tr><th>Conta</th><th>Investimento</th><th>Resultados</th><th>Custo / Result.</th><th>CTR</th></tr>
+  <tr><th>#</th><th>Conta</th><th>Nº Result.</th><th>Investimento</th><th>Custo / Result.</th><th>CPM</th></tr>
   {% for l in previa %}
   <tr>
-    <td>{{ l.conta }}</td><td>{{ l.investimento }}</td><td>{{ l.resultados }}</td>
-    <td>{{ l.custo }}</td><td>{{ l.ctr }}</td>
+    <td>{{ l.posicao }}</td><td>{{ l.conta }}</td><td>{{ l.resultados }}</td>
+    <td>{{ l.investimento }}</td><td>{{ l.custo }}</td><td>{{ l.cpm }}</td>
   </tr>
   {% endfor %}
 </table>
-<p class="legenda">O PDF sai em paisagem, com as colunas de alcance e impressões também.</p>
+<p class="legenda">O PDF sai em paisagem, com as colunas de resultado, alcance e impressões também.</p>
 {% endif %}
 
 <div class="cartao" style="margin-top:26px">
@@ -65,6 +65,19 @@
     {{ form.titulo }}
     <p class="ajuda">{{ form.titulo.help_text }}</p>
     {{ form.titulo.errors }}
+
+    <div class="par-datas">
+      <div>
+        <label for="{{ form.inicio.id_for_label }}">{{ form.inicio.label }}</label>
+        {{ form.inicio }} {{ form.inicio.errors }}
+      </div>
+      <div>
+        <label for="{{ form.fim.id_for_label }}">{{ form.fim.label }}</label>
+        {{ form.fim }} {{ form.fim.errors }}
+      </div>
+    </div>
+    <p class="ajuda">Aparece no canto superior direito do PDF. Sugerido a partir
+      das datas dos anexos; em branco, o bloco não sai.</p>
     {% else %}
     <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
     {{ form.cliente }} {{ form.cliente.errors }}

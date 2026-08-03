@@ -3,16 +3,15 @@ import io
 import os
 import re
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 
 from django.http import FileResponse
 from django.shortcuts import redirect, render
 
-from . import metricas
 from .forms import (RevisaoForm, RevisaoGrupoForm, RevisaoIndicadorForm,
                     RevisaoListagemForm, UploadForm)
 from .gerador_indicador import gerar_indicador, montar_tabela
-from .gerador_listagem import gerar_listagem, linha_conta
+from .gerador_listagem import gerar_listagem, montar_linhas
 from .gerador_pdf import gerar_relatorio
 from .parser_xlsx import (VEICULACAO_TODAS, VEICULACOES, consolidar,
                           consolidar_grupo, filtrar_veiculacao, ler_export_meta,
@@ -85,14 +84,36 @@ def _sinalizar_download(request, resposta):
     return resposta
 
 
-def _pdf_listagem(titulo, contas):
-    """Modo 3 — PDF de listagem. `contas` mantém a ordem de envio dos anexos,
-    que é a ordem das linhas."""
+def _periodo_detectado(contas):
+    """(início mais antigo, fim mais recente) entre os anexos — sugestão para
+    o campo de período na revisão.
+
+    Sai do período que o parser já leu de cada arquivo ("dd/mm/aaaa a
+    dd/mm/aaaa"); anexo sem as colunas de data simplesmente não participa.
+    """
+    inicios, fins = [], []
+    for c in contas:
+        partes = ((c.get("dados") or {}).get("periodo") or "").split(" a ")
+        if len(partes) != 2:
+            continue
+        try:
+            i, f = (datetime.strptime(p.strip(), "%d/%m/%Y").date()
+                    for p in partes)
+        except ValueError:
+            continue
+        inicios.append(i)
+        fins.append(f)
+    return (min(inicios), max(fins)) if inicios else (None, None)
+
+
+def _pdf_listagem(titulo, contas, periodo=""):
+    """Modo 3 — PDF de listagem. As linhas saem ranqueadas por número de
+    resultados; `contas` chega aqui na ordem de envio dos anexos."""
     buffer = io.BytesIO()
-    gerar_listagem(titulo, contas, buffer)
+    gerar_listagem(titulo, contas, buffer, periodo=periodo)
     buffer.seek(0)
-    slug = _slug(titulo) or "Relatorio-de-Listagem"
-    nome = f"{slug}-{datetime.now():%d-%m-%Y}.pdf"
+    nome = _nome_arquivo(titulo or "Relatorio de Listagem",
+                         UploadForm.MODO_LISTAGEM, *_datas_periodo(periodo))
     return FileResponse(buffer, as_attachment=True, filename=nome)
 
 
@@ -101,13 +122,11 @@ def _pdf_indicador(cliente, chave_metrica, contas, veiculacao=VEICULACAO_TODAS):
     ordem de envio; a ordenação das linhas segue a direção de `melhor` no
     registro de métricas."""
     buffer = io.BytesIO()
-    periodo = gerar_indicador(cliente, chave_metrica, contas, buffer, veiculacao)
+    gerar_indicador(cliente, chave_metrica, contas, buffer, veiculacao)
     buffer.seek(0)
-    partes = [_slug(cliente) or "cliente",
-              _slug(metricas.METRICS_REGISTRY[chave_metrica]["label"]),
-              _slug(periodo) or f"{datetime.now():%d-%m-%Y}"]
-    return FileResponse(buffer, as_attachment=True,
-                        filename="-".join(partes) + ".pdf")
+    nome = _nome_arquivo(cliente, UploadForm.MODO_INDICADOR,
+                         *_periodo_detectado(contas))
+    return FileResponse(buffer, as_attachment=True, filename=nome)
 
 
 def _ler_arquivos(arquivos, nomes=None, variantes=False):
@@ -133,13 +152,13 @@ def _ler_arquivos(arquivos, nomes=None, variantes=False):
                 "Confira se é um .xlsx válido do Meta Ads Manager."
             )
         digitado = (nomes[i] if i < len(nomes) else "").strip()
-        conta = {"nome": digitado or _nome_unidade(f.name),
-                 "dados": consolidar(registros, mapa)}
+        nome = digitado or _nome_unidade(f.name)
+        conta = {"nome": nome, "dados": consolidar(registros, mapa, nome)}
         if variantes:
             # Filtro sem nenhuma campanha → None: a conta entra no PDF como
             # "—", fora do total, em vez de virar uma linha de zeros.
             conta["variantes"] = {
-                chave: (_enxuto(consolidar(linhas, mapa)) if linhas else None)
+                chave: (_enxuto(consolidar(linhas, mapa, nome)) if linhas else None)
                 for chave, _ in VEICULACOES
                 for linhas in [filtrar_veiculacao(registros, chave)]
             }
@@ -208,7 +227,8 @@ def revisao(request):
             buffer = io.BytesIO()
             gerar_relatorio(relatorio, buffer)
             buffer.seek(0)
-            nome = _nome_arquivo(cd["cliente"], cd.get("periodo", ""))
+            nome = _nome_arquivo(cd["cliente"], UploadForm.MODO_UNICO,
+                                 *_datas_periodo(cd.get("periodo", "")))
             return _sinalizar_download(
                 request, FileResponse(buffer, as_attachment=True, filename=nome))
     else:
@@ -253,7 +273,8 @@ def _revisao_grupo(request, dados):
             buffer = io.BytesIO()
             gerar_relatorio(relatorio, buffer)
             buffer.seek(0)
-            nome = _nome_arquivo(cd["cliente"], cd.get("periodo", ""))
+            nome = _nome_arquivo(cd["cliente"], UploadForm.MODO_CONSOLIDADO,
+                                 *_datas_periodo(cd.get("periodo", "")))
             return _sinalizar_download(
                 request, FileResponse(buffer, as_attachment=True, filename=nome))
     else:
@@ -283,16 +304,17 @@ def _revisao_listagem(request, dados):
             for conta, nome in zip(contas, form.nomes_finais(nomes)):
                 conta["nome"] = nome
             request.session[SESSION_KEY] = dados      # nomes revisados persistem
-            return _sinalizar_download(
-                request, _pdf_listagem(form.cleaned_data["titulo"], contas))
+            return _sinalizar_download(request, _pdf_listagem(
+                form.cleaned_data["titulo"], contas, form.periodo()))
     else:
-        form = RevisaoListagemForm(nomes_unidades=nomes,
-                                   initial={"titulo": dados.get("titulo", "")})
+        inicio, fim = _periodo_detectado(contas)
+        form = RevisaoListagemForm(nomes_unidades=nomes, initial={
+            "titulo": dados.get("titulo", ""), "inicio": inicio, "fim": fim})
 
     return render(request, "relatorios/revisao.html", {
         "form": form, "dados": dados, "modo_listagem": True,
         "pares_unidades": list(zip(contas, form.campos_unidades())),
-        "previa": [linha_conta(c["nome"], c["dados"]) for c in contas],
+        "previa": montar_linhas(contas),
     })
 
 
@@ -339,6 +361,16 @@ def _revisao_indicador(request, dados):
 _MESES_PT = ["jan", "fev", "mar", "abr", "mai", "jun",
              "jul", "ago", "set", "out", "nov", "dez"]
 
+# Trecho que identifica a funcionalidade no nome do arquivo. Fica separado das
+# constantes de modo do form: aquelas são chaves internas ("unico"), estas o
+# operador lê na pasta de downloads meses depois.
+_FUNCIONALIDADES = {
+    UploadForm.MODO_UNICO: "anexounico",
+    UploadForm.MODO_CONSOLIDADO: "consolidado",
+    UploadForm.MODO_LISTAGEM: "listagem",
+    UploadForm.MODO_INDICADOR: "indicadorunico",
+}
+
 
 def _slug(texto):
     """Translitera acentos (São -> Sao) e troca o resto por hífen."""
@@ -347,15 +379,36 @@ def _slug(texto):
     return re.sub(r"[^a-zA-Z0-9]+", "-", sem_acento).strip("-")
 
 
-def _nome_arquivo(cliente, periodo):
-    """Ex.: 'Tim-Sao-Jose-Campanhas-1-de-jul-de-2026-15-de-jul-de-2026.pdf'"""
-    empresa = _slug(cliente) or "cliente"
+def _data_curta(d):
+    """1º de julho de 2026 -> '1-jul-26' (dia sem zero à esquerda)."""
+    return f"{d.day}-{_MESES_PT[d.month - 1]}-{d:%y}"
+
+
+def _datas_periodo(periodo):
+    """(início, fim) a partir do período em texto — "01/07/2026 a 15/07/2026"
+    dos modos 1 e 2, "01/07/2026 — 31/07/2026" da listagem."""
+    partes = re.split(r"\s+(?:a|—|até)\s+", str(periodo or "").strip())
+    if len(partes) != 2:
+        return None, None
     try:
-        inicio, fim = (datetime.strptime(p.strip(), "%d/%m/%Y")
-                       for p in periodo.split(" a "))
-        datas = "-".join(f"{d.day}-de-{_MESES_PT[d.month - 1]}-de-{d.year}"
-                         for d in (inicio, fim))
+        return tuple(datetime.strptime(p.strip(), "%d/%m/%Y").date()
+                     for p in partes)
     except ValueError:
-        datas = f"{datetime.now():%d-%m-%Y}"
-    return f"{empresa}-Campanhas-{datas}.pdf"
+        return None, None
+
+
+def _nome_arquivo(empresa, modo, inicio=None, fim=None):
+    """Nome do PDF, no mesmo padrão nos quatro modos:
+
+        TIM-BRASIL-consolidado-1-jul-26-31-jul-26.pdf
+
+    Sem período legível entra a data de geração, marcada como tal para não ser
+    lida como intervalo: 'TIM-BRASIL-listagem-gerado-3-ago-26.pdf'.
+    """
+    partes = [_slug(empresa) or "cliente", _FUNCIONALIDADES.get(modo, modo)]
+    if inicio and fim:
+        partes += [_data_curta(inicio), _data_curta(fim)]
+    else:
+        partes += ["gerado", _data_curta(date.today())]
+    return "-".join(partes) + ".pdf"
 

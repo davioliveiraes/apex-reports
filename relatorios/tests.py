@@ -9,6 +9,7 @@ import io
 import shutil
 import subprocess
 import tempfile
+from datetime import date
 from unittest.mock import patch
 
 import fitz  # PyMuPDF — extração de texto e contagem de páginas
@@ -18,6 +19,7 @@ from openpyxl import Workbook
 
 from . import benchmarks, metricas, parser_xlsx
 from .parser_xlsx import consolidar_grupo, ler_export_meta
+from .views import _MESES_PT
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -132,10 +134,8 @@ class FluxoIndividualTest(TestCase):
 
         r = self._gerar_pdf()
         self.assertEqual(r.status_code, 200)
-        self.assertIn(
-            'filename="ILOC-Campanhas-1-de-jul-de-2026-15-de-jul-de-2026.pdf"',
-            r["Content-Disposition"],
-        )
+        self.assertIn('filename="ILOC-anexounico-1-jul-26-15-jul-26.pdf"',
+                      r["Content-Disposition"])
         pdf = _bytes_pdf(r)
         self.assertEqual(_paginas(pdf), 1, "o relatório deve ter UMA página")
 
@@ -477,6 +477,167 @@ class ValidacaoUploadTest(TestCase):
         self.assertNotIn("relatorio_apex", self.client.session)
 
 
+class NomeDoArquivoTest(TestCase):
+    """Padrão único nos quatro modos:
+    '[empresa]-[funcionalidade]-[início]-[fim].pdf'. O nome sozinho diz de
+    quem é o relatório, que relatório é e de que período — na pasta de
+    downloads, meses depois, é só isso que sobra."""
+
+    CONTA = {"nome": "C", "res": 40, "inv": 80.0, "imp": 4000, "alc": 2500}
+
+    def _anexos(self, quantos, **kw):
+        return [_arquivo(f"u{i}.xlsx", [dict(self.CONTA)], **kw)
+                for i in range(quantos)]
+
+    def _nome(self, resposta):
+        return resposta["Content-Disposition"].split('filename="')[1].rstrip('"')
+
+    def test_anexo_unico(self):
+        self.client.post("/", {"cliente": "TIM BRASIL",
+                               "arquivos": self._anexos(1)})
+        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL",
+                                           "periodo": "01/07/2026 a 31/07/2026",
+                                           "analise": ""})
+        self.assertEqual(self._nome(r),
+                         "TIM-BRASIL-anexounico-1-jul-26-31-jul-26.pdf")
+
+    def test_consolidado(self):
+        self.client.post("/", {"cliente": "TIM BRASIL",
+                               "arquivos": self._anexos(3)})
+        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL",
+                                           "periodo": "01/07/2026 a 31/07/2026",
+                                           "analise": ""})
+        self.assertEqual(self._nome(r),
+                         "TIM-BRASIL-consolidado-1-jul-26-31-jul-26.pdf")
+
+    def test_listagem(self):
+        self.client.post("/", {"modo": "listagem", "titulo": "TIM BRASIL",
+                               "arquivos": self._anexos(3)})
+        r = self.client.post("/revisao/", {"titulo": "TIM BRASIL",
+                                           "inicio": "2026-07-01",
+                                           "fim": "2026-07-31"})
+        self.assertEqual(self._nome(r),
+                         "TIM-BRASIL-listagem-1-jul-26-31-jul-26.pdf")
+
+    def test_indicador_unico(self):
+        self.client.post("/", {"modo": "indicador", "cliente": "TIM BRASIL",
+                               "metrica": "investimento_total",
+                               "arquivos": self._anexos(3, inicio="2026-07-01",
+                                                        fim="2026-07-31")})
+        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL",
+                                           "metrica": "investimento_total"})
+        self.assertEqual(self._nome(r),
+                         "TIM-BRASIL-indicadorunico-1-jul-26-31-jul-26.pdf")
+
+    def test_sem_periodo_marca_a_data_de_geracao(self):
+        """Uma data só, sem rótulo, seria lida como início de intervalo."""
+        self.client.post("/", {"modo": "listagem", "titulo": "TIM BRASIL",
+                               "arquivos": self._anexos(2)})
+        r = self.client.post("/revisao/", {"titulo": "TIM BRASIL"})
+        hoje = date.today()
+        self.assertEqual(
+            self._nome(r),
+            f"TIM-BRASIL-listagem-gerado-{hoje.day}-"
+            f"{_MESES_PT[hoje.month - 1]}-{hoje:%y}.pdf")
+
+    def test_acento_e_pontuacao_viram_hifen(self):
+        self.client.post("/", {"cliente": "Grupo São José & Cia",
+                               "arquivos": self._anexos(1)})
+        r = self.client.post("/revisao/", {"cliente": "Grupo São José & Cia",
+                                           "periodo": "", "analise": ""})
+        self.assertTrue(self._nome(r).startswith("Grupo-Sao-Jose-Cia-anexounico-"),
+                        self._nome(r))
+
+
+class IndicadorDeResultadoTest(TestCase):
+    """O export traz o indicador cru da API ("actions:post_engagement") e uma
+    conta pode misturar objetivos. Vale para os quatro modos: o rótulo do PDF
+    é o do indicador de maior volume, sempre traduzido."""
+
+    def _pdf_unico(self, campanhas):
+        self.client.post("/", {"cliente": "ILOC",
+                               "arquivos": [_arquivo("a.xlsx", campanhas)]})
+        return _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {
+            "cliente": "ILOC", "periodo": "", "analise": ""})))
+
+    def test_indicador_dominante_vence_a_primeira_linha(self):
+        """Caso real: a campanha de engajamento abre a planilha, mas responde
+        por menos de um terço dos resultados."""
+        texto = self._pdf_unico([
+            {"nome": "Engaja", "res": 120, "inv": 100.0, "imp": 5000, "alc": 4000,
+             "indicador": "actions:post_engagement"},
+            {"nome": "Mensagens", "res": 305, "inv": 200.0, "imp": 9000, "alc": 7000,
+             "indicador": "actions:onsite_conversion."
+                          "messaging_conversation_started_7d"},
+        ])
+        self.assertIn("Conversas Iniciadas", texto)
+        self.assertNotIn("Envolvimento com a Publicação", texto)
+
+    def test_nenhum_codigo_de_api_chega_ao_cliente(self):
+        for cru, esperado in (
+                ("actions:post_engagement", "Envolvimento com a Publicação"),
+                ("actions:lead", "Leads"),
+                ("actions:link_click", "Cliques no Link"),
+                ("actions:landing_page_view", "Visualizações da Página"),
+                ("video_thruplay_watched_actions", "Reproduções de Vídeo")):
+            texto = self._pdf_unico([{"nome": "C", "res": 10, "inv": 50.0,
+                                      "imp": 1000, "alc": 800, "indicador": cru}])
+            self.assertIn(esperado, texto)
+            self.assertNotIn("actions:", texto)
+            self.assertNotIn("_actions", texto)
+
+    def test_linha_sem_resultado_nao_vota_no_indicador(self):
+        """Campanha que gastou sem converter entra nos totais, mas não decide
+        o rótulo — senão bastaria uma campanha zerada para renomear o PDF."""
+        texto = self._pdf_unico([
+            {"nome": "Sem resultado", "res": None, "inv": 300.0, "imp": 9000,
+             "alc": 7000, "indicador": "actions:lead"},
+            {"nome": "Mensagens", "res": 12, "inv": 40.0, "imp": 1000, "alc": 800,
+             "indicador": "actions:onsite_conversion."
+                          "messaging_conversation_started_7d"},
+        ])
+        self.assertIn("Conversas Iniciadas", texto)
+        self.assertNotIn("Leads", texto)
+
+    def test_indicador_desconhecido_cai_no_cru_e_avisa_no_log(self):
+        with self.assertLogs("relatorios.indicadores", level="WARNING") as log:
+            texto = self._pdf_unico([{"nome": "C", "res": 10, "inv": 50.0,
+                                      "imp": 1000, "alc": 800,
+                                      "indicador": "actions:objetivo_novo"}])
+        self.assertEqual(len(log.output), 1, "um aviso por conta, não um por seção")
+        self.assertIn("actions:objetivo_novo", log.output[0])
+        self.assertIn("conta: a", log.output[0])       # de qual anexo veio
+        self.assertIn("actions:objetivo_novo", texto)  # gera assim mesmo
+
+    def test_rotulo_do_export_por_extenso_nao_vira_alarme(self):
+        """Export em pt-BR já traz linguagem de cliente; não é código de API."""
+        with patch("relatorios.indicadores.logger") as log:
+            texto = self._pdf_unico([{"nome": "C", "res": 10, "inv": 50.0,
+                                      "imp": 1000, "alc": 800,
+                                      "indicador": "Compras"}])
+        log.warning.assert_not_called()
+        self.assertIn("Compras", texto)
+
+    def test_consolidado_usa_o_indicador_dominante_do_grupo(self):
+        conversa = ("actions:onsite_conversion."
+                    "messaging_conversation_started_7d")
+        arquivos = [
+            _arquivo("grande.xlsx", [{"nome": "C", "res": 100, "inv": 200.0,
+                                      "imp": 9000, "alc": 7000}],
+                     indicador=conversa),
+            _arquivo("pequena.xlsx", [{"nome": "C", "res": 8, "inv": 30.0,
+                                       "imp": 900, "alc": 700}],
+                     indicador="actions:lead"),
+        ]
+        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        html = self.client.get("/revisao/").content.decode()
+        self.assertIn("Conversas Iniciadas", html)
+        # O aviso de divergência continua, mas em linguagem de gente
+        self.assertIn("não usam o mesmo indicador", html)
+        self.assertIn("Leads", html)
+        self.assertNotIn("actions:", html)
+
+
 class FluxoListagemTest(TestCase):
     """Modo 3: tabela com 1 linha por conta, na ordem de envio, sem
     consolidação, sem análise e sem destaque de melhor conta. Como os demais
@@ -536,25 +697,114 @@ class FluxoListagemTest(TestCase):
         self.assertIn("Visão Geral — Franquias", texto)
         self.assertIn("Visao-Geral-Franquias", r["Content-Disposition"])
 
-    def test_linhas_na_ordem_de_envio(self):
+    def test_linhas_ranqueadas_por_resultados(self):
         texto = _texto_pdf(_bytes_pdf(self._post_listagem()))
-        # Ordem de envio ≠ ordem alfabética ≠ ordem por resultados:
-        # centro (40) → norte (10) → sul (25)
+        # Enviadas como centro (40) → norte (10) → sul (25); o ranking
+        # reordena para centro → sul → norte, independente da ordem de envio.
         pos = [texto.index(nome) for nome in
-               ("unidade centro", "unidade norte", "unidade sul")]
+               ("unidade centro", "unidade sul", "unidade norte")]
         self.assertEqual(pos, sorted(pos))
+
+    def test_empate_em_resultados_desempata_por_investimento(self):
+        """Duas gerações da mesma base têm de produzir o mesmo PDF: sem
+        desempate explícito, contas de igual volume trocariam de posição."""
+        arquivos = [
+            _arquivo("magra.xlsx", [{"nome": "C", "res": 30, "inv": 40.0,
+                                     "imp": 2000, "alc": 1500}]),
+            _arquivo("gorda.xlsx", [{"nome": "C", "res": 30, "inv": 90.0,
+                                     "imp": 3000, "alc": 2000}]),
+        ]
+        self.client.post("/", {"modo": "listagem", "arquivos": arquivos})
+        texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
+        self.assertLess(texto.index("gorda"), texto.index("magra"))
 
     def test_valores_por_conta_em_pt_br_sem_consolidar(self):
         texto = _texto_pdf(_bytes_pdf(self._post_listagem()))
         self.assertIn("R$ 80,00", texto)      # investimento da 1ª conta
         self.assertIn("R$ 2,00", texto)       # custo/resultado: 80 / 40
         self.assertIn("R$ 5,55", texto)       # custo/resultado: 55,50 / 10
-        self.assertIn("7,50%", texto)         # CTR: 300 / 4000
+        self.assertIn("R$ 20,00", texto)      # CPM: 80 / 4000 * 1000
         self.assertIn("2.500", texto)         # alcance pt-BR da 1ª conta
         self.assertIn("Conversas Iniciadas", texto)   # label do resultado
         # Sem consolidação nem análise
         self.assertNotIn("R$ 235,50", texto)  # soma dos investimentos
         self.assertNotIn("Análise", texto)
+
+    def test_ordem_das_colunas(self):
+        """O tipo de resultado vem colado ao número dele, e a posição abre a
+        linha — ler "Conversas Iniciadas / 40" seguido não exige varrer a
+        tabela até a coluna certa."""
+        texto = _texto_pdf(_bytes_pdf(self._post_listagem()))
+        colunas = ["#", "Conta", "Resultado", "Nº Resultados",
+                   "Investimento (R$)", "Custo/Resultado (R$)", "Alcance",
+                   "Impressões", "CPM (R$)"]
+        pos = [texto.index(c) for c in colunas]
+        self.assertEqual(pos, sorted(pos), f"cabeçalho fora de ordem: {texto[:200]}")
+
+    def test_sem_ctr_e_com_cpm(self):
+        """O export de Campanhas não traz cliques: a coluna de CTR renderizava
+        "—" em toda linha. Trocada por CPM, que sai dos totais já lidos."""
+        texto = _texto_pdf(_bytes_pdf(self._post_listagem()))
+        self.assertNotIn("CTR", texto)
+        self.assertIn("CPM (R$)", texto)
+        for cpm in ("R$ 20,00", "R$ 27,75"):   # centro/sul e norte
+            self.assertIn(cpm, texto)
+
+    def test_coluna_de_posicao_numera_o_ranking(self):
+        texto = _texto_pdf(_bytes_pdf(self._post_listagem()))
+        for posicao, nome in enumerate(
+                ("unidade centro", "unidade sul", "unidade norte"), start=1):
+            self.assertRegex(texto, rf"{posicao} {nome}")
+
+    def test_conta_sem_impressoes_nao_estoura_no_cpm(self):
+        arquivos = [_arquivo("sem_dados.xlsx",
+                             [{"nome": "C", "res": 0, "inv": 12.0}]),
+                    _arquivo("com_dados.xlsx",
+                             [{"nome": "C", "res": 4, "inv": 20.0, "imp": 1000}])]
+        self.client.post("/", {"modo": "listagem", "arquivos": arquivos})
+        texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
+        self.assertIn("R$ 20,00", texto)   # CPM da conta com impressões
+        self.assertIn("—", texto)          # CPM e custo/resultado da outra
+
+    def _upload_periodos(self):
+        """Três anexos com janelas diferentes — o período do relatório é a
+        união delas: 01/07 (menor início) a 31/07 (maior fim)."""
+        arquivos = [
+            _arquivo("centro.xlsx", [{"nome": "C", "res": 40, "inv": 80.0}],
+                     inicio="2026-07-05", fim="2026-07-20"),
+            _arquivo("norte.xlsx", [{"nome": "C", "res": 10, "inv": 55.5}],
+                     inicio="2026-07-01", fim="2026-07-18"),
+            _arquivo("sul.xlsx", [{"nome": "C", "res": 25, "inv": 100.0}],
+                     inicio="2026-07-10", fim="2026-07-31"),
+        ]
+        return self.client.post("/", {"modo": "listagem", "arquivos": arquivos})
+
+    def test_periodo_sugerido_a_partir_dos_anexos(self):
+        self._upload_periodos()
+        html = self.client.get("/revisao/").content.decode()
+        # ISO no value: é o formato que o input nativo de data entende
+        self.assertIn('value="2026-07-01"', html)
+        self.assertIn('value="2026-07-31"', html)
+
+    def test_periodo_editado_vai_para_o_cabecalho_do_pdf(self):
+        self._upload_periodos()
+        r = self.client.post("/revisao/", {"titulo": "", "inicio": "2026-07-01",
+                                           "fim": "2026-07-31"})
+        self.assertIn("01/07/2026 — 31/07/2026", _texto_pdf(_bytes_pdf(r)))
+
+    def test_periodo_em_branco_omite_o_bloco(self):
+        self._upload_periodos()
+        texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
+        self.assertNotRegex(texto, r"\d{2}/\d{2}/\d{4} — \d{2}/\d{2}/\d{4}")
+
+    def test_meia_data_e_periodo_invertido_sao_recusados(self):
+        for post in ({"inicio": "2026-07-01"},                       # sem fim
+                     {"fim": "2026-07-31"},                          # sem início
+                     {"inicio": "2026-07-31", "fim": "2026-07-01"}):  # invertido
+            self._upload_periodos()
+            r = self.client.post("/revisao/", post)
+            self.assertEqual(r.status_code, 200)
+            self.assertNotEqual(r["Content-Type"], "application/pdf")
 
     def test_modo_unico_exige_exatamente_um_arquivo(self):
         ok = {"nome": "C", "res": 1, "inv": 10.0, "imp": 100, "alc": 80}
@@ -650,8 +900,8 @@ class FluxoIndicadorTest(TestCase):
         r = self._post("conversas_iniciadas")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
-        # Nome do arquivo: cliente + métrica + período em hífen
-        self.assertIn("TIM-Brasil-Conversas-Iniciadas", r["Content-Disposition"])
+        self.assertIn('filename="TIM-Brasil-indicadorunico-1-jul-26-15-jul-26.pdf"',
+                      r["Content-Disposition"])
 
     def test_trocar_metrica_na_revisao_nao_exige_reenviar_anexos(self):
         self._upload("conversas_iniciadas")
