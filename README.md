@@ -74,6 +74,14 @@ novo. Ele também gera o `SECRET_KEY`, a senha do painel e imprime tudo no fim.
 O script é idempotente e é o próprio mecanismo de atualização: rodar de novo
 faz `git pull`, reinstala dependências, aplica migrações, recolhe estáticos e
 reinicia o serviço.
+
+O `Makefile` guarda o IP e o repositório, então no dia a dia basta:
+```bash
+make deploy          # na VPS, em ~/apex-reports
+make deploy-remoto   # do desenvolvimento, dispara o deploy por SSH
+```
+Qualquer variável é sobrescrita na chamada — `make deploy IP=203.0.113.10`,
+`make deploy BRANCH=teste`. Os comandos por extenso continuam valendo:
 ```bash
 sudo ~/apex-reports/deploy/deploy.sh              # publica versão nova
 sudo ~/apex-reports/deploy/deploy.sh --senha 'x'  # troca a senha do painel
