@@ -12,7 +12,7 @@ from datetime import date, datetime
 
 from openpyxl import load_workbook
 
-from . import benchmarks
+from . import benchmarks, indicadores
 
 
 # ----------------------------------------------------------------------
@@ -172,7 +172,7 @@ def _mapear_colunas(header):
 # ----------------------------------------------------------------------
 # Leitura principal
 # ----------------------------------------------------------------------
-def ler_export_meta(arquivo, veiculacao=VEICULACAO_TODAS):
+def ler_export_meta(arquivo, veiculacao=VEICULACAO_TODAS, conta=None):
     """
     Lê o .xlsx exportado do Meta Ads Manager e devolve um dicionário com:
     kpis, metricas_extra, funil, gráficos (funil visual e share por campanha),
@@ -182,7 +182,7 @@ def ler_export_meta(arquivo, veiculacao=VEICULACAO_TODAS):
     `veiculacao` restringe as linhas ao status da campanha (ver VEICULACOES).
     """
     registros, mapa = ler_registros(arquivo)
-    return consolidar(filtrar_veiculacao(registros, veiculacao), mapa)
+    return consolidar(filtrar_veiculacao(registros, veiculacao), mapa, conta)
 
 
 def ler_registros(arquivo):
@@ -233,7 +233,8 @@ def ler_registros(arquivo):
     return registros, mapa
 
 
-def consolidar(registros, mapa):
+def consolidar(registros, mapa, conta=None):
+    """`conta` só identifica a origem no log de indicador não mapeado."""
     # ---- Totais do período ----
     investimento = sum(v for v in (_to_float(r.get("investimento")) for r in registros) if v) or 0.0
     resultados = sum(v for v in (_to_float(r.get("resultados")) for r in registros) if v) or 0.0
@@ -249,8 +250,11 @@ def consolidar(registros, mapa):
     cpc = investimento / cliques if cliques else None
     taxa_conversao = resultados / cliques * 100 if cliques and resultados else None
 
-    indicador = next((str(r["indicador"]) for r in registros if r.get("indicador")), "")
-    indicador_curto = "Conversas Iniciadas" if "convers" in _norm(indicador) else (indicador or "Resultados")
+    # O indicador da conta é o de maior soma de resultados, não o da primeira
+    # linha: uma planilha com campanhas de objetivos diferentes rotularia o
+    # relatório pela campanha que por acaso abre o arquivo.
+    indicador = indicadores.dominante(registros, para_numero=_to_float)
+    indicador_curto = indicadores.rotulo(indicador, conta)
 
     inicio = next((r.get("inicio") for r in registros if r.get("inicio")), None)
     termino = next((r.get("termino") for r in registros if r.get("termino")), None)
@@ -325,8 +329,7 @@ def consolidar(registros, mapa):
 
 def _dados_grafico_funil(n, indicador):
     """Estágios do funil visual: Alcance → Cliques → Conversas (só os presentes)."""
-    eh_conversa = "convers" in _norm(indicador)
-    indicador_curto = "Conversas Iniciadas" if eh_conversa else (indicador or "Resultados")
+    indicador_curto = indicadores.rotulo(indicador, avisar=False)
     estagios = []
     if n.get("alcance"):
         estagios.append({"rotulo": "Alcance", "valor": n["alcance"],
@@ -361,8 +364,8 @@ def _dados_grafico_campanhas(campanhas, resultados_total):
 
 def _montar_funil(n, indicador):
     """Etapas do funil (topo/meio/fundo) a partir dos totais numéricos `n`."""
-    eh_conversa = "convers" in _norm(indicador)
-    indicador_curto = "Conversas Iniciadas" if eh_conversa else (indicador or "Resultados")
+    eh_conversa = indicadores.eh_conversa(indicador)
+    indicador_curto = indicadores.rotulo(indicador, avisar=False)
     rotulo_custo = "Custo por Conversa (CPA)" if eh_conversa else "Custo por Resultado (CPA)"
     av = benchmarks.avaliar_metricas(n)
 
@@ -439,10 +442,13 @@ def consolidar_grupo(unidades):
         })
 
     n = _totais_grupo(us)
-    indicador = next((u["indicador"] for u in us if "convers" in _norm(u["indicador"])),
-                     next((u["indicador"] for u in us if u["indicador"]), ""))
-    eh_conversa = "convers" in _norm(indicador)
-    indicador_curto = "Conversas Iniciadas" if eh_conversa else (indicador or "Resultados")
+    # Mesma regra da conta individual, um nível acima: o indicador do grupo é
+    # o das unidades que respondem pela maior parte dos resultados.
+    indicador = indicadores.dominante(
+        [{"indicador": u["indicador"], "resultados": u["num"].get("resultados")}
+         for u in us])
+    eh_conversa = indicadores.eh_conversa(indicador)
+    indicador_curto = indicadores.rotulo(indicador, avisar=False)
 
     funil = {"etapas": _montar_funil(n, indicador)}
     if n["alcance"]:
@@ -514,7 +520,10 @@ def _aviso_indicador(us):
     grupos = {}
     for u in us:
         if u.get("indicador"):
-            grupos.setdefault(str(u["indicador"]), []).append(u["nome"])
+            # Agrupado pelo rótulo legível: o aviso é para o operador decidir,
+            # não para ele decifrar "actions:post_engagement".
+            grupos.setdefault(indicadores.rotulo(u["indicador"], avisar=False),
+                              []).append(u["nome"])
     if len(grupos) <= 1:
         return None
     partes = "; ".join(f'"{ind}" ({", ".join(nomes)})' for ind, nomes in grupos.items())
@@ -715,8 +724,7 @@ def _frase_resumo(n, rotulo, av, sujeito_plural=None):
 
 def _analise_periodo(n, campanhas, indicador):
     """Análise do Período (1 conta): menções por números, resumo e continuidade."""
-    eh_conversa = "convers" in _norm(indicador)
-    rotulo = "conversa" if eh_conversa else "resultado"
+    rotulo = "conversa" if indicadores.eh_conversa(indicador) else "resultado"
     av = benchmarks.avaliar_metricas(n)
 
     frases = _frases_mencoes(campanhas, n["resultados"], rotulo)
