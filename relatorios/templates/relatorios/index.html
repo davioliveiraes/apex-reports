@@ -1,141 +1,269 @@
 {% extends "relatorios/base.html" %}
-{% block body_class %}compacta{% endblock %}
+{% block form_extra %}enctype="multipart/form-data"{% endblock %}
+
 {% block conteudo %}
 <h1>Painel de relatórios</h1>
 <p class="sub">Escolha o modo, envie os .xlsx exportados do Gerenciador de Anúncios e gere o PDF.</p>
 
 {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
 
-<div class="cartao">
-  <form method="post" enctype="multipart/form-data" id="form-painel">
-    {% csrf_token %}
+<div class="bloco">
+  <span class="bloco-idx">01</span><span class="bloco-nome">Modo do relatório</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="modos" id="modos">
+  <label class="modo-row">
+    <input type="radio" name="modo" value="unico" checked>
+    <span class="modo-marca" aria-hidden="true"></span>
+    <span class="modo-corpo">
+      <span class="modo-top">
+        <strong>Anexo único</strong>
+        <span class="modo-chip">1 arquivo</span>
+      </span>
+      <span class="modo-desc">Uma conta em detalhe — funil de vendas, desempenho
+        por campanha e análise do período.</span>
+    </span>
+  </label>
+  <label class="modo-row">
+    <input type="radio" name="modo" value="consolidado">
+    <span class="modo-marca" aria-hidden="true"></span>
+    <span class="modo-corpo">
+      <span class="modo-top">
+        <strong>Consolidado</strong>
+        <span class="modo-chip">2 a 20 contas</span>
+      </span>
+      <span class="modo-desc">Contas somadas em um só relatório — funil do grupo,
+        composição por unidade e análise geral.</span>
+    </span>
+  </label>
+  <label class="modo-row">
+    <input type="radio" name="modo" value="listagem">
+    <span class="modo-marca" aria-hidden="true"></span>
+    <span class="modo-corpo">
+      <span class="modo-top">
+        <strong>Listagem</strong>
+        <span class="modo-chip">até 20 contas</span>
+      </span>
+      <span class="modo-desc">Tabela comparativa, uma linha por conta, ranqueada
+        por número de resultados.</span>
+    </span>
+  </label>
+  <label class="modo-row">
+    <input type="radio" name="modo" value="indicador">
+    <span class="modo-marca" aria-hidden="true"></span>
+    <span class="modo-corpo">
+      <span class="modo-top">
+        <strong>Indicador único</strong>
+        <span class="modo-chip">2 a 20 contas</span>
+      </span>
+      <span class="modo-desc">Uma métrica comparada entre as contas, com total do
+        grupo calculado pela regra da métrica.</span>
+    </span>
+  </label>
+</div>
+{{ form.modo.errors }}
 
-    <label><span class="rot-idx">a</span>Modo do relatório</label>
-    <div class="modos" id="modos">
-      <label class="modo-card">
-        <input type="radio" name="modo" value="unico" checked>
-        <span class="modo-top"><span class="modo-marca" aria-hidden="true"></span><strong>Anexo único</strong></span>
-        <span class="modo-desc">1 arquivo — relatório individual com funil e análise</span>
-      </label>
-      <label class="modo-card">
-        <input type="radio" name="modo" value="consolidado">
-        <span class="modo-top"><span class="modo-marca" aria-hidden="true"></span><strong>Consolidado</strong></span>
-        <span class="modo-desc">2 a 20 contas somadas — funil do grupo e análise geral</span>
-      </label>
-      <label class="modo-card">
-        <input type="radio" name="modo" value="listagem">
-        <span class="modo-top"><span class="modo-marca" aria-hidden="true"></span><strong>Listagem</strong></span>
-        <span class="modo-desc">até 20 contas — tabela comparativa, uma linha por conta</span>
-      </label>
-      <label class="modo-card">
-        <input type="radio" name="modo" value="indicador">
-        <span class="modo-top"><span class="modo-marca" aria-hidden="true"></span><strong>Indicador Único</strong></span>
-        <span class="modo-desc">2 a 20 contas — compara uma métrica específica entre unidades</span>
-      </label>
-    </div>
-    {{ form.modo.errors }}
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Identificação</span>
+  <span class="bloco-rule"></span>
+</div>
+{% comment %}
+Os quatro campos ficam sempre no mesmo lugar; o que não se aplica ao modo fica
+desabilitado com o motivo escrito na ajuda. Campo `disabled` não é enviado no
+POST, e a obrigatoriedade real vem do `UploadForm.clean()` por modo.
+{% endcomment %}
+<div class="campos">
+  <div class="campo" id="campo-cliente">
+    <label for="{{ form.cliente.id_for_label }}">Cliente / grupo</label>
+    {{ form.cliente }}
+    <span class="ajuda" id="ajuda-cliente">Vai para o cabeçalho do PDF.</span>
+    {{ form.cliente.errors }}
+  </div>
+  <div class="campo" id="campo-titulo">
+    <label for="{{ form.titulo.id_for_label }}">Título do relatório</label>
+    {{ form.titulo }}
+    <span class="ajuda" id="ajuda-titulo">Em branco, usa "Relatório de Listagem".</span>
+    {{ form.titulo.errors }}
+  </div>
+  <div class="campo" id="campo-metrica">
+    <label for="{{ form.metrica.id_for_label }}">Métrica comparada</label>
+    {{ form.metrica }}
+    <span class="ajuda" id="ajuda-metrica">Reeditável na revisão, sem reenviar os anexos.</span>
+    {{ form.metrica.errors }}
+  </div>
+  <div class="campo" id="campo-veiculacao">
+    <label for="{{ form.veiculacao.id_for_label }}">Campanhas consideradas</label>
+    {{ form.veiculacao }}
+    <span class="ajuda" id="ajuda-veiculacao">Recorte pelo status de veiculação no export.</span>
+    {{ form.veiculacao.errors }}
+  </div>
+</div>
 
-    <div id="campo-cliente">
-      <label for="{{ form.cliente.id_for_label }}"><span class="rot-idx">b</span>Cliente / grupo</label>
-      {{ form.cliente }}
-      {{ form.cliente.errors }}
-    </div>
+<div class="bloco">
+  <span class="bloco-idx">03</span><span class="bloco-nome">Anexos</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta" id="contador">00 / 20</span>
+</div>
 
-    <div id="campo-titulo" hidden>
-      <label for="{{ form.titulo.id_for_label }}"><span class="rot-idx">b</span>Título do relatório (opcional)</label>
-      {{ form.titulo }}
-      <p class="ajuda">Aparece no topo do PDF — em branco, usa "Relatório de Listagem".</p>
-      {{ form.titulo.errors }}
-    </div>
+<div class="dropzone" id="dropzone" tabindex="0" role="button"
+     aria-label="Selecionar arquivos .xlsx">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
+    <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
+  </svg>
+  <span class="dropzone-txt"><strong>Arraste os .xlsx aqui</strong> ou clique para escolher</span>
+  <span class="dropzone-meta">até 20 arquivos · 10 MB cada</span>
+  {{ form.arquivos }}
+</div>
 
-    <div id="campo-metrica" hidden>
-      <label for="{{ form.metrica.id_for_label }}"><span class="rot-idx">c</span>Métrica comparada</label>
-      {{ form.metrica }}
-      <p class="ajuda">{{ form.metrica.help_text }}</p>
-      {{ form.metrica.errors }}
-    </div>
+<div class="anexos" id="anexos" hidden>
+  <div class="anexos-head">
+    <span>#</span><span>Nome da conta no relatório</span><span>Arquivo</span>
+    <span class="num-col">Tam.</span><span></span>
+  </div>
+</div>
+<p class="anexos-nota" id="anexos-nota" hidden>Arraste as linhas para reordenar — a
+  ordem da lista é a ordem das linhas no PDF.</p>
+{{ form.arquivos.errors }}
+{% endblock %}
 
-    <div id="campo-veiculacao" hidden>
-      <label for="{{ form.veiculacao.id_for_label }}"><span class="rot-idx">d</span>Campanhas</label>
-      {{ form.veiculacao }}
-      <p class="ajuda">{{ form.veiculacao.help_text }}</p>
-      {{ form.veiculacao.errors }}
-    </div>
+{% block resumo %}
+<div class="resumo-titulo">Resumo do envio</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Modo</dt><dd id="rs-modo">Anexo único</dd></div>
+  <div class="resumo-item"><dt>Anexos</dt><dd class="num" id="rs-anexos">00 de 20</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd id="rs-saida">PDF individual · 1 página</dd></div>
+</dl>
 
-    <label><span class="rot-idx" id="idx-arquivos">c</span>Arquivos · xlsx · até 20</label>
-    <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Selecionar arquivos .xlsx">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
-        <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
-      </svg>
-      <span class="dropzone-txt"><strong>Arraste os .xlsx aqui</strong> ou clique para escolher</span>
-      <span class="dropzone-meta">a ordem de envio é a ordem das linhas</span>
-      {{ form.arquivos }}
-    </div>
-    <ul class="lista-arquivos" id="lista-arquivos"></ul>
-    <p class="contador-arquivos" id="contador-arquivos" hidden></p>
-    {{ form.arquivos.errors }}
+<div class="resumo-titulo" style="margin:22px 0 12px">Pré-requisitos</div>
+<div class="checks">
+  <div class="check" id="ck-modo"><i>✓</i><span></span></div>
+  <div class="check" id="ck-anexos"><i>✓</i><span></span></div>
+  <div class="check" id="ck-ident"><i>✓</i><span></span></div>
+</div>
 
-    <button class="botao" type="submit" id="btn-enviar" disabled>Ler planilhas</button>
-  </form>
+<div class="acao">
+  <button class="botao" type="submit" id="btn-enviar" disabled>
+    <span id="btn-rotulo">Ler planilhas</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  <div class="status">
+    <span class="status-eixo" aria-hidden="true"></span>
+    <span class="status-txt" id="status-txt">Nenhum anexo — arraste os .xlsx para começar</span>
+  </div>
 </div>
 {% endblock %}
 
-{% block status %}<span class="status-txt" id="status-txt">Nenhum anexo — arraste os .xlsx para começar</span>{% endblock %}
-
 {% block scripts %}
 <script>
-  // Alternância dos campos por modo: cliente (todos menos listagem) × título
-  // (listagem) × métrica (indicador único). O índice do rótulo de anexos anda
-  // junto, para a sequência a·b·c… continuar correta em cada modo.
-  const modos = document.getElementById('modos');
-  const campoCliente = document.getElementById('campo-cliente');
-  const campoTitulo = document.getElementById('campo-titulo');
-  const campoMetrica = document.getElementById('campo-metrica');
-  const campoVeiculacao = document.getElementById('campo-veiculacao');
-  const idxArquivos = document.getElementById('idx-arquivos');
+  // Registro dos modos: os limites são os mesmos validados em
+  // UploadForm.clean() — o front só antecipa a mensagem.
+  const MODOS = {
+    unico:       {nome:'Anexo único',     min:1, max:1,  limite:'1 arquivo',     saida:'PDF individual · 1 página'},
+    consolidado: {nome:'Consolidado',     min:2, max:20, limite:'2 a 20 contas', saida:'PDF consolidado · 1 página'},
+    listagem:    {nome:'Listagem',        min:1, max:20, limite:'até 20 contas', saida:'PDF em paisagem'},
+    indicador:   {nome:'Indicador único', min:2, max:20, limite:'2 a 20 contas', saida:'PDF de indicador'},
+  };
+  const MAX = 20;
 
-  function atualizarModo() {
-    const modo = modos.querySelector('input[name=modo]:checked').value;
-    campoCliente.hidden = modo === 'listagem';
-    campoTitulo.hidden = modo !== 'listagem';
-    campoMetrica.hidden = modo !== 'indicador';
-    campoVeiculacao.hidden = modo !== 'indicador';
-    idxArquivos.textContent = modo === 'indicador' ? 'e' : 'c';
-    // No anexo único o nome da conta não vai para o PDF: some o campo por linha.
-    document.getElementById('lista-arquivos').classList.toggle('sem-nomes', modo === 'unico');
-  }
-  modos.addEventListener('change', atualizarModo);
-  atualizarModo();
+  const modos = document.getElementById('modos');
+  const campos = {
+    cliente:    document.getElementById('campo-cliente'),
+    titulo:     document.getElementById('campo-titulo'),
+    metrica:    document.getElementById('campo-metrica'),
+    veiculacao: document.getElementById('campo-veiculacao'),
+  };
+  const AJUDAS = {
+    cliente:    ['Vai para o cabeçalho do PDF.', 'A listagem usa o título, não o cliente.'],
+    titulo:     ['Em branco, usa "Relatório de Listagem".', 'Só no modo Listagem.'],
+    metrica:    ['Reeditável na revisão, sem reenviar os anexos.', 'Só no modo Indicador único.'],
+    veiculacao: ['Recorte pelo status de veiculação no export.', 'Só no modo Indicador único.'],
+  };
+  const controle = chave => campos[chave].querySelector('input,select');
+  const inputCliente = controle('cliente');
 
   const dz = document.getElementById('dropzone');
   const input = dz.querySelector('input[type=file]');
-  const lista = document.getElementById('lista-arquivos');
-  const contador = document.getElementById('contador-arquivos');
+  const anexos = document.getElementById('anexos');
+  const nota = document.getElementById('anexos-nota');
+  const contador = document.getElementById('contador');
   const btn = document.getElementById('btn-enviar');
+  const btnRotulo = document.getElementById('btn-rotulo');
   const statusTxt = document.getElementById('status-txt');
   const statusEixo = document.querySelector('.status-eixo');
-  const MAX = 20;
+  const rs = {modo: document.getElementById('rs-modo'),
+              anexos: document.getElementById('rs-anexos'),
+              saida: document.getElementById('rs-saida')};
+  const checks = {modo: document.getElementById('ck-modo'),
+                  anexos: document.getElementById('ck-anexos'),
+                  ident: document.getElementById('ck-ident')};
+
   let arquivos = [];   // fonte da verdade; o input é sincronizado via DataTransfer
 
   const tamanho = bytes => bytes < 1024 * 1024
     ? `${(bytes / 1024).toFixed(0)} KB`
     : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   const pad = n => String(n).padStart(2, '0');
+  const modoAtual = () => modos.querySelector('input[name=modo]:checked').value;
 
-  function atualizarStatus() {
+  function marcar(check, ok, texto) {
+    check.classList.toggle('falta', !ok);
+    check.querySelector('i').textContent = ok ? '✓' : '!';
+    check.querySelector('span').textContent = texto;
+  }
+
+  // Um só recálculo para resumo, pré-requisitos, status e porta do botão.
+  function avaliar() {
+    const modo = modoAtual();
+    const M = MODOS[modo];
     const n = arquivos.length;
-    const excedido = n > MAX;
-    statusEixo.classList.toggle('ativo', n > 0 && !excedido);
-    statusTxt.classList.toggle('excedido', excedido);
-    if (!n) {
-      statusTxt.textContent = 'Nenhum anexo — arraste os .xlsx para começar';
-    } else if (excedido) {
-      statusTxt.textContent = `${n}/${MAX} anexos — remova ${n - MAX} para continuar`;
-    } else {
-      statusTxt.textContent = `${pad(n)}/${MAX} anexos · pronto para ler`;
+    const okAnexos = n >= M.min && n <= M.max;
+    const okNome = modo === 'listagem' || inputCliente.value.trim() !== '';
+
+    rs.modo.textContent = M.nome;
+    rs.anexos.textContent = `${pad(n)} de ${MAX}`;
+    rs.saida.textContent = M.saida;
+
+    marcar(checks.modo, true, `Modo ${M.nome.toLowerCase()} — ${M.limite}`);
+    marcar(checks.anexos, okAnexos,
+      okAnexos ? `${n} ${n === 1 ? 'anexo' : 'anexos'} dentro do limite do modo`
+      : n > M.max ? `Anexos acima do limite — remova ${n - M.max}`
+      : `Faltam anexos — este modo exige ${M.limite}`);
+    marcar(checks.ident, okNome,
+      modo === 'listagem' ? 'Título do relatório opcional'
+      : okNome ? 'Cliente / grupo preenchido' : 'Informe o cliente / grupo');
+
+    contador.textContent = `${pad(n)} / ${MAX}`;
+    contador.classList.toggle('excedido', n > M.max);
+
+    btn.disabled = !(okAnexos && okNome);
+    statusEixo.classList.toggle('ativo', !btn.disabled);
+    statusTxt.classList.toggle('excedido', n > M.max);
+    statusTxt.textContent = !n ? 'Nenhum anexo — arraste os .xlsx para começar'
+      : btn.disabled ? 'Ajuste os pré-requisitos para continuar'
+      : `Pronto para ler ${n} ${n === 1 ? 'planilha' : 'planilhas'}`;
+  }
+
+  function atualizarModo() {
+    const modo = modoAtual();
+    const desabilitado = {
+      cliente:    modo === 'listagem',
+      titulo:     modo !== 'listagem',
+      metrica:    modo !== 'indicador',
+      veiculacao: modo !== 'indicador',
+    };
+    for (const chave in desabilitado) {
+      const off = desabilitado[chave];
+      controle(chave).disabled = off;
+      campos[chave].querySelector('.ajuda').textContent = AJUDAS[chave][off ? 1 : 0];
     }
+    // No anexo único o nome da conta não vai para o PDF.
+    anexos.classList.toggle('sem-nomes', modo === 'unico');
+    avaliar();
   }
 
   function sincronizar() {
@@ -143,54 +271,77 @@
     arquivos.forEach(f => dt.items.add(f));
     input.files = dt.files;
 
-    lista.innerHTML = '';
-    arquivos.forEach((f, i) => {
-      const li = document.createElement('li');
-      const num = document.createElement('span');
-      num.className = 'arq-num';
-      num.textContent = pad(i + 1);
-
-      // Nome da conta como aparece no PDF; o nome do arquivo vira legenda.
-      // Persistido no próprio File (f.nomeConta) para sobreviver ao rebuild
-      // da lista quando outro anexo é adicionado ou removido.
-      const corpo = document.createElement('div');
-      corpo.className = 'arq-corpo';
-      const conta = document.createElement('input');
-      conta.type = 'text';
-      conta.className = 'arq-conta';
-      conta.name = 'nome_conta';
-      conta.placeholder = 'Nome da conta no relatório';
-      conta.value = f.nomeConta || '';
-      conta.setAttribute('aria-label', `Nome da conta do arquivo ${f.name}`);
-      conta.addEventListener('input', () => { f.nomeConta = conta.value; });
-      const nome = document.createElement('span');
-      nome.className = 'arq-nome';
-      nome.textContent = f.name;
-      nome.title = f.name;
-      corpo.append(conta, nome);
-
-      const tam = document.createElement('span');
-      tam.className = 'arq-tam';
-      tam.textContent = tamanho(f.size);
-      const rem = document.createElement('button');
-      rem.type = 'button';
-      rem.className = 'arq-remover';
-      rem.textContent = '×';
-      rem.setAttribute('aria-label', `Remover ${f.name}`);
-      rem.addEventListener('click', () => { arquivos.splice(i, 1); sincronizar(); });
-      li.append(num, corpo, tam, rem);
-      lista.appendChild(li);
-    });
-
-    const n = arquivos.length;
-    contador.hidden = !n;
-    contador.textContent = `${n} de ${MAX} arquivo(s)` +
-      (n > MAX ? ' — remova o excedente para continuar' : '');
-    contador.classList.toggle('excedido', n > MAX);
-
-    btn.disabled = n === 0 || n > MAX;
-    atualizarStatus();
+    anexos.querySelectorAll('.anexo').forEach(l => l.remove());
+    arquivos.forEach((f, i) => anexos.appendChild(linha(f, i)));
+    anexos.hidden = !arquivos.length;
+    nota.hidden = arquivos.length < 2;
+    avaliar();
   }
+
+  function linha(f, i) {
+    const el = document.createElement('div');
+    el.className = 'anexo';
+    el.draggable = true;
+
+    const alca = document.createElement('span');
+    alca.className = 'anexo-alca';
+    alca.setAttribute('aria-hidden', 'true');
+    alca.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor">' +
+      '<circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/>' +
+      '<circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/>' +
+      '<circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
+    const num = document.createElement('span');
+    num.className = 'anexo-num';
+    num.textContent = pad(i + 1);
+    alca.appendChild(num);
+
+    // O nome digitado vive no próprio File, não no DOM: assim sobrevive ao
+    // rebuild da lista quando outro anexo entra, sai ou é reordenado.
+    const cel = document.createElement('span');
+    cel.className = 'anexo-conta';
+    const conta = document.createElement('input');
+    conta.type = 'text';
+    conta.name = 'nome_conta';
+    conta.placeholder = 'Nome da conta';
+    conta.value = f.nomeConta || '';
+    conta.setAttribute('aria-label', `Nome da conta do arquivo ${f.name}`);
+    conta.addEventListener('input', () => { f.nomeConta = conta.value; });
+    cel.appendChild(conta);
+
+    const nome = document.createElement('span');
+    nome.className = 'anexo-nome';
+    nome.textContent = f.name;
+    nome.title = f.name;
+    const tam = document.createElement('span');
+    tam.className = 'anexo-tam';
+    tam.textContent = tamanho(f.size);
+
+    const cela = document.createElement('span');
+    const rem = document.createElement('button');
+    rem.type = 'button';
+    rem.className = 'anexo-remover';
+    rem.textContent = '×';
+    rem.setAttribute('aria-label', `Remover ${f.name}`);
+    rem.addEventListener('click', () => { arquivos.splice(i, 1); sincronizar(); });
+    cela.appendChild(rem);
+
+    // Reordenar é mexer no array e resincronizar: a ordem da lista é a ordem
+    // das linhas do PDF.
+    el.addEventListener('dragstart', () => { origem = i; el.classList.add('arrastando'); });
+    el.addEventListener('dragover', e => e.preventDefault());
+    el.addEventListener('dragenter', () => {
+      if (origem === null || origem === i) return;
+      const [item] = arquivos.splice(origem, 1);
+      arquivos.splice(i, 0, item);
+      origem = i;
+      sincronizar();
+    });
+    el.addEventListener('dragend', () => { origem = null; el.classList.remove('arrastando'); });
+
+    el.append(alca, cel, nome, tam, cela);
+    return el;
+  }
+  let origem = null;
 
   function adicionar(novos) {
     for (const f of novos) {
@@ -199,24 +350,30 @@
     sincronizar();
   }
 
+  modos.addEventListener('change', atualizarModo);
+  inputCliente.addEventListener('input', avaliar);
   dz.addEventListener('click', () => input.click());
-  dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+  dz.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
   input.addEventListener('change', () => adicionar([...input.files]));
-  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('arrastando'); }));
-  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('arrastando'); }));
+  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.add('arrastando'); }));
+  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.remove('arrastando'); }));
   dz.addEventListener('drop', e => adicionar([...e.dataTransfer.files]));
 
-  // Todos os modos navegam para a revisão: o estado de carregamento vive só até
-  // a resposta chegar e trocar a página.
+  // Todos os modos navegam para a revisão: o estado de carregamento vive só
+  // até a resposta chegar e trocar a página.
   document.getElementById('form-painel').addEventListener('submit', () => {
     if (btn.disabled) return;
     btn.classList.add('carregando');
-    btn.textContent = 'Lendo planilhas…';
+    btnRotulo.textContent = 'Lendo planilhas…';
     btn.disabled = true;
     statusEixo.classList.add('ativo');
     statusTxt.textContent = 'Lendo planilhas…';
   });
 
-  atualizarStatus();
+  atualizarModo();
 </script>
 {% endblock %}

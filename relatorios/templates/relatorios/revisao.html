@@ -1,71 +1,148 @@
 {% extends "relatorios/base.html" %}
+{% block form_id %}form-revisao{% endblock %}
 {% block cls_etapa1 %}concluida{% endblock %}
 {% block cls_etapa2 %}ativa{% endblock %}
+
 {% block conteudo %}
 {% if modo_listagem %}
 <h1>Revisar listagem</h1>
-<p class="sub">{{ dados.contas|length }} contas ranqueadas por número de resultados. Ajuste o título e os nomes das contas e gere o PDF final.</p>
+<p class="sub">{{ dados.contas|length }} contas ranqueadas por número de resultados.
+  Ajuste o título, o período e os nomes das contas e gere o PDF final.</p>
 {% elif modo_indicador %}
 <h1>Revisar indicador — {{ dados.cliente }}</h1>
-<p class="sub">Confira os valores, ajuste os nomes das contas e gere o PDF final. Trocar a métrica não exige reenviar os anexos.</p>
+<p class="sub">Confira os valores, ajuste os nomes das contas e gere o PDF final.
+  Trocar a métrica não exige reenviar os anexos.</p>
+{% elif modo_grupo %}
+<h1>Revisar relatório — {{ dados.cliente }}</h1>
+<p class="sub">Consolidado de {{ dados.unidades|length }} unidades. Ajuste os nomes
+  e a análise geral e gere o PDF final.</p>
 {% else %}
 <h1>Revisar relatório — {{ dados.cliente }}</h1>
-{% if modo_grupo %}
-<p class="sub">Consolidado de {{ dados.unidades|length }} unidades. Ajuste os nomes e a análise geral e gere o PDF final.</p>
-{% else %}
 <p class="sub">Dados lidos da planilha. Ajuste os textos se quiser e gere o PDF final.</p>
 {% endif %}
-{% endif %}
 
-{% if modo_listagem or modo_indicador %}
+{% if dados.aviso_indicador %}<div class="aviso">{{ dados.aviso_indicador }}</div>{% endif %}
 
-{% if modo_indicador and previa_indicador %}
-<div class="secao-titulo">Prévia — {{ previa_indicador.metrica_label }}</div>
-<table>
-  <tr>
-    <th>Unidade</th><th>{{ previa_indicador.coluna_valor }}</th>
-    {% if previa_indicador.mostrar_share %}<th>% do total</th>{% endif %}
-  </tr>
-  {% for l in previa_indicador.linhas %}
-  <tr{% if l.destaque %} class="melhor"{% endif %}>
-    <td>{{ l.conta }}</td><td>{{ l.valor_fmt }}</td>
-    {% if previa_indicador.mostrar_share %}
-    <td>{% if l.indisponivel %}—{% else %}{{ l.share|floatformat:1 }}%{% endif %}</td>
-    {% endif %}
-  </tr>
-  {% endfor %}
-  <tr>
-    <td><b>{{ previa_indicador.total_rotulo }}</b></td>
-    <td><b>{{ previa_indicador.total_fmt }}</b></td>
-    {% if previa_indicador.mostrar_share %}<td><b>100,0%</b></td>{% endif %}
-  </tr>
-</table>
+{# ------------------------------------------------------------------ #}
+{# 01 — o que foi lido dos anexos                                      #}
+{# ------------------------------------------------------------------ #}
+<div class="bloco">
+  <span class="bloco-idx">01</span>
+  <span class="bloco-nome">{% if modo_listagem or modo_indicador %}Prévia{% else %}Números lidos{% endif %}</span>
+  <span class="bloco-rule"></span>
+</div>
+
+{% if modo_indicador %}
+{% if previa_indicador %}
+<div class="secao-titulo">{{ previa_indicador.metrica_label }}</div>
+<div class="tabela-rolagem">
+  <table>
+    <tr>
+      <th>Unidade</th><th>{{ previa_indicador.coluna_valor }}</th>
+      {% if previa_indicador.mostrar_share %}<th>% do total</th>{% endif %}
+    </tr>
+    {% for l in previa_indicador.linhas %}
+    <tr{% if l.destaque %} class="melhor"{% endif %}>
+      <td>{{ l.conta }}</td><td>{{ l.valor_fmt }}</td>
+      {% if previa_indicador.mostrar_share %}
+      <td>{% if l.indisponivel %}—{% else %}{{ l.share|floatformat:1 }}%{% endif %}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+    <tr>
+      <td><b>{{ previa_indicador.total_rotulo }}</b></td>
+      <td><b>{{ previa_indicador.total_fmt }}</b></td>
+      {% if previa_indicador.mostrar_share %}<td><b>100,0%</b></td>{% endif %}
+    </tr>
+  </table>
+</div>
 {% for n in previa_indicador.notas %}<p class="legenda">{{ n }}</p>{% endfor %}
 {% endif %}
 
-{% if modo_listagem %}
-<div class="secao-titulo">Prévia — uma linha por conta</div>
-<table>
-  <tr><th>#</th><th>Conta</th><th>Nº Result.</th><th>Investimento</th><th>Custo / Result.</th><th>CPM</th></tr>
-  {% for l in previa %}
-  <tr>
-    <td>{{ l.posicao }}</td><td>{{ l.conta }}</td><td>{{ l.resultados }}</td>
-    <td>{{ l.investimento }}</td><td>{{ l.custo }}</td><td>{{ l.cpm }}</td>
-  </tr>
+{% elif modo_listagem %}
+<div class="tabela-rolagem">
+  <table>
+    <tr><th>#</th><th>Conta</th><th>Nº Result.</th><th>Investimento</th>
+      <th>Custo / Result.</th><th>CPM</th></tr>
+    {% for l in previa %}
+    <tr>
+      <td>{{ l.posicao }}</td><td>{{ l.conta }}</td><td>{{ l.resultados }}</td>
+      <td>{{ l.investimento }}</td><td>{{ l.custo }}</td><td>{{ l.cpm }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+<p class="legenda">O PDF sai em paisagem, com as colunas de resultado, alcance e
+  impressões também.</p>
+
+{% else %}
+<div class="kpis">
+  {% for k in dados.kpis %}
+  <div class="kpi"><small>{{ k.label }}</small><b>{{ k.valor }}</b></div>
   {% endfor %}
-</table>
-<p class="legenda">O PDF sai em paisagem, com as colunas de resultado, alcance e impressões também.</p>
+</div>
+
+{% if dados.funil %}
+{% if modo_grupo %}<p class="metricas">Funil de Vendas — Geral (todas as unidades somadas)</p>{% endif %}
+{% for etapa in dados.funil.etapas %}
+<div class="secao-titulo">{{ etapa.titulo }}</div>
+<div class="tabela-rolagem">
+  <table>
+    <tr><th>Métrica</th><th>Valor</th><th>Leitura</th></tr>
+    {% for linha in etapa.linhas %}
+    <tr><td><b>{{ linha.0 }}</b></td><td>{{ linha.1 }}</td><td>{{ linha.2 }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endfor %}
+{% if dados.funil.legenda %}<p class="legenda">{{ dados.funil.legenda }}</p>{% endif %}
 {% endif %}
 
-<div class="cartao" style="margin-top:26px">
-  <form method="post" id="form-revisao">
-    {% csrf_token %}
-    {% if modo_listagem %}
+{% if modo_grupo and dados.composicao %}
+<div class="secao-titulo">{{ dados.composicao.titulo }}</div>
+<div class="tabela-rolagem">
+  <table>
+    <tr><th>Unidade</th><th>Resultados</th><th>Participação</th></tr>
+    {% for item in dados.composicao.itens %}
+    <tr><td>{{ item.nome }}</td><td>{{ item.texto }}</td>
+      <td>{{ item.share|floatformat:0 }}%</td></tr>
+    {% endfor %}
+  </table>
+</div>
+<p class="legenda">No PDF, esta composição vira um gráfico de barras horizontais.</p>
+{% endif %}
+
+{% if dados.detalhes_campanha %}
+<div class="secao-titulo">{{ dados.detalhes_campanha.titulo }}</div>
+<div class="tabela-rolagem">
+  <table>
+    <tr>{% for h in dados.detalhes_campanha.header %}<th>{{ h }}</th>{% endfor %}</tr>
+    {% for linha in dados.detalhes_campanha.linhas %}
+    <tr>{% for c in linha %}<td>{{ c }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+{# 02 — o que o operador edita antes de gerar                          #}
+{# ------------------------------------------------------------------ #}
+<div class="bloco">
+  <span class="bloco-idx">02</span>
+  <span class="bloco-nome">{% if modo_listagem or modo_indicador %}Identificação{% else %}Textos do PDF{% endif %}</span>
+  <span class="bloco-rule"></span>
+</div>
+
+<div class="campos">
+  {% if modo_listagem %}
+  <div class="campo campo-largo">
     <label for="{{ form.titulo.id_for_label }}">{{ form.titulo.label }}</label>
     {{ form.titulo }}
-    <p class="ajuda">{{ form.titulo.help_text }}</p>
+    <span class="ajuda">{{ form.titulo.help_text }}</span>
     {{ form.titulo.errors }}
-
+  </div>
+  <div class="campo campo-largo">
     <div class="par-datas">
       <div>
         <label for="{{ form.inicio.id_for_label }}">{{ form.inicio.label }}</label>
@@ -76,139 +153,116 @@
         {{ form.fim }} {{ form.fim.errors }}
       </div>
     </div>
-    <p class="ajuda">Aparece no canto superior direito do PDF. Sugerido a partir
-      das datas dos anexos; em branco, o bloco não sai.</p>
-    {% else %}
+    <span class="ajuda">Aparece no canto superior direito do PDF. Sugerido a partir
+      das datas dos anexos; em branco, o bloco não sai.</span>
+  </div>
+
+  {% elif modo_indicador %}
+  <div class="campo campo-largo">
     <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
     {{ form.cliente }} {{ form.cliente.errors }}
-
+  </div>
+  <div class="campo">
     <label for="{{ form.metrica.id_for_label }}">{{ form.metrica.label }}</label>
     {{ form.metrica }}
-    <p class="ajuda">{{ form.metrica.help_text }}</p>
+    <span class="ajuda">{{ form.metrica.help_text }}</span>
     {{ form.metrica.errors }}
-
+  </div>
+  <div class="campo">
     <label for="{{ form.veiculacao.id_for_label }}">{{ form.veiculacao.label }}</label>
     {{ form.veiculacao }}
-    <p class="ajuda">{{ form.veiculacao.help_text }}</p>
+    <span class="ajuda">{{ form.veiculacao.help_text }}</span>
     {{ form.veiculacao.errors }}
-    {% endif %}
+  </div>
 
-    {% for c, campo in pares_unidades %}
-    <label for="{{ campo.id_for_label }}">{{ campo.label }}</label>
-    {{ campo }} {{ campo.errors }}
-    <p class="ajuda">
-      {% for k in c.dados.kpis %}{{ k.label }}: <b>{{ k.valor }}</b>{% if not forloop.last %} &nbsp;·&nbsp; {% endif %}{% endfor %}
-    </p>
-    {% endfor %}
-
-    <input type="hidden" name="download_token" id="download-token">
-    <button class="botao" type="submit" id="btn-gerar">Gerar PDF</button>
-    <a class="botao botao-sec" href="{% url 'index' %}" style="margin-left:10px">Importar outros arquivos</a>
-  </form>
-</div>
-
-{% else %}
-
-{% if dados.aviso_indicador %}<div class="aviso">{{ dados.aviso_indicador }}</div>{% endif %}
-
-<div class="kpis">
-  {% for k in dados.kpis %}
-  <div class="kpi"><small>{{ k.label }}</small><b>{{ k.valor }}</b></div>
-  {% endfor %}
-</div>
-
-{% if dados.funil %}
-{% if modo_grupo %}<p class="metricas" style="text-align:left;margin:20px 0 0">Funil de Vendas — Geral (todas as unidades somadas)</p>{% endif %}
-{% for etapa in dados.funil.etapas %}
-<div class="secao-titulo">{{ etapa.titulo }}</div>
-<table>
-  <tr><th>Métrica</th><th>Valor</th><th>Leitura</th></tr>
-  {% for linha in etapa.linhas %}
-  <tr><td><b>{{ linha.0 }}</b></td><td>{{ linha.1 }}</td><td>{{ linha.2 }}</td></tr>
-  {% endfor %}
-</table>
-{% endfor %}
-{% if dados.funil.legenda %}<p class="legenda">{{ dados.funil.legenda }}</p>{% endif %}
-{% endif %}
-
-{% if modo_grupo %}
-
-{% if dados.composicao %}
-<div class="secao-titulo">{{ dados.composicao.titulo }}</div>
-<table>
-  <tr><th>Unidade</th><th>Resultados</th><th>Participação</th></tr>
-  {% for item in dados.composicao.itens %}
-  <tr>
-    <td>{{ item.nome }}</td><td>{{ item.texto }}</td><td>{{ item.share|floatformat:0 }}%</td>
-  </tr>
-  {% endfor %}
-</table>
-<p class="legenda">No PDF, esta composição vira um gráfico de barras horizontais.</p>
-{% endif %}
-
-<div class="cartao" style="margin-top:26px">
-  <form method="post" id="form-revisao">
-    {% csrf_token %}
+  {% else %}
+  <div class="campo">
     <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
     {{ form.cliente }} {{ form.cliente.errors }}
-
+  </div>
+  <div class="campo">
     <label for="{{ form.periodo.id_for_label }}">{{ form.periodo.label }}</label>
     {{ form.periodo }} {{ form.periodo.errors }}
+  </div>
+  <div class="campo campo-largo">
+    <label for="{{ form.analise.id_for_label }}">{{ form.analise.label }}</label>
+    {{ form.analise }}
+    <span class="ajuda">{{ form.analise.help_text }}</span>
+    {{ form.analise.errors }}
+  </div>
+  {% endif %}
+</div>
 
-    {% for u, campo in pares_unidades %}
+{# ------------------------------------------------------------------ #}
+{# 03 — nomes das contas, com os KPIs de cada uma à vista              #}
+{# ------------------------------------------------------------------ #}
+{% if pares_unidades %}
+<div class="bloco">
+  <span class="bloco-idx">03</span>
+  <span class="bloco-nome">Nomes no relatório</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">{{ pares_unidades|length }}</span>
+</div>
+<div class="campo-lista">
+  {% for u, campo in pares_unidades %}
+  <div class="campo">
     <label for="{{ campo.id_for_label }}">{{ campo.label }}</label>
     {{ campo }} {{ campo.errors }}
-    <p class="ajuda">
+    <span class="ajuda">
       {% for k in u.kpis %}{{ k.label }}: <b>{{ k.valor }}</b>{% if not forloop.last %} &nbsp;·&nbsp; {% endif %}{% endfor %}
-    </p>
-    {% endfor %}
-
-    <label for="{{ form.analise.id_for_label }}">{{ form.analise.label }}</label>
-    {{ form.analise }}
-    <p class="ajuda">{{ form.analise.help_text }}</p>
-
-    <input type="hidden" name="download_token" id="download-token">
-    <button class="botao" type="submit" id="btn-gerar">Gerar PDF consolidado</button>
-    <a class="botao botao-sec" href="{% url 'index' %}" style="margin-left:10px">Importar outros arquivos</a>
-  </form>
-</div>
-
-{% else %}
-
-{% if dados.detalhes_campanha %}
-<div class="secao-titulo">{{ dados.detalhes_campanha.titulo }}</div>
-<table>
-  <tr>{% for h in dados.detalhes_campanha.header %}<th>{{ h }}</th>{% endfor %}</tr>
-  {% for linha in dados.detalhes_campanha.linhas %}
-  <tr>{% for c in linha %}<td>{{ c }}</td>{% endfor %}</tr>
+      {% for k in u.dados.kpis %}{{ k.label }}: <b>{{ k.valor }}</b>{% if not forloop.last %} &nbsp;·&nbsp; {% endif %}{% endfor %}
+    </span>
+  </div>
   {% endfor %}
-</table>
-{% endif %}
-
-<div class="cartao" style="margin-top:26px">
-  <form method="post" id="form-revisao">
-    {% csrf_token %}
-    <label for="{{ form.cliente.id_for_label }}">Cliente</label>
-    {{ form.cliente }} {{ form.cliente.errors }}
-
-    <label for="{{ form.periodo.id_for_label }}">Período</label>
-    {{ form.periodo }} {{ form.periodo.errors }}
-
-    <label for="{{ form.analise.id_for_label }}">{{ form.analise.label }}</label>
-    {{ form.analise }}
-    <p class="ajuda">{{ form.analise.help_text }}</p>
-
-    <input type="hidden" name="download_token" id="download-token">
-    <button class="botao" type="submit" id="btn-gerar">Gerar PDF</button>
-    <a class="botao botao-sec" href="{% url 'index' %}" style="margin-left:10px">Importar outro arquivo</a>
-  </form>
 </div>
-
-{% endif %}
 {% endif %}
 {% endblock %}
 
-{% block status %}<span class="status-txt" id="status-txt">Revise os dados e gere o PDF</span>{% endblock %}
+{% block resumo %}
+<div class="resumo-titulo">Resumo da saída</div>
+<dl class="resumo-lista">
+  {% if modo_listagem %}
+  <div class="resumo-item"><dt>Modo</dt><dd>Listagem</dd></div>
+  <div class="resumo-item"><dt>Contas</dt><dd class="num">{{ dados.contas|length }}</dd></div>
+  <div class="resumo-item"><dt>Ordem</dt><dd>Por nº de resultados</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>PDF em paisagem</dd></div>
+  {% elif modo_indicador %}
+  <div class="resumo-item"><dt>Modo</dt><dd>Indicador único</dd></div>
+  <div class="resumo-item"><dt>Cliente</dt><dd>{{ dados.cliente }}</dd></div>
+  <div class="resumo-item"><dt>Contas</dt><dd class="num">{{ dados.contas|length }}</dd></div>
+  {% if previa_indicador %}
+  <div class="resumo-item"><dt>Métrica</dt><dd>{{ previa_indicador.metrica_label }}</dd></div>
+  {% endif %}
+  {% elif modo_grupo %}
+  <div class="resumo-item"><dt>Modo</dt><dd>Consolidado</dd></div>
+  <div class="resumo-item"><dt>Cliente</dt><dd>{{ dados.cliente }}</dd></div>
+  <div class="resumo-item"><dt>Unidades</dt><dd class="num">{{ dados.unidades|length }}</dd></div>
+  <div class="resumo-item"><dt>Período</dt><dd>{{ dados.periodo|default:"—" }}</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>PDF consolidado · 1 página</dd></div>
+  {% else %}
+  <div class="resumo-item"><dt>Modo</dt><dd>Anexo único</dd></div>
+  <div class="resumo-item"><dt>Cliente</dt><dd>{{ dados.cliente }}</dd></div>
+  <div class="resumo-item"><dt>Período</dt><dd>{{ dados.periodo|default:"—" }}</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>PDF individual · 1 página</dd></div>
+  {% endif %}
+</dl>
+
+<div class="acao">
+  <input type="hidden" name="download_token" id="download-token">
+  <button class="botao" type="submit" id="btn-gerar">
+    <span id="btn-rotulo">Gerar PDF</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M4 21h16"></path>
+    </svg>
+  </button>
+  <a class="botao botao-sec" href="{% url 'index' %}">Importar outros arquivos</a>
+  <div class="status">
+    <span class="status-eixo" aria-hidden="true"></span>
+    <span class="status-txt" id="status-txt">Revise os dados e gere o PDF</span>
+  </div>
+</div>
+{% endblock %}
 
 {% block scripts %}
 <script>
@@ -217,11 +271,12 @@
   // fechamos a etapa 02 na régua, em vez de deixar o botão preso em "Gerando…".
   const form = document.getElementById('form-revisao');
   const btn = document.getElementById('btn-gerar');
+  const btnRotulo = document.getElementById('btn-rotulo');
   const tokenInput = document.getElementById('download-token');
   const statusTxt = document.getElementById('status-txt');
   const statusEixo = document.querySelector('.status-eixo');
   const etapa2 = document.getElementById('etapa-2');
-  const rotulo = btn.textContent;
+  const rotulo = btnRotulo.textContent;
   let sonda = null;
 
   const lerCookie = nome =>
@@ -229,7 +284,7 @@
 
   form.addEventListener('submit', () => {
     btn.classList.add('carregando');
-    btn.textContent = 'Gerando PDF…';
+    btnRotulo.textContent = 'Gerando PDF…';
     btn.disabled = true;
     statusEixo.classList.add('ativo');
     statusTxt.textContent = 'Gerando PDF…';
@@ -242,7 +297,7 @@
       clearInterval(sonda);
       document.cookie = 'apex_download=; Max-Age=0; path=/';
       btn.classList.remove('carregando');
-      btn.textContent = rotulo;
+      btnRotulo.textContent = rotulo;
       btn.disabled = false;
       etapa2.className = 'etapa concluida';
       statusTxt.textContent = 'PDF baixado — ajuste e gere de novo, ou importe outros arquivos';
