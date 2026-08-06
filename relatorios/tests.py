@@ -6,6 +6,7 @@ Testes do fluxo web (upload → revisão → PDF), cobrindo o modo individual
 PyMuPDF como fallback.
 """
 import io
+import json
 import shutil
 import subprocess
 import tempfile
@@ -17,7 +18,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from openpyxl import Workbook
 
-from . import benchmarks, metricas, parser_xlsx
+from . import analysis, benchmarks, metricas, parser_xlsx
 from .parser_xlsx import consolidar_grupo, ler_export_meta
 from .views import _MESES_PT
 
@@ -313,6 +314,41 @@ def _linhas_funil(dados):
             for m, v, l in etapa["linhas"]}
 
 
+class ColunaDeInvestimentoTest(TestCase):
+    """O Meta alterna o rótulo da coluna de verba entre exports. Não
+    reconhecê-la zera investimento e custo por resultado sem avisar
+    ninguém — o zero passa por número legítimo."""
+
+    def _dados(self, rotulo):
+        wb = Workbook()
+        ws = wb.active
+        ws.append([c if c != "Valor usado (BRL)" else rotulo
+                   for c in CABECALHO])
+        ws.append(["Campanha A", "active", 82, INDICADOR, 338.80, 35840,
+                   10206, 500, "2026-07-30", "2026-08-05"])
+        buf = io.BytesIO()
+        wb.save(buf)
+        return ler_export_meta(io.BytesIO(buf.getvalue()))
+
+    def test_variantes_de_rotulo_da_coluna(self):
+        for rotulo in ("Valor usado (BRL)", "Valor gasto (BRL)",
+                       "Valor investido (BRL)", "Amount spent (BRL)"):
+            with self.subTest(rotulo=rotulo):
+                n = self._dados(rotulo)["_num"]
+                self.assertAlmostEqual(n["investimento"], 338.80, places=2)
+                self.assertAlmostEqual(n["custo_resultado"], 4.13, places=2)
+
+    def test_coluna_desconhecida_nao_vira_periodo_otimo(self):
+        # Sem a verba o CPA sai zero, e zero é mais barato que a faixa mais
+        # barata de qualquer perfil. A análise tem que recusar a leitura.
+        dados = self._dados("Verba aplicada")
+        self.assertEqual(dados["_num"]["investimento"], 0.0)
+        self.assertEqual(dados["avaliacao"]["classificacao"], "ATENCAO")
+        self.assertEqual(dados["avaliacao"]["motivo_principal"],
+                         "sem_investimento")
+        self.assertIn("não trouxe o valor investido", dados["analise_sugerida"])
+
+
 class BenchmarksTest(TestCase):
     """Classificação das métricas nas faixas de referência configuráveis."""
 
@@ -349,7 +385,11 @@ class BenchmarksTest(TestCase):
 
 
 class AnaliseAutomaticaTest(TestCase):
-    """Texto sugerido: só números e continuidade — nunca status de campanha."""
+    """
+    Integração do motor de regras (`analysis/`) com o parser: a conta
+    individual passa pela avaliação, o consolidado ainda usa o texto por
+    composição. As regras em si têm testes próprios em analysis/tests/.
+    """
 
     def test_status_nao_vaza_para_analise_nem_para_o_pdf(self):
         f = _arquivo("conta.xlsx", [
@@ -376,19 +416,60 @@ class AnaliseAutomaticaTest(TestCase):
                       "verificando"):
             self.assertNotIn(termo, texto)
 
-    def test_campanha_dominante_share_e_custo(self):
+    def test_a_analise_mais_longa_ainda_cabe_em_uma_pagina(self):
+        # A análise saiu de dois parágrafos curtos para quatro blocos, e o
+        # relatório individual é de UMA página fechada. Este teste pega o mais
+        # longo dos textos que o motor sabe produzir e leva até o PDF.
+        f = _arquivo("conta.xlsx", [
+            {"nome": "Campanha A", "res": 40, "inv": 80.0, "imp": 4000,
+             "alc": 2500, "cliques": 300},
+            {"nome": "Campanha B", "res": 20, "inv": 120.0, "imp": 2000,
+             "alc": 1000, "cliques": 120},
+        ])
+        self.client.post("/", {"cliente": "ILOC", "arquivos": [f]})
+
+        metricas = {"investimento": 644.98, "alcance": 16279,
+                    "impressoes": 57965, "frequencia": 3.56, "cpm": 11.13,
+                    "resultados": 344, "cpa": 1.87, "ctr": 0.5,
+                    "campanhas": [{"nome": "a", "resultados": 344}]}
+        textos = []
+        for cpa in (1.87, 6.0, 30.0):
+            for meta in (None, 5.00):
+                for frequencia in (1.1, 2.0, 3.0, 4.0):
+                    for cpm in (11.13, 25.0, 80.0):
+                        av = analysis.rules.avaliar(
+                            dict(metricas, cpa=cpa, frequencia=frequencia,
+                                 cpm=cpm), meta_cpa=meta)
+                        textos.append(analysis.templates.redigir(av, metricas))
+        maior = max(textos, key=len)
+
+        r = self.client.post("/revisao/", {
+            "cliente": "ILOC", "periodo": "01/07/2026 a 15/07/2026",
+            "analise": maior,
+        })
+        pdf = _bytes_pdf(r)
+        self.assertEqual(_paginas(pdf), 1,
+                         "a análise mais longa estourou a página do relatório")
+        # E o texto chegou inteiro: o último bloco é o que cairia fora.
+        self.assertIn("Objetivo do próximo ciclo", _texto_pdf(pdf))
+
+    def test_analise_da_conta_vem_do_motor_de_regras(self):
+        # 80/20 entre duas campanhas, CPA de R$ 2,60: período ótimo, e o
+        # próximo passo sai da concentração de resultados.
         dados = _dados([
             {"nome": "Campanha A", "res": 80, "inv": 160.0, "imp": 8000,
              "alc": 5000, "cliques": 400},
             {"nome": "Campanha B", "res": 20, "inv": 100.0, "imp": 2000,
              "alc": 1500, "cliques": 100},
         ])
-        analise = dados["analise_sugerida"]
-        self.assertIn("Campanha A", analise)
-        self.assertIn("(80% do total)", analise)
-        self.assertIn("R$ 2,00", analise)          # 160 / 80
+        av = dados["avaliacao"]
+        self.assertEqual(av["classificacao"], "OTIMO")
+        self.assertIn("resultados_concentrados", av["sinais"])
+        self.assertEqual(av["proximo_passo"], "redistribuir_verba")
+        self.assertIn("Redistribuir a verba entre as campanhas",
+                      dados["analise_sugerida"])
 
-    def test_campanhas_equilibradas_sem_destaque_forcado(self):
+    def test_analise_do_pdf_nao_repete_os_numeros_das_tabelas(self):
         dados = _dados([
             {"nome": "Campanha A", "res": 50, "inv": 100.0, "imp": 5000,
              "alc": 4000, "cliques": 300},
@@ -396,21 +477,76 @@ class AnaliseAutomaticaTest(TestCase):
              "alc": 4000, "cliques": 300},
         ])
         analise = dados["analise_sugerida"]
-        self.assertIn("equilibrada", analise)
-        self.assertNotIn("concentrou", analise)
-        self.assertIn("entre R$ 2,00 e R$ 2,20", analise)
+        self.assertNotRegex(analise, r"\d")
+        self.assertNotIn("R$", analise)
+        # Frequência 1,25 em 15 dias equivale a 2,5 no mês: patamar saudável.
+        self.assertIn("frequencia_saudavel", dados["avaliacao"]["sinais"])
 
-    def test_ctr_abaixo_leitura_positiva_e_passo_de_criativos(self):
-        # CTR 1% (abaixo da faixa 2–5%); demais métricas dentro das faixas
+    def test_cpa_alto_classifica_em_atencao_e_pede_revisao(self):
+        # CTR 1% (abaixo da faixa 2–5%) e CPA de R$ 60,00 com 5 resultados
         dados = _dados([{"nome": "C", "res": 5, "inv": 300.0, "imp": 10000,
                          "alc": 8000, "cliques": 100}])
         _valor, leitura = _linhas_funil(dados)["CTR (taxa de cliques)"]
         self.assertEqual(
             leitura, "Estamos renovando os criativos para elevar a taxa de cliques.")
-        # Passo adiante aponta renovação de criativos, sem tom de falha
-        self.assertIn("criativos", dados["analise_sugerida"])
+
+        av = dados["avaliacao"]
+        self.assertEqual(av["classificacao"], "ATENCAO")
+        # Amostra pequena não promove nada: o rebaixamento só desce.
+        self.assertIn("amostra_pequena", av["sinais"])
+        self.assertEqual(av["motivo_principal"], "cpa_atencao")
+        self.assertIn("Revisar para quem os anúncios estão sendo mostrados",
+                      dados["analise_sugerida"])
         for termo in ("cansado", "não está prendendo", "Baixo"):
             self.assertNotIn(termo, leitura + dados["analise_sugerida"])
+
+    def test_avaliacao_serializavel_acompanha_os_dados(self):
+        # É ela, não o texto, que vira payload nas etapas seguintes.
+        dados = _dados([{"nome": "C", "res": 344, "inv": 644.98, "imp": 57965,
+                         "alc": 16279, "cliques": 900}])
+        self.assertEqual(json.loads(json.dumps(dados["avaliacao"])),
+                         dados["avaliacao"])
+        self.assertEqual(dados["avaliacao"]["perfil"], "varejo_celular")
+        self.assertFalse(dados["avaliacao"]["meta_definida"])
+
+    def test_meta_de_cpa_substitui_a_faixa_do_perfil(self):
+        registros, mapa = parser_xlsx.ler_registros(io.BytesIO(_planilha(
+            [{"nome": "C", "res": 100, "inv": 800.0, "imp": 20000,
+              "alc": 12000, "cliques": 500}])))
+        # CPA de R$ 8,00: dentro da faixa de varejo_celular (teto 9,00)...
+        self.assertEqual(
+            parser_xlsx.consolidar(registros, mapa)["avaliacao"]["classificacao"],
+            "BOM")
+        # ...e acima de uma meta de R$ 5,00 (razão 1,60).
+        self.assertEqual(
+            parser_xlsx.consolidar(registros, mapa, meta_cpa=5.0)
+            ["avaliacao"]["classificacao"], "ATENCAO")
+
+    def test_periodo_curto_endurece_a_leitura_de_frequencia(self):
+        # Frequência 1,4: no mês inteiro é público de sobra; na semana, o
+        # mesmo número já significa que a audiência viu bastante.
+        campanhas = [{"nome": "C", "res": 100, "inv": 200.0, "imp": 14000,
+                      "alc": 10000, "cliques": 500}]
+        mes = parser_xlsx.ler_export_meta(io.BytesIO(
+            _planilha(campanhas, inicio="2026-07-01", fim="2026-07-30")))
+        semana = parser_xlsx.ler_export_meta(io.BytesIO(
+            _planilha(campanhas, inicio="2026-07-01", fim="2026-07-07")))
+        self.assertIn("frequencia_baixa", mes["avaliacao"]["sinais"])
+        self.assertIn("frequencia_saturada", semana["avaliacao"]["sinais"])
+
+    def test_ajuste_de_frequencia_nao_tem_degrau_em_catorze_dias(self):
+        # Já teve: 14 dias usava os limites cheios e 13 usava 13/30 deles, e
+        # um dia a mais no export virava o veredito de frequência do avesso.
+        campanhas = [{"nome": "C", "res": 100, "inv": 200.0, "imp": 25000,
+                      "alc": 10000, "cliques": 500}]
+        sinais = []
+        for fim in ("2026-07-13", "2026-07-14", "2026-07-15"):
+            dados = parser_xlsx.ler_export_meta(io.BytesIO(
+                _planilha(campanhas, inicio="2026-07-01", fim=fim)))
+            sinais.append([s for s in dados["avaliacao"]["sinais"]
+                           if s.startswith("frequencia_")])
+        self.assertEqual(sinais[0], sinais[1])
+        self.assertEqual(sinais[1], sinais[2])
 
     def test_taxa_de_conversao_acima_de_100_e_excelente(self):
         # 250 conversas com 100 cliques: conversas vindas de visualizações
@@ -433,13 +569,75 @@ class AnaliseAutomaticaTest(TestCase):
         _valor, leitura = _linhas_funil(grupo)["CPM (custo por mil)"]
         self.assertIn("Custo de entrega competitivo", leitura)
 
+        # As três unidades têm o mesmo CPA (R$ 10,00), igual ao do grupo:
+        # nenhuma descolada, e o grupo inteiro acima da faixa do perfil.
+        av = grupo["avaliacao"]
+        self.assertAlmostEqual(av["cpa_grupo"], 10.0, places=2)
+        self.assertEqual(av["grupo"]["classificacao"], "ATENCAO")
+        self.assertIn("grupo_homogeneo", av["sinais"])
+        self.assertEqual(av["proximo_passo"], "elevar_o_patamar_do_grupo")
+        self.assertIn("todas no mesmo patamar", grupo["analise_sugerida"])
+
+    def test_consolidado_mede_cada_unidade_contra_o_custo_do_grupo(self):
+        # A gasta R$ 400 por 10 resultados (CPA 40); B e C, R$ 50 por 50
+        # (CPA 1). CPA do grupo = 500/110 = R$ 4,55 — A fica 8,8x acima.
+        grupo = consolidar_grupo([
+            {"nome": "Cara", "dados": _dados([{"nome": "CA", "res": 10, "inv": 400.0,
+                                               "imp": 9000, "alc": 6000, "cliques": 300}])},
+            {"nome": "Barata", "dados": _dados([{"nome": "CB", "res": 50, "inv": 50.0,
+                                                 "imp": 5000, "alc": 4000, "cliques": 200}])},
+            {"nome": "Média", "dados": _dados([{"nome": "CC", "res": 50, "inv": 50.0,
+                                                "imp": 5000, "alc": 4000, "cliques": 200}])},
+        ])
+        av = grupo["avaliacao"]
+        por_nome = {u["nome"]: u for u in av["unidades"]}
+        self.assertEqual(por_nome["Cara"]["avaliacao"]["classificacao"], "ATENCAO")
+        self.assertEqual(por_nome["Barata"]["avaliacao"]["classificacao"], "OTIMO")
+        # A referência de cada unidade é o grupo, não a faixa do perfil.
+        self.assertEqual(por_nome["Cara"]["avaliacao"]["referencia"], "grupo")
+        self.assertIn("comparada_ao_grupo", por_nome["Cara"]["avaliacao"]["sinais"])
+
+        self.assertIn("unidades_acima_do_grupo", av["sinais"])
+        self.assertIn("unidades_abaixo_do_grupo", av["sinais"])
+        self.assertIn("dispersao_alta", av["sinais"])
+        self.assertEqual(av["proximo_passo"],
+                         "levar_o_metodo_das_melhores_as_demais")
+
         analise = grupo["analise_sugerida"]
-        # Resumo usa os totais somados e a leitura de eficiência do benchmark
-        self.assertIn("R$ 250,00", analise)
-        self.assertIn("R$ 10,00", analise)         # 250 / 25 resultados
-        self.assertIn("público ainda longe da saturação", analise)
-        # Shares 40/40/20: sem destaque forçado entre as unidades
-        self.assertIn("equilibrada", analise)
+        self.assertIn("Cara", analise)      # a praça mais cara é nomeada
+        self.assertIn("Barata", analise)    # e a que tem o método a copiar
+        self.assertNotIn("R$", analise)     # os números estão na tabela acima
+
+    def test_analise_do_grupo_cabe_na_pagina_com_nomes_longos(self):
+        # O bloco 2 do consolidado nomeia duas praças, e o nome vem do
+        # operador. O consolidado também é de UMA página fechada.
+        nomes = ["Tim %02d — Maxi Shopping Jundiaí Zona Norte" % i
+                 for i in range(20)]
+        arquivos = [_arquivo("u%d.xlsx" % i, [
+            {"nome": "C", "res": 100 + i * 20, "inv": 100.0 + i * 90,
+             "imp": 9000, "alc": 4000, "cliques": 400}]) for i in range(20)]
+        self.client.post("/", {"cliente": "TIM Brasil", "arquivos": arquivos})
+        analise = self.client.session["relatorio_apex"]["analise_sugerida"]
+        # A praça mais cara e a mais barata são nomeadas pelo nome do arquivo
+        # até o operador renomear; o texto tem que caber de qualquer forma.
+        campos = {"cliente": "TIM Brasil", "periodo": "01/07/2026 a 15/07/2026",
+                  "analise": analise}
+        campos.update({"unidade_%d" % i: n for i, n in enumerate(nomes)})
+        r = self.client.post("/revisao/", campos)
+        pdf = _bytes_pdf(r)
+        self.assertEqual(_paginas(pdf), 1,
+                         "a análise do grupo estourou a página do consolidado")
+        self.assertIn("Objetivo do próximo ciclo", _texto_pdf(pdf))
+
+    def test_avaliacao_do_grupo_e_serializavel(self):
+        grupo = consolidar_grupo([
+            {"nome": "A", "dados": _dados([{"nome": "CA", "res": 40, "inv": 80.0,
+                                            "imp": 4000, "alc": 3000, "cliques": 200}])},
+            {"nome": "B", "dados": _dados([{"nome": "CB", "res": 40, "inv": 90.0,
+                                            "imp": 4000, "alc": 3000, "cliques": 200}])},
+        ])
+        self.assertEqual(json.loads(json.dumps(grupo["avaliacao"])),
+                         grupo["avaliacao"])
 
 
 class ValidacaoUploadTest(TestCase):

@@ -8,11 +8,12 @@ consolida os KPIs do período, monta o funil de vendas e os dados dos gráficos
 """
 
 import unicodedata
+from dataclasses import asdict
 from datetime import date, datetime
 
 from openpyxl import load_workbook
 
-from . import benchmarks, indicadores
+from . import analysis, benchmarks, indicadores
 
 
 # ----------------------------------------------------------------------
@@ -79,7 +80,12 @@ _COLUNAS = {
     "campanha":    ([["nome da campanha"], ["campaign name"]], []),
     "conjunto":    ([["nome do conjunto"], ["ad set name"]], []),
     "anuncio":     ([["nome do anuncio"], ["ad name"]], []),
-    "investimento": ([["valor usado"], ["amount spent"]], []),
+    # O Meta alterna o rótulo da coluna de verba entre exports ("Valor usado
+    # (BRL)" e "Valor gasto (BRL)"). Sem todas as variantes o relatório sai com
+    # investimento e custo por resultado zerados, e o zero passa por número
+    # legítimo em vez de coluna não encontrada.
+    "investimento": ([["valor usado"], ["valor gasto"], ["valor investido"],
+                      ["amount spent"]], []),
     "resultados":  ([["resultados"], ["results"]], ["custo", "cost", "indicador", "indicator", "tipo", "type", "taxa", "rate"]),
     "custo_resultado": ([["custo por resultado"], ["cost per result"]], []),
     "indicador":   ([["indicador de resultado"], ["result indicator"], ["tipo de resultado"], ["result type"]], []),
@@ -172,7 +178,8 @@ def _mapear_colunas(header):
 # ----------------------------------------------------------------------
 # Leitura principal
 # ----------------------------------------------------------------------
-def ler_export_meta(arquivo, veiculacao=VEICULACAO_TODAS, conta=None):
+def ler_export_meta(arquivo, veiculacao=VEICULACAO_TODAS, conta=None,
+                    perfil=None, meta_cpa=None):
     """
     Lê o .xlsx exportado do Meta Ads Manager e devolve um dicionário com:
     kpis, metricas_extra, funil, gráficos (funil visual e share por campanha),
@@ -180,9 +187,11 @@ def ler_export_meta(arquivo, veiculacao=VEICULACAO_TODAS, conta=None):
     Levanta ValueError com mensagem amigável se o arquivo não for reconhecido.
 
     `veiculacao` restringe as linhas ao status da campanha (ver VEICULACOES).
+    `perfil` e `meta_cpa` alimentam a análise do período (ver consolidar).
     """
     registros, mapa = ler_registros(arquivo)
-    return consolidar(filtrar_veiculacao(registros, veiculacao), mapa, conta)
+    return consolidar(filtrar_veiculacao(registros, veiculacao), mapa, conta,
+                      perfil, meta_cpa)
 
 
 def ler_registros(arquivo):
@@ -233,8 +242,15 @@ def ler_registros(arquivo):
     return registros, mapa
 
 
-def consolidar(registros, mapa, conta=None):
-    """`conta` só identifica a origem no log de indicador não mapeado."""
+def consolidar(registros, mapa, conta=None, perfil=None, meta_cpa=None):
+    """
+    `conta` só identifica a origem no log de indicador não mapeado.
+
+    `perfil` (ver analysis.benchmarks.Perfil) escolhe a faixa de CPA de
+    referência e `meta_cpa` a substitui quando a conta já tem meta combinada.
+    Ambos são opcionais e ficam nos padrões enquanto não houver onde
+    configurá-los por conta.
+    """
     # ---- Totais do período ----
     investimento = sum(v for v in (_to_float(r.get("investimento")) for r in registros) if v) or 0.0
     resultados = sum(v for v in (_to_float(r.get("resultados")) for r in registros) if v) or 0.0
@@ -322,9 +338,44 @@ def consolidar(registros, mapa, conta=None):
         dados["grafico_campanhas"] = _dados_grafico_campanhas(campanhas, resultados)
 
     # ---- Análise do Período sugerida (editável na revisão) ----
-    dados["analise_sugerida"] = _analise_periodo(dados["_num"], campanhas, indicador)
+    # O motor classifica o período e escolhe o próximo passo; o texto é
+    # derivado dessa decisão, não o contrário. A avaliação fica guardada em
+    # `dados` porque é ela — não o texto — que vira payload nas etapas
+    # seguintes (prompt de IA, mensagem de WhatsApp), sem reprocessar números.
+    metricas = _metricas_analise(dados["_num"], campanhas)
+    avaliacao = analysis.rules.avaliar(
+        metricas, perfil=perfil, meta_cpa=meta_cpa,
+        dias_periodo=_dias_periodo(inicio, termino))
+    dados["avaliacao"] = asdict(avaliacao)
+    dados["analise_sugerida"] = analysis.templates.redigir(
+        avaliacao, metricas, destino="pdf")
 
     return dados
+
+
+def _metricas_analise(n, campanhas):
+    """Entrada do motor de análise: os totais da conta mais as campanhas na
+    forma de lista, que é o que `rules.avaliar` espera para medir estrutura e
+    concentração."""
+    return dict(n, cpa=n.get("custo_resultado"),
+                campanhas=[{"nome": nome, "resultados": c["res"]}
+                           for nome, c in campanhas.items()])
+
+
+def _dias_periodo(inicio, termino):
+    """Dias corridos do período, inclusive as duas pontas. None quando o
+    export não trouxe as datas — aí a frequência usa a janela mensal cheia."""
+    datas = []
+    for v in (inicio, termino):
+        if isinstance(v, datetime):
+            v = v.date()
+        if not isinstance(v, date):
+            try:
+                v = datetime.strptime(str(v).strip()[:10], "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                return None
+        datas.append(v)
+    return (datas[1] - datas[0]).days + 1 if datas[1] >= datas[0] else None
 
 
 def _dados_grafico_funil(n, indicador):
@@ -472,8 +523,31 @@ def consolidar_grupo(unidades):
     aviso = _aviso_indicador(us)
     if aviso:
         dados["aviso_indicador"] = aviso
-    dados["analise_sugerida"] = _analise_grupo(us, n, eh_conversa)
+    # ---- Análise do Período do grupo (editável na revisão) ----
+    # Aqui o motor faz o que só o consolidado permite: mede cada unidade
+    # contra o CPA do próprio grupo, no mesmo período. É a única referência do
+    # sistema que não é estimativa nossa — e é ela que aponta qual praça está
+    # cara e qual tem o método que vale copiar.
+    avaliacao = analysis.rules.avaliar_grupo(
+        [{"nome": u["nome"], "metricas": dict(u["num"], cpa=u["num"].get("custo_resultado"))}
+         for u in us],
+        dict(n, cpa=n.get("custo_resultado")),
+        dias_periodo=_dias_periodo_texto(dados["periodo"]))
+    dados["avaliacao"] = asdict(avaliacao)
+    dados["analise_sugerida"] = analysis.templates.redigir_grupo(
+        avaliacao, n, destino="pdf")
     return dados
+
+
+def _dias_periodo_texto(periodo):
+    """Dias corridos a partir do "dd/mm/aaaa a dd/mm/aaaa" já montado para o
+    grupo. None quando as unidades não trouxeram datas."""
+    try:
+        ini, fim = (datetime.strptime(x.strip(), "%d/%m/%Y")
+                    for x in (periodo or "").split(" a "))
+    except ValueError:
+        return None
+    return (fim - ini).days + 1 if fim >= ini else None
 
 
 def _totais_grupo(us):
@@ -551,23 +625,6 @@ def _periodo_grupo(us):
     return next((u["periodo"] for u in us if u.get("periodo")), "")
 
 
-def _analise_grupo(us, n, eh_conversa):
-    """
-    Análise do Período — Geral: unidades citadas só por números, resumo com
-    os totais somados (benchmarks sobre as taxas recalculadas) e continuidade.
-    """
-    rotulo = "conversa" if eh_conversa else "resultado"
-    av = benchmarks.avaliar_metricas(n)
-
-    itens = {u["nome"]: {"res": u["num"].get("resultados") or 0,
-                         "inv": u["num"].get("investimento") or 0}
-             for u in us}
-    frases = _frases_mencoes(itens, n["resultados"], rotulo, sujeito="unidade")
-    frases.append(_frase_resumo(n, rotulo, av,
-                                sujeito_plural=f"{len(us)} unidades"))
-    return " ".join(frases) + "\n\n" + " ".join(_frases_continuidade(av, n, rotulo))
-
-
 # ----------------------------------------------------------------------
 # Leituras automáticas das métricas do funil (1 linha por card no PDF)
 # ----------------------------------------------------------------------
@@ -616,117 +673,7 @@ def _leitura_metrica(metrica, avaliacao):
     return _LEITURAS_CARD[metrica].get(classe, "") if classe else ""
 
 
-# ----------------------------------------------------------------------
-# Análise do Período sugerida (3–5 frases, editável na revisão)
-# ----------------------------------------------------------------------
-# Frases de continuidade ("passos adiante"): tom de rotina, escolhidas pela
-# classificação de benchmark. Duas formulações por tema para não repetir a
-# mesma frase em relatórios consecutivos (a escolha é determinística a
-# partir dos números do período).
-_CONTINUIDADE = {
-    "criativos": [
-        "Para as próximas semanas, seguimos com a renovação de criativos para "
-        "elevar a taxa de cliques.",
-        "Na sequência, entram novos criativos em teste para ampliar o interesse "
-        "nos anúncios.",
-    ],
-    "entrega": [
-        "Seguimos otimizando públicos e entrega para melhorar o custo por {rotulo}.",
-        "O próximo passo é refinar as audiências para deixar a entrega ainda "
-        "mais eficiente.",
-    ],
-    "atendimento": [
-        "Vamos alinhar com vocês o fluxo de atendimento para converter mais "
-        "cliques em {rotulo}s.",
-        "Na sequência, ajustamos em conjunto o fluxo de atendimento para "
-        "aproveitar melhor cada clique.",
-    ],
-    "ritmo": [
-        "O plano é sustentar o ritmo atual, com testes incrementais para seguir "
-        "ganhando eficiência.",
-        "Seguimos no mesmo ritmo, testando variações pontuais para continuar "
-        "evoluindo os números.",
-    ],
-}
-
-
-def _frases_continuidade(av, n, rotulo):
-    """1–2 frases de fechamento, conforme a classificação das métricas."""
-    temas = []
-    if av.get("ctr") == benchmarks.ABAIXO:
-        temas.append("criativos")
-    if av.get("taxa_conversao") == benchmarks.ABAIXO:
-        temas.append("atendimento")
-    if benchmarks.ACIMA in (av.get("cpc"), av.get("cpm")):
-        temas.append("entrega")
-    if not temas:
-        temas = ["ritmo"]
-    semente = int((n.get("investimento") or 0) * 100 + (n.get("resultados") or 0))
-    return [_CONTINUIDADE[t][semente % len(_CONTINUIDADE[t])].format(rotulo=rotulo)
-            for t in temas[:2]]
-
-
-def _frases_mencoes(itens, total_resultados, rotulo, sujeito="campanha"):
-    """
-    Menções às campanhas/unidades — exclusivamente números (volume, share,
-    investimento, custo por resultado). Sem destaque forçado: o líder só é
-    citado quando o share supera com folga a divisão igual entre os itens.
-    """
-    com_res = [(nome, c) for nome, c in itens.items() if c.get("res")]
-    if not com_res or not total_resultados:
-        return []
-    if len(com_res) == 1:
-        nome, c = com_res[0]
-        return [f"A {sujeito} <b>{nome}</b> respondeu pelas {_fmt_int(c['res'])} "
-                f"{rotulo}s do período, com investimento de {_fmt_moeda(c['inv'])} "
-                f"e custo de <b>{_fmt_moeda(c['inv'] / c['res'])}</b> por {rotulo}."]
-
-    nome, c = max(com_res, key=lambda kv: kv[1]["res"])
-    share = c["res"] / total_resultados * 100
-    if share >= 100 / len(com_res) + 10:
-        return [f"A {sujeito} <b>{nome}</b> concentrou {_fmt_int(c['res'])} "
-                f"{rotulo}s ({share:.0f}% do total), com investimento de "
-                f"{_fmt_moeda(c['inv'])} e custo de "
-                f"<b>{_fmt_moeda(c['inv'] / c['res'])}</b> por {rotulo}."]
-    custos = [cc["inv"] / cc["res"] for _, cc in com_res]
-    faixa = (f"em torno de {_fmt_moeda(min(custos))}"
-             if _fmt_moeda(min(custos)) == _fmt_moeda(max(custos))
-             else f"entre {_fmt_moeda(min(custos))} e {_fmt_moeda(max(custos))}")
-    return [f"As {len(com_res)} {sujeito}s contribuíram de forma equilibrada "
-            f"para o total, com custo por {rotulo} {faixa}."]
-
-
-def _clausula_eficiencia(av):
-    """Complemento do resumo geral, derivado da classificação de benchmark."""
-    cpm_ok = av.get("cpm") in (benchmarks.ABAIXO, benchmarks.DENTRO)
-    freq_ok = av.get("frequencia") in (benchmarks.ABAIXO, benchmarks.DENTRO)
-    if cpm_ok and freq_ok:
-        return (", com custo de entrega competitivo e público ainda longe "
-                "da saturação")
-    if cpm_ok:
-        return ", com custo de entrega competitivo"
-    if av.get("cpm") == benchmarks.ACIMA:
-        return ", mesmo com o público mais concorrido no período"
-    return ""
-
-
-def _frase_resumo(n, rotulo, av, sujeito_plural=None):
-    """Resumo geral do período: totais + leitura simples de eficiência."""
-    quem = f"Somando as {sujeito_plural}, o" if sujeito_plural else "No período, o"
-    if not n["resultados"]:
-        return (f"{quem} investimento de <b>{_fmt_moeda(n['investimento'])}</b> "
-                f"alcançou {_fmt_int(n['alcance'])} pessoas com os anúncios.")
-    return (f"{quem} investimento de <b>{_fmt_moeda(n['investimento'])}</b> "
-            f"gerou <b>{_fmt_int(n['resultados'])}</b> {rotulo}s, a um custo "
-            f"médio de <b>{_fmt_moeda(n['custo_resultado'])}</b> por {rotulo}"
-            f"{_clausula_eficiencia(av)}.")
-
-
-def _analise_periodo(n, campanhas, indicador):
-    """Análise do Período (1 conta): menções por números, resumo e continuidade."""
-    rotulo = "conversa" if indicadores.eh_conversa(indicador) else "resultado"
-    av = benchmarks.avaliar_metricas(n)
-
-    frases = _frases_mencoes(campanhas, n["resultados"], rotulo)
-    frases.append(_frase_resumo(n, rotulo, av))
-    return " ".join(frases) + "\n\n" + " ".join(_frases_continuidade(av, n, rotulo))
+# A Análise do Período — de conta e de grupo — saiu daqui para `analysis/`:
+# motor de regras em vez de paráfrase dos números. Saíram junto as funções que
+# montavam aquele texto por composição (_frases_mencoes, _frase_resumo,
+# _frases_continuidade e o catálogo _CONTINUIDADE), sem uso desde então.

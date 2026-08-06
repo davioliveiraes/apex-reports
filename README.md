@@ -9,9 +9,10 @@ O painel inicial oferece quatro modos:
 1. **Anexo único** — 1 `.xlsx` → relatório individual. A aplicação lê KPIs
    (investimento, resultados, custo/resultado, impressões, alcance,
    frequência, CPM), monta o funil e o desempenho por campanha e sugere a
-   Análise do Período em linguagem de cliente (números e continuidade;
-   status de veiculação nunca aparece no relatório) — tudo editável na
-   etapa de revisão antes de gerar o PDF.
+   Análise do Período em linguagem de cliente — leitura, ponto de atenção,
+   o que será feito e o objetivo do próximo ciclo (status de veiculação
+   nunca aparece no relatório) — tudo editável na etapa de revisão antes de
+   gerar o PDF.
 2. **Consolidado** — 2 a 20 `.xlsx` (um por conta/unidade) → soma os totais,
    recalcula as taxas sobre os totais e gera o funil do grupo + composição
    por unidade + análise geral, com revisão antes do PDF.
@@ -77,9 +78,12 @@ reinicia o serviço.
 
 O `Makefile` guarda o IP e o repositório, então no dia a dia basta:
 ```bash
-make deploy          # na VPS, em ~/apex-reports
-make deploy-remoto   # do desenvolvimento, dispara o deploy por SSH
+make deploy       # da máquina de desenvolvimento: entra na VPS por SSH e publica
+make deploy-aqui  # roda o script na máquina atual (use SÓ estando na VPS)
 ```
+`make deploy` recusa se houver alteração não commitada ou commit não enviado:
+o script publica o que está no GitHub, então subir com trabalho local pendente
+daria um deploy "bem-sucedido" que republica a versão anterior.
 Qualquer variável é sobrescrita na chamada — `make deploy IP=203.0.113.10`,
 `make deploy BRANCH=teste`. Os comandos por extenso continuam valendo:
 ```bash
@@ -106,7 +110,16 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   identificadas por palavra-chave; ignora linhas de total)
 - `relatorios/benchmarks.py` — faixas de referência das métricas (CTR, CPC,
   CPM, taxa de conversão, frequência), editáveis por vertical/objetivo;
-  a classificação alimenta as leituras dos cards e a análise sugerida
+  a classificação alimenta as leituras dos cards do funil
+- `relatorios/analysis/` — **motor de regras da Análise do Período**, da conta
+  individual e do consolidado, determinístico e offline: `benchmarks.py`
+  (faixas de CPA por perfil, faixas de apoio de CPM/frequência/CTR e a
+  precedência das referências), `rules.py` (`avaliar` classifica o período em
+  ÓTIMO/BOM/ATENÇÃO, emite os sinais e escolhe o próximo passo; `avaliar_grupo`
+  faz o mesmo para o grupo e mede cada unidade contra o CPA do grupo) e
+  `templates.py` (`redigir`/`redigir_grupo` escrevem a partir dessa decisão,
+  em quatro blocos rotulados, com ou sem números, para PDF ou WhatsApp).
+  Testes em `relatorios/analysis/tests/`
 - `relatorios/gerador_pdf.py` — gerador do PDF individual/consolidado
   (HTML + CSS → WeasyPrint, layout dark de dashboard em 1 página; donut
   via matplotlib embutido)
@@ -127,6 +140,10 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
 - `docs/exemplo_*.pdf` — PDFs de exemplo (individual, consolidado, 20 unidades)
 
 ## Observações
+- A coluna de verba muda de rótulo entre exports do Meta ("Valor usado (BRL)",
+  "Valor gasto (BRL)"). Todas as variantes conhecidas estão em `_COLUNAS`, e
+  há teste: não reconhecê-la zera investimento e custo por resultado sem
+  avisar ninguém, porque o zero passa por número legítimo.
 - Alcance total é a soma das linhas do export (pode haver sobreposição
   de audiência entre anúncios; o Meta desduplica, a soma não).
 - Métricas de taxa (CTR, CPM, CPA, CPC, frequência, taxa de conversão)
@@ -138,6 +155,42 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   então todo número do PDF (inclusive os recalculados) sai do recorte. Conta
   sem campanhas no recorte fica fora do total; export sem a coluna entra com
   todas as campanhas e é sinalizado no rodapé.
+- A Análise do Período é decidida antes de ser escrita: o **CPA sozinho**
+  define ÓTIMO/BOM/ATENÇÃO, e CPM, frequência, CTR e estrutura de campanhas só
+  justificam o veredito e escolhem o próximo passo. O que muda de um relatório
+  para outro não é a regra, é a **referência** contra a qual o CPA é medido,
+  nesta ordem: *meta combinada com o cliente* → *CPA do grupo no mesmo
+  período* → *faixa estimada do perfil*.
+  O único rebaixamento é por amostra pequena (< 30 resultados), que derruba
+  ÓTIMO para BOM. Resultado sem verba lida não é classificado: o motor abre
+  dizendo que a leitura está incompleta em vez de elogiar o que não mediu.
+- **No consolidado cada unidade é medida contra o CPA do próprio grupo** — a
+  única referência do sistema que não é estimativa nossa: as outras unidades
+  rodaram o mesmo intervalo, o mesmo tipo de campanha e a mesma gestão. Daí
+  saem os sinais de dispersão (praça cara, praça barata, grupo homogêneo) e o
+  próximo passo do grupo, que na prática é levar o método das melhores praças
+  às demais. O grupo em si continua medido contra a meta ou a faixa do perfil:
+  compará-lo consigo mesmo faria todo consolidado sair BOM por construção.
+- O bloco 2 da análise do grupo **nomeia a praça mais cara e a mais barata**,
+  então o nome que o operador digita no painel vai para o PDF do cliente — em
+  branco ele cai no nome do arquivo, que costuma ser feio. A decisão viaja em `dados["avaliacao"]`, serializável, ao
+  lado do texto. **As faixas de CPA são estimativas calibráveis**, não
+  benchmark verificado — ajuste em `analysis/benchmarks.py` conforme o
+  histórico acumular.
+- A análise sai em quatro blocos rotulados — *Leitura do período*, *Ponto de
+  atenção* (ou *O que sustentou o resultado*), *O que vamos fazer* e
+  *Objetivo do próximo ciclo*. O último é uma escada por classificação:
+  ATENÇÃO mira voltar à faixa de trabalho, BOM mira baixar o custo com o
+  mesmo investimento, ÓTIMO mira sustentar o patamar ganhando volume. Ele
+  compromete com **direção** ("o objetivo é", "buscamos") e nunca com número
+  ou promessa de resultado — há teste para isso.
+- Cada métrica é dita como consequência de negócio, não como métrica: o
+  leitor é o dono da loja. "Frequência saturada" vira "o mesmo público já viu
+  os anúncios muitas vezes"; sigla crua (CPM, CPA, CTR) não aparece.
+- No PDF a análise não repete número nenhum: eles já estão nas tabelas logo
+  acima. O mesmo motor redige com números (`incluir_numeros=True`) para
+  destinos sem tabela. O relatório individual é de uma página fechada, e o
+  mais longo dos textos possíveis é testado até o PDF para garantir que cabe.
 - A prévia da revisão de listagem/indicador é montada pelas mesmas funções
   que alimentam o PDF (`gerador_listagem.linha_conta`,
   `gerador_indicador.montar_tabela`) — o que se confere na tela é o que sai
