@@ -116,10 +116,11 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   (faixas de CPA por perfil, faixas de apoio de CPM/frequência/CTR e a
   precedência das referências), `rules.py` (`avaliar` classifica o período em
   ÓTIMO/BOM/ATENÇÃO, emite os sinais e escolhe o próximo passo; `avaliar_grupo`
-  faz o mesmo para o grupo e mede cada unidade contra o CPA do grupo) e
-  `templates.py` (`redigir`/`redigir_grupo` escrevem a partir dessa decisão,
-  em quatro blocos rotulados, com ou sem números, para PDF ou WhatsApp).
-  Testes em `relatorios/analysis/tests/`
+  faz o mesmo para o grupo e mede cada unidade contra o CPA do grupo),
+  `contexto.py` (vocabulário do que o operador informa na revisão — fonte
+  única do formulário e do motor) e `templates.py` (`redigir`/`redigir_grupo`
+  escrevem a partir dessa decisão, em 3 a 5 blocos rotulados, com ou sem
+  números, para PDF ou WhatsApp). Testes em `relatorios/analysis/tests/`
 - `relatorios/gerador_pdf.py` — gerador do PDF individual/consolidado
   (HTML + CSS → WeasyPrint, layout dark de dashboard em 1 página; donut
   via matplotlib embutido)
@@ -177,9 +178,13 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   lado do texto. **As faixas de CPA são estimativas calibráveis**, não
   benchmark verificado — ajuste em `analysis/benchmarks.py` conforme o
   histórico acumular.
-- A análise sai em quatro blocos rotulados — *Leitura do período*, *Ponto de
-  atenção* (ou *O que sustentou o resultado*), *O que vamos fazer* e
-  *Objetivo do próximo ciclo*. O último é uma escada por classificação:
+- A análise sai em **3 a 5 blocos rotulados**: *Leitura do período*, *O que
+  vamos fazer* e *Objetivo do próximo ciclo* são fixos; *Ponto de atenção* e
+  *Leitura atual* (ou *O que sustentou o resultado*, quando aparece sozinho)
+  entram conforme os sinais. O texto tem teto de caracteres **medido** no PDF
+  real por bissecção (`OrcamentoDePaginaTest`); se estourar, o corte é por
+  precedência de sinal e os fixos nunca saem. O último bloco é uma escada por
+  classificação:
   ATENÇÃO mira voltar à faixa de trabalho, BOM mira baixar o custo com o
   mesmo investimento, ÓTIMO mira sustentar o patamar ganhando volume. Ele
   compromete com **direção** ("o objetivo é", "buscamos") e nunca com número
@@ -187,10 +192,20 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
 - Cada métrica é dita como consequência de negócio, não como métrica: o
   leitor é o dono da loja. "Frequência saturada" vira "o mesmo público já viu
   os anúncios muitas vezes"; sigla crua (CPM, CPA, CTR) não aparece.
-- No PDF a análise não repete número nenhum: eles já estão nas tabelas logo
-  acima. O mesmo motor redige com números (`incluir_numeros=True`) para
-  destinos sem tabela. O relatório individual é de uma página fechada, e o
-  mais longo dos textos possíveis é testado até o PDF para garantir que cabe.
+- No PDF a análise não repete número que já está nas tabelas logo acima — mas
+  **número derivado entra**: a verba das campanhas sem resultado e quantos
+  contatos ela deveria ter trazido não estão em tabela nenhuma, e são eles que
+  sustentam o argumento. Ficam em `avaliacao["derivados"]`. O mesmo motor
+  redige com todos os números (`incluir_numeros=True`) para destinos sem
+  tabela.
+- Na tela **02 Revisar e gerar** há o bloco **Contexto do período**: o que
+  mudou (criativos, público, captação, orçamento), problema operacional e sua
+  situação, meta de custo por resultado e próximo passo — tudo opcional. O
+  botão *Regerar análise* recalcula o texto sem reenviar o anexo, e o contexto
+  fica na sessão. As opções vivem em `analysis/contexto.py`, fonte única do
+  formulário e do motor; nenhuma delas muda a classificação, que continua
+  sendo do CPA. Com tudo vazio a saída é idêntica à de antes de os campos
+  existirem.
 - A prévia da revisão de listagem/indicador é montada pelas mesmas funções
   que alimentam o PDF (`gerador_listagem.linha_conta`,
   `gerador_indicador.montar_tabela`) — o que se confere na tela é o que sai

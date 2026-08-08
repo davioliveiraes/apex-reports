@@ -15,7 +15,7 @@ from .gerador_listagem import gerar_listagem, montar_linhas
 from .gerador_pdf import gerar_relatorio
 from .parser_xlsx import (VEICULACAO_TODAS, VEICULACOES, consolidar,
                           consolidar_grupo, filtrar_veiculacao, ler_export_meta,
-                          ler_registros, montar_composicao)
+                          ler_registros, montar_composicao, regerar_analise)
 
 SESSION_KEY = "relatorio_apex"
 
@@ -188,6 +188,18 @@ def _contas_veiculacao(contas, veiculacao):
     return saida
 
 
+def _paragrafos(texto):
+    """Blocos da análise, um por parágrafo do PDF.
+
+    O textarea devolve quebra de linha no formato do HTML (`\\r\\n`), então
+    separar por `\\n\\n` cru não acha separador nenhum e a análise inteira sai
+    num parágrafo só — que é como o bug aparecia no PDF. Normaliza antes de
+    cortar, e aceita também linhas em branco com espaço no meio.
+    """
+    normalizado = texto.replace("\r\n", "\n").replace("\r", "\n")
+    return [p.strip() for p in re.split(r"\n[ \t]*\n", normalizado) if p.strip()]
+
+
 def _nome_unidade(nome_arquivo):
     """Nome sugerido da unidade a partir do nome do arquivo (editável na revisão)."""
     base = os.path.splitext(os.path.basename(nome_arquivo))[0]
@@ -210,6 +222,10 @@ def revisao(request):
 
     if request.method == "POST":
         form = RevisaoForm(request.POST)
+        if form.is_valid() and _regerando(request):
+            form = _regerar(request, dados, form)
+            return render(request, "relatorios/revisao.html",
+                          {"form": form, "dados": dados, "regerado": True})
         if form.is_valid():
             cd = form.cleaned_data
             relatorio = {
@@ -222,7 +238,7 @@ def revisao(request):
                 "grafico_funil": dados.get("grafico_funil"),
                 "detalhes_campanha": dados.get("detalhes_campanha"),
                 "grafico_campanhas": dados.get("grafico_campanhas"),
-                "analise": [p.strip() for p in cd["analise"].split("\n\n") if p.strip()],
+                "analise": _paragrafos(cd["analise"]),
             }
             buffer = io.BytesIO()
             gerar_relatorio(relatorio, buffer)
@@ -232,13 +248,56 @@ def revisao(request):
             return _sinalizar_download(
                 request, FileResponse(buffer, as_attachment=True, filename=nome))
     else:
-        form = RevisaoForm(initial={
+        form = RevisaoForm(initial=dict(_inicial_contexto(dados), **{
             "cliente": dados.get("cliente", ""),
             "periodo": dados.get("periodo", ""),
             "analise": dados.get("analise_sugerida", ""),
-        })
+        }))
 
     return render(request, "relatorios/revisao.html", {"form": form, "dados": dados})
+
+
+# ----------------------------------------------------------------------
+# Contexto do período — regeração da análise sem reenviar o anexo
+# ----------------------------------------------------------------------
+CAMPO_REGERAR = "regerar"
+
+
+def _regerando(request):
+    return CAMPO_REGERAR in request.POST
+
+
+def _inicial_contexto(dados):
+    """Contexto e meta guardados na sessão, para o form voltar preenchido."""
+    guardado = dados.get("_contexto") or {}
+    return dict(guardado, meta_cpa=dados.get("_meta_cpa"))
+
+
+def _regerar(request, dados, form):
+    """Recalcula a análise com o contexto informado e devolve o form novo.
+
+    O textarea volta com o texto recalculado; todo o resto do formulário volta
+    como estava. O contexto fica na sessão para sobreviver ao próximo POST — é
+    o que permite ao operador ajustar um campo de cada vez sem perder os
+    anteriores.
+    """
+    contexto = form.contexto()
+    meta = form.cleaned_data.get("meta_cpa")
+    dados["_contexto"] = contexto
+    dados["_meta_cpa"] = float(meta) if meta else None
+    regerar_analise(dados, meta_cpa=dados["_meta_cpa"], contexto=contexto)
+    request.session[SESSION_KEY] = dados
+    request.session.modified = True
+
+    # Um form novo: o `data` de um form já vinculado é imutável, então o texto
+    # recalculado entra por `initial` num form não vinculado.
+    inicial = dict(form.cleaned_data, analise=dados["analise_sugerida"])
+    kwargs = {}
+    if hasattr(form, "n_unidades"):
+        kwargs["nomes_unidades"] = [
+            form.cleaned_data.get(f"unidade_{i}") or ""
+            for i in range(form.n_unidades)]
+    return type(form)(initial=inicial, **kwargs)
 
 
 def _revisao_grupo(request, dados):
@@ -248,6 +307,13 @@ def _revisao_grupo(request, dados):
 
     if request.method == "POST":
         form = RevisaoGrupoForm(request.POST, nomes_unidades=nomes)
+        if form.is_valid() and _regerando(request):
+            form = _regerar(request, dados, form)
+            return render(request, "relatorios/revisao.html", {
+                "form": form, "dados": dados, "modo_grupo": True,
+                "regerado": True,
+                "pares_unidades": list(zip(unidades, form.campos_unidades())),
+            })
         if form.is_valid():
             cd = form.cleaned_data
             nomes_finais = form.nomes_finais(nomes)
@@ -267,7 +333,7 @@ def _revisao_grupo(request, dados):
                 # Composição remontada para refletir nomes de unidade editados
                 "composicao": montar_composicao(unidades),
                 "unidades": [{"nome": n} for n in nomes_finais],
-                "analise": [p.strip() for p in cd["analise"].split("\n\n") if p.strip()],
+                "analise": _paragrafos(cd["analise"]),
                 "rodape": rodape,
             }
             buffer = io.BytesIO()
@@ -278,11 +344,12 @@ def _revisao_grupo(request, dados):
             return _sinalizar_download(
                 request, FileResponse(buffer, as_attachment=True, filename=nome))
     else:
-        form = RevisaoGrupoForm(nomes_unidades=nomes, initial={
-            "cliente": dados.get("cliente", ""),
-            "periodo": dados.get("periodo", ""),
-            "analise": dados.get("analise_sugerida", ""),
-        })
+        form = RevisaoGrupoForm(nomes_unidades=nomes,
+                                initial=dict(_inicial_contexto(dados), **{
+                                    "cliente": dados.get("cliente", ""),
+                                    "periodo": dados.get("periodo", ""),
+                                    "analise": dados.get("analise_sugerida", ""),
+                                }))
 
     contexto = {
         "form": form,

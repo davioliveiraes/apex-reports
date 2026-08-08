@@ -287,6 +287,120 @@ class SemInvestimentoTest(unittest.TestCase):
         self.assertEqual(av.motivo_principal, rules.SEM_RESULTADOS)
 
 
+class VerbaSemRetornoTest(unittest.TestCase):
+    """
+    Elix Finance, 31/07 a 06/08/2026 — o caso que motivou o sinal.
+
+    Investimento 257,86 · 13 conversas · CPA 19,84. Uma campanha entregou
+    (171,24 / 13 resultados) e duas ficaram zeradas: 70,51 e 16,11. A de 16,11
+    gastou menos que 1,5 CPA (29,75) e ainda não teve chance — cobrar resultado
+    dela seria cobrar de quem mal entrou no leilão.
+    """
+
+    ELIX = {
+        "investimento": 257.86, "alcance": 2763, "impressoes": 5560,
+        "frequencia": 2.01, "cpm": 46.38, "resultados": 13, "cpa": 19.84,
+        "campanhas": [
+            {"nome": "A", "resultados": 13, "investimento": 171.24},
+            {"nome": "B", "resultados": 0, "investimento": 70.51},
+            {"nome": "C", "resultados": 0, "investimento": 16.11},
+        ],
+    }
+
+    def setUp(self):
+        self.av = rules.avaliar(self.ELIX, dias_periodo=7)
+
+    def test_desperdicio_exclui_a_campanha_em_aprendizado(self):
+        self.assertIn(rules.VERBA_SEM_RETORNO, self.av.sinais)
+        self.assertIn(rules.CAMPANHA_EM_APRENDIZADO, self.av.sinais)
+        self.assertEqual(self.av.derivados["verba_sem_retorno"], 70.51)
+        self.assertEqual(self.av.derivados["verba_em_aprendizado"], 16.11)
+
+    def test_faixa_de_resultados_esperados(self):
+        # 70,51 / 19,84 = 3,55 — "3 a 4", nunca "3,55" nem "4 a 5".
+        self.assertEqual(self.av.derivados["resultados_esperados"], [3, 4])
+
+    def test_o_passo_ataca_a_captacao(self):
+        self.assertEqual(self.av.proximo_passo, "corrigir_a_captacao")
+
+    def test_verba_parada_vem_antes_de_qualquer_ajuste_fino(self):
+        self.assertIn("frequencia_saturada", self.av.sinais)
+        self.assertIn("cpm_elevado", self.av.sinais)
+        self.assertEqual(self.av.proximo_passo, "corrigir_a_captacao")
+
+    def test_derivados_sao_serializaveis(self):
+        import json
+        self.assertEqual(json.loads(json.dumps(self.av.derivados)),
+                         self.av.derivados)
+
+    def test_todas_zeradas_em_aprendizado_nao_dispara_desperdicio(self):
+        metricas = dict(self.ELIX, campanhas=[
+            {"nome": "A", "resultados": 13, "investimento": 171.24},
+            {"nome": "B", "resultados": 0, "investimento": 20.00},
+            {"nome": "C", "resultados": 0, "investimento": 16.11}])
+        av = rules.avaliar(metricas)
+        self.assertNotIn(rules.VERBA_SEM_RETORNO, av.sinais)
+        self.assertIn(rules.CAMPANHA_EM_APRENDIZADO, av.sinais)
+        self.assertNotIn("verba_sem_retorno", av.derivados)
+
+    def test_fronteira_de_um_e_meio_cpa(self):
+        piso = 1.5 * 19.84   # 29,76
+        for investimento, esperado in ((piso - 0.01, False), (piso, True)):
+            metricas = dict(self.ELIX, campanhas=[
+                {"nome": "A", "resultados": 13, "investimento": 171.24},
+                {"nome": "B", "resultados": 0, "investimento": investimento}])
+            av = rules.avaliar(metricas)
+            with self.subTest(investimento=investimento):
+                self.assertEqual(rules.VERBA_SEM_RETORNO in av.sinais, esperado)
+
+    def test_sem_campanha_produtiva_nao_ha_desperdicio_a_cobrar(self):
+        # Nada entregou: o problema é outro, e já tem sinal próprio.
+        metricas = dict(self.ELIX, resultados=0, cpa=None, campanhas=[
+            {"nome": "B", "resultados": 0, "investimento": 70.51}])
+        av = rules.avaliar(metricas)
+        self.assertNotIn(rules.VERBA_SEM_RETORNO, av.sinais)
+        self.assertEqual(av.motivo_principal, rules.SEM_RESULTADOS)
+
+    def test_campanha_zerada_sem_verba_e_ignorada(self):
+        metricas = dict(self.ELIX, campanhas=[
+            {"nome": "A", "resultados": 13, "investimento": 171.24},
+            {"nome": "B", "resultados": 0, "investimento": 0.0}])
+        av = rules.avaliar(metricas)
+        self.assertNotIn(rules.VERBA_SEM_RETORNO, av.sinais)
+        self.assertNotIn(rules.CAMPANHA_EM_APRENDIZADO, av.sinais)
+
+    def test_faixa_some_quando_o_valor_nao_paga_dois_resultados(self):
+        metricas = dict(self.ELIX, campanhas=[
+            {"nome": "A", "resultados": 13, "investimento": 171.24},
+            {"nome": "B", "resultados": 0, "investimento": 35.00}])
+        av = rules.avaliar(metricas)   # 35 / 19,84 = 1,76 -> teto 2...
+        self.assertIn(rules.VERBA_SEM_RETORNO, av.sinais)
+        self.assertEqual(av.derivados["resultados_esperados"], [1, 2])
+
+
+class ConcentracaoComInvestimentoTest(unittest.TestCase):
+    """Campanha sem verba não é uma segunda estrutura no ar."""
+
+    def test_segunda_campanha_sem_verba_nao_dilui_a_concentracao(self):
+        av = rules.avaliar(_metricas(resultados=100, campanhas=[
+            {"nome": "A", "resultados": 100, "investimento": 200.0},
+            {"nome": "B", "resultados": 0, "investimento": 0.0}]))
+        self.assertNotIn(rules.RESULTADOS_CONCENTRADOS, av.sinais)
+
+    def test_duas_com_verba_e_oitenta_por_cento_concentra(self):
+        av = rules.avaliar(_metricas(resultados=100, campanhas=[
+            {"nome": "A", "resultados": 80, "investimento": 150.0},
+            {"nome": "B", "resultados": 20, "investimento": 50.0}]))
+        self.assertIn(rules.RESULTADOS_CONCENTRADOS, av.sinais)
+
+    def test_sem_informacao_de_verba_a_exigencia_cai(self):
+        # Chamador que só passa resultados continua funcionando: não dá para
+        # descartar uma campanha por um dado que ninguém informou.
+        av = rules.avaliar(_metricas(resultados=100, campanhas=[
+            {"nome": "A", "resultados": 80}, {"nome": "B", "resultados": 20}]))
+        self.assertIn(rules.RESULTADOS_CONCENTRADOS, av.sinais)
+
+
 class ProximoPassoTest(unittest.TestCase):
 
     def _passo(self, **mudancas):

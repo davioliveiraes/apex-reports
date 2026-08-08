@@ -194,6 +194,60 @@
 </div>
 
 {# ------------------------------------------------------------------ #}
+{# Contexto do período — o que o operador sabe e a planilha não        #}
+{# ------------------------------------------------------------------ #}
+{% if form.campos_contexto %}
+<div class="bloco">
+  <span class="bloco-idx">+</span>
+  <span class="bloco-nome">Contexto do período</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">opcional</span>
+</div>
+<p class="legenda">Tudo opcional. O que for informado entra na análise ao
+  clicar em <b>Regerar análise</b> — o texto continua editável depois.</p>
+<div class="campos">
+  <div class="campo">
+    <label for="{{ form.mudanca.id_for_label }}">{{ form.mudanca.label }}</label>
+    {{ form.mudanca }}
+    <span class="ajuda">{{ form.mudanca.help_text }}</span>
+    {{ form.mudanca.errors }}
+  </div>
+  <div class="campo">
+    <label for="{{ form.problema.id_for_label }}">{{ form.problema.label }}</label>
+    {{ form.problema }}
+    <span class="ajuda">{{ form.problema.help_text }}</span>
+    {{ form.problema.errors }}
+  </div>
+  <div class="campo" id="campo-situacao">
+    <label>{{ form.situacao.label }}</label>
+    <div class="opcoes-radio">{{ form.situacao }}</div>
+    <span class="ajuda">Só vale havendo problema selecionado.</span>
+    {{ form.situacao.errors }}
+  </div>
+  <div class="campo">
+    <label for="{{ form.meta_cpa.id_for_label }}">{{ form.meta_cpa.label }}</label>
+    {{ form.meta_cpa }}
+    <span class="ajuda">{{ form.meta_cpa.help_text }}</span>
+    {{ form.meta_cpa.errors }}
+  </div>
+  <div class="campo campo-largo">
+    <label for="{{ form.passo.id_for_label }}">{{ form.passo.label }}</label>
+    {{ form.passo }}
+    <span class="ajuda">{{ form.passo.help_text }}</span>
+    {{ form.passo.errors }}
+  </div>
+  <div class="campo campo-largo">
+    <button class="botao botao-sec" type="submit" name="regerar" value="1">
+      Regerar análise
+    </button>
+    {% if regerado %}
+    <span class="ajuda">Análise recalculada com o contexto acima.</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
 {# 03 — nomes das contas, com os KPIs de cada uma à vista              #}
 {# ------------------------------------------------------------------ #}
 {% if pares_unidades %}
@@ -282,7 +336,10 @@
   const lerCookie = nome =>
     document.cookie.split('; ').find(c => c.startsWith(nome + '='))?.split('=')[1];
 
-  form.addEventListener('submit', () => {
+  form.addEventListener('submit', (ev) => {
+    // "Regerar análise" recarrega a própria tela: não há download para
+    // esperar, e prender o botão em "Gerando PDF…" deixaria a página travada.
+    if (ev.submitter && ev.submitter.name === 'regerar') return;
     btn.classList.add('carregando');
     btnRotulo.textContent = 'Gerando PDF…';
     btn.disabled = true;
@@ -303,5 +360,23 @@
       statusTxt.textContent = 'PDF baixado — ajuste e gere de novo, ou importe outros arquivos';
     }, 400);
   });
+
+  // "Situação do problema" só faz sentido havendo problema. Apagar em vez de
+  // esconder mantém o formulário parado no lugar — mesma escolha do painel.
+  const campoProblema = document.getElementById('id_problema');
+  const campoSituacao = document.getElementById('campo-situacao');
+  if (campoProblema && campoSituacao) {
+    const semProblema = new Set(['', 'sem_problema']);
+    const sincronizar = () => {
+      const off = semProblema.has(campoProblema.value);
+      campoSituacao.setAttribute('aria-disabled', off);
+      campoSituacao.querySelectorAll('input').forEach(i => {
+        i.disabled = off;
+        if (off) i.checked = false;
+      });
+    };
+    campoProblema.addEventListener('change', sincronizar);
+    sincronizar();
+  }
 </script>
 {% endblock %}

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Redação: os quatro blocos, ausência de números no PDF e restrições de
-língua."""
+"""Redação: os blocos variáveis, os números que podem ou não aparecer no PDF e
+as restrições de língua."""
 import re
 import unittest
 
@@ -54,24 +54,124 @@ def _todas_as_variantes():
             yield metricas, meta
 
 
-class QuatroBlocosTest(unittest.TestCase):
+class OrcamentoTest(unittest.TestCase):
+    """
+    Quando o texto não cabe, o corte é por precedência: o apoio sai primeiro, o
+    ponto de atenção depois, e os três fixos nunca saem.
 
-    def test_sempre_quatro_blocos(self):
+    O teto real é medido no PDF (relatorios/tests.py::OrcamentoDePaginaTest);
+    aqui o que se testa é o comportamento do corte, com o teto forçado para
+    baixo — senão o teste dependeria de nenhum fragmento caber, que é o
+    contrário do que se quer.
+    """
+
+    def setUp(self):
+        self.limite = templates.LIMITE_PDF
+        self.limite_grupo = templates.LIMITE_PDF_GRUPO
+
+    def tearDown(self):
+        templates.LIMITE_PDF = self.limite
+        templates.LIMITE_PDF_GRUPO = self.limite_grupo
+
+    def _texto_com_teto(self, teto, metricas=None, **kw):
+        templates.LIMITE_PDF = teto
+        return _texto(metricas, **kw)
+
+    def test_texto_de_hoje_cabe_com_folga_em_toda_variante(self):
+        for metricas, meta in _todas_as_variantes():
+            for numeros in (False, True):
+                with self.subTest(cpa=metricas.get("cpa"), meta=meta):
+                    self.assertLessEqual(
+                        len(_texto(metricas, meta_cpa=meta,
+                                   incluir_numeros=numeros)),
+                        templates.LIMITE_PDF)
+
+    def test_o_apoio_sai_antes_do_ponto_de_atencao(self):
+        completo = _blocos(_texto())
+        self.assertEqual(len(completo), 5)
+        cortado = _blocos(self._texto_com_teto(len(_texto()) - 1))
+        rotulos = [b.split("</b> ")[0].replace("<b>", "") for b in cortado]
+        self.assertEqual(len(cortado), 4)
+        self.assertIn(templates.ROTULO_ATENCAO, rotulos)
+        self.assertNotIn(templates.ROTULO_ATUAL, rotulos)
+
+    def test_depois_do_apoio_sai_o_ponto_de_atencao(self):
+        cortado = _blocos(self._texto_com_teto(700))
+        rotulos = [b.split("</b> ")[0].replace("<b>", "") for b in cortado]
+        self.assertEqual(rotulos, [templates.ROTULO_LEITURA,
+                                   templates.ROTULO_ACAO,
+                                   templates.ROTULO_OBJETIVO])
+
+    def test_os_tres_fixos_nunca_saem(self):
+        # Teto absurdo: sobra o mínimo, e o mínimo é a leitura, a ação e o
+        # objetivo. Meia análise seria pior que uma segunda página.
+        cortado = _blocos(self._texto_com_teto(1))
+        self.assertEqual(len(cortado), 3)
+
+    def test_whatsapp_nao_tem_pagina_e_nao_corta(self):
+        templates.LIMITE_PDF = 700
+        completo = templates.redigir(rules.avaliar(REFERENCIA), REFERENCIA,
+                                     destino="whatsapp")
+        self.assertEqual(len(completo.split("\n\n")), 5)
+
+
+class BlocosTest(unittest.TestCase):
+    """Três blocos fixos (leitura, ação, objetivo) e até dois no meio."""
+
+    def test_entre_tres_e_cinco_blocos(self):
         for metricas, meta in _todas_as_variantes():
             for numeros in (False, True):
                 with self.subTest(cpa=metricas.get("cpa"), meta=meta,
                                   numeros=numeros):
                     blocos = _blocos(_texto(metricas, meta_cpa=meta,
                                             incluir_numeros=numeros))
-                    self.assertEqual(len(blocos), 4)
+                    self.assertGreaterEqual(len(blocos), 3)
+                    self.assertLessEqual(len(blocos), 5)
                     self.assertTrue(all(b.strip() for b in blocos))
 
-    def test_rotulos_na_ordem(self):
-        blocos = _blocos(_texto())
-        esperados = (templates.ROTULO_LEITURA, templates.ROTULO_ATENCAO,
-                     templates.ROTULO_ACAO, templates.ROTULO_OBJETIVO)
-        for bloco, rotulo in zip(blocos, esperados):
-            self.assertTrue(bloco.startswith("<b>%s</b> " % rotulo), bloco)
+    def test_blocos_fixos_sempre_nas_pontas(self):
+        for metricas, meta in _todas_as_variantes():
+            with self.subTest(cpa=metricas.get("cpa"), meta=meta):
+                blocos = _blocos(_texto(metricas, meta_cpa=meta))
+                self.assertTrue(blocos[0].startswith(
+                    "<b>%s</b> " % templates.ROTULO_LEITURA))
+                self.assertTrue(blocos[-2].startswith(
+                    "<b>%s</b> " % templates.ROTULO_ACAO))
+                self.assertTrue(blocos[-1].startswith(
+                    "<b>%s</b> " % templates.ROTULO_OBJETIVO))
+
+    def test_rotulos_do_meio_sao_os_previstos(self):
+        meio = {templates.ROTULO_ATENCAO, templates.ROTULO_ATUAL,
+                templates.ROTULO_SUSTENTOU}
+        for metricas, meta in _todas_as_variantes():
+            with self.subTest(cpa=metricas.get("cpa"), meta=meta):
+                for bloco in _blocos(_texto(metricas, meta_cpa=meta))[1:-2]:
+                    rotulo = bloco.split("</b> ")[0].replace("<b>", "")
+                    self.assertIn(rotulo, meio)
+
+    def test_leitura_atual_so_depois_de_um_ponto_de_atencao(self):
+        # Sozinho, o bloco de apoio é "o que sustentou o resultado".
+        for metricas, meta in _todas_as_variantes():
+            blocos = _blocos(_texto(metricas, meta_cpa=meta))
+            rotulos = [b.split("</b> ")[0].replace("<b>", "") for b in blocos]
+            with self.subTest(cpa=metricas.get("cpa"), meta=meta):
+                if templates.ROTULO_ATUAL in rotulos:
+                    self.assertIn(templates.ROTULO_ATENCAO, rotulos)
+                    self.assertLess(rotulos.index(templates.ROTULO_ATENCAO),
+                                    rotulos.index(templates.ROTULO_ATUAL))
+
+    def test_o_meio_nunca_repete_a_mesma_metrica(self):
+        # Frequência no ponto de atenção e frequência de novo na leitura atual
+        # seria dizer duas vezes a mesma coisa.
+        for metricas, meta in _todas_as_variantes():
+            blocos = _blocos(_texto(metricas, meta_cpa=meta))[1:-2]
+            if len(blocos) < 2:
+                continue
+            with self.subTest(cpa=metricas.get("cpa"), meta=meta):
+                self.assertNotEqual(blocos[0], blocos[1])
+                for termo in ("frequência", "custo para aparecer"):
+                    self.assertFalse(termo in blocos[0] and termo in blocos[1],
+                                     termo)
 
     def test_todo_bloco_tem_texto_alem_do_rotulo(self):
         for bloco in _blocos(_texto()):
@@ -79,7 +179,7 @@ class QuatroBlocosTest(unittest.TestCase):
             self.assertGreater(len(corpo), 40)
 
     def test_acao_vem_do_passo_escolhido(self):
-        acao = _blocos(_texto())[2]
+        acao = _blocos(_texto())[-2]
         self.assertIn(templates._PASSO["ampliar_publico_e_criativos"], acao)
 
     def test_toda_chave_de_passo_tem_texto_e_prefixo(self):
@@ -145,7 +245,7 @@ class ObjetivoDoProximoCicloTest(unittest.TestCase):
         for metricas, meta in _todas_as_variantes():
             for numeros in (False, True):
                 yield _blocos(_texto(metricas, meta_cpa=meta,
-                                     incluir_numeros=numeros))[3]
+                                     incluir_numeros=numeros))[-1]
 
     def test_nunca_traz_digito(self):
         for objetivo in self._objetivos():
@@ -173,11 +273,11 @@ class ObjetivoDoProximoCicloTest(unittest.TestCase):
             ATENCAO: _texto(_metricas(cpa=30.0, resultados=500)),
         }
         for classificacao, texto in degraus.items():
-            self.assertIn(templates._ESCADA[classificacao], _blocos(texto)[3])
+            self.assertIn(templates._ESCADA[classificacao], _blocos(texto)[-1])
 
     def test_objetivo_liga_com_a_acao_escolhida(self):
         texto = _texto()   # ampliar_publico_e_criativos
-        self.assertTrue(_blocos(texto)[3].startswith(
+        self.assertTrue(_blocos(texto)[-1].startswith(
             "<b>%s</b> %s" % (templates.ROTULO_OBJETIVO,
                               templates._PREFIXO_OBJETIVO[
                                   "ampliar_publico_e_criativos"])))

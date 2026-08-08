@@ -86,6 +86,11 @@ CONCENTRACAO = 0.80
 # unidades deixam de ser variação normal e viram dois grupos diferentes.
 DISPERSAO_ALTA = 2.0
 
+# Campanha sem resultado que gastou menos que isto vezes o CPA da conta ainda
+# não teve chance estatística: cobrar resultado dela seria cobrar de quem não
+# comprou nem uma rifa. Fica fora da conta de verba desperdiçada.
+FATOR_APRENDIZADO = 1.5
+
 # Margem para comparação de fronteira. Sem ela, um CPA de 9,00 vindo de uma
 # divisão (899.99 / 100) cairia em ATENÇÃO por resíduo de ponto flutuante.
 _EPS = 1e-9

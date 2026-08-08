@@ -197,3 +197,26 @@ class RedacaoDoGrupoTest(unittest.TestCase):
 
     def test_determinismo(self):
         self.assertEqual(self._texto(DISPERSO), self._texto(DISPERSO))
+
+    def test_cabe_no_orcamento_mesmo_com_nome_de_praca_no_limite(self):
+        # O bloco de dispersão interpola dois nomes, e o campo do formulário
+        # aceita 120 caracteres cada.
+        longo = "M" * 120
+        unidades = [_unidade(longo + " A", 10, 400.0),
+                    _unidade(longo + " B", 50, 50.0)]
+        for numeros in (False, True):
+            with self.subTest(numeros=numeros):
+                self.assertLessEqual(len(self._texto(unidades,
+                                                     incluir_numeros=numeros)),
+                                     templates.LIMITE_PDF_GRUPO)
+
+    def test_dispersao_e_a_ultima_a_sair(self):
+        original = templates.LIMITE_PDF_GRUPO
+        try:
+            templates.LIMITE_PDF_GRUPO = 700
+            blocos = self._texto(DISPERSO).split("\n\n")
+            self.assertEqual(len(blocos), 3)
+            self.assertTrue(blocos[0].startswith(
+                "<b>%s</b>" % templates.ROTULO_LEITURA))
+        finally:
+            templates.LIMITE_PDF_GRUPO = original

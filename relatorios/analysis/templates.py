@@ -3,14 +3,15 @@
 Redação do texto a partir da `Avaliacao` — sem aleatoriedade.
 
 Mesma entrada, mesma saída: nada de sortear variação de frase. O texto sai em
-quatro blocos rotulados, separados por linha em branco:
+blocos rotulados, separados por linha em branco. Três são fixos e dois
+aparecem conforme houver sinal — de 3 a 5 blocos:
 
-    Leitura do período.        veredito + o que o sustenta
-    Ponto de atenção.          sinal secundário, quando ele cobra algo
-      ou
-    O que sustentou o resultado.
-    O que vamos fazer.         ação concreta do próximo ciclo
-    Objetivo do próximo ciclo. o degrau seguinte da escada
+    Leitura do período.        veredito + o que o sustenta        (sempre)
+    Ponto de atenção.          o sinal que cobra algo do ciclo     (se houver)
+    Leitura atual.             o sinal de apoio que sobrou        (se houver)
+      ou O que sustentou o resultado., quando não há ponto de atenção
+    O que vamos fazer.         ação concreta do próximo ciclo     (sempre)
+    Objetivo do próximo ciclo. o degrau seguinte da escada        (sempre)
 
 Cada fragmento existe em duas formas, com e sem número:
 
@@ -19,10 +20,11 @@ Cada fragmento existe em duas formas, com e sem número:
     True (WhatsApp)  "Com a frequência em 3,56, o mesmo público já viu os
                       anúncios muitas vezes — o alcance atual se esgotou."
 
-No PDF os números já estão nas tabelas logo acima da análise; repeti-los só
-faz o cliente reler o que acabou de ver. Na mensagem avulsa não há tabela
-nenhuma, e aí o número entra — como justificativa da leitura, nunca como
-relistagem.
+A regra dos números não é "nenhum número": é **não repetir o que a tabela já
+mostra**. Número derivado — que o motor calculou e nenhuma tabela do relatório
+faz — entra sempre, porque é ele que sustenta um argumento novo. A verba que
+saiu sem retorno e quantos contatos ela deveria ter trazido são o caso: estão
+em `Avaliacao.derivados`, e aparecem no PDF mesmo com `incluir_numeros=False`.
 
 O leitor é o dono da loja, não um gestor de tráfego: cada métrica vira
 consequência de negócio. Sinal negativo vem sempre com o que ele abre como
@@ -30,8 +32,10 @@ oportunidade, sem maquiar o problema — saturação não é só desgaste, é
 indicação de que há público novo a alcançar.
 
 Restrições de linguagem, todas verificadas em teste:
-- status de campanha (pausa, duplicação, ativação) nunca aparece: é operação
-  interna da agência;
+- status e estrutura de conta (pausar, duplicar, ativar, nome de campanha)
+  nunca aparecem: é operação interna da agência. Descrever ESTRATÉGIA —
+  concentrar verba, renovar peças, ampliar público, corrigir a captação — é
+  permitido e é o que o cliente quer ler;
 - nada de promessa de resultado futuro — a ação compromete com AÇÃO e o
   objetivo, com DIREÇÃO. Nunca com número-alvo;
 - termo técnico só com explicação em até 4 palavras;
@@ -44,13 +48,40 @@ para as contas de WhatsApp. O mesmo motor atende os perfis `recrutamento`,
 neutro, que é também o rótulo da coluna na tabela logo acima no PDF.
 """
 
+from . import contexto as ctx
 from . import rules
 from .benchmarks import ATENCAO, BOM, OTIMO, REF_GRUPO, REF_META
 
 PDF, WHATSAPP = "pdf", "whatsapp"
 
+# ----------------------------------------------------------------------
+# Orçamento de página
+# ----------------------------------------------------------------------
+# O relatório é de UMA página fechada, e com blocos variáveis o texto pode
+# crescer. Estes tetos são medidos, não estimados: `OrcamentoDePaginaTest`
+# acha por bissecção o maior texto que ainda cabe, gerando PDF de verdade, e
+# o teto é esse valor menos 10%. Última medição:
+#
+#     conta        cabe até 2390 caracteres  ->  teto 2151
+#     consolidado  cabe até 1843 caracteres  ->  teto 1658
+#
+# O consolidado é mais apertado porque o donut de composição ocupa mais altura
+# que a tabela de campanhas. Os números valem para 5 blocos, o pior caso: cada
+# parágrafo a mais custa o respiro entre eles. Contam a string inteira —
+# rótulos, marcação e linhas em branco incluídos.
+#
+# Mexeu no layout do PDF ou no tamanho da fonte? Rode o teste: ele mede de
+# novo e falha dizendo o número certo.
+LIMITE_PDF = 2151
+LIMITE_PDF_GRUPO = 1658
+
+# Ordem de corte quando o texto não cabe: o fixo nunca sai, o apoio sai
+# primeiro e o ponto de atenção só depois — o mais relevante fica.
+_FIXO, _CORTE_ATENCAO, _CORTE_APOIO = 0, 1, 2
+
 ROTULO_LEITURA = "Leitura do período."
 ROTULO_ATENCAO = "Ponto de atenção."
+ROTULO_ATUAL = "Leitura atual."
 ROTULO_SUSTENTOU = "O que sustentou o resultado."
 ROTULO_ACAO = "O que vamos fazer."
 ROTULO_OBJETIVO = "Objetivo do próximo ciclo."
@@ -332,6 +363,80 @@ _SECUNDARIO = {
         "O resultado se distribuiu entre as campanhas no ar, sem a conta "
         "depender de um caminho só para produzir contato.",
     ),
+    # Verba que saiu sem retorno. As duas variantes são iguais de propósito: os
+    # números aqui são derivados — a soma da verba parada e quantos contatos
+    # ela deveria ter trazido — e nenhuma tabela do relatório os mostra. É
+    # justamente isso que autoriza citá-los mesmo na versão sem números.
+    rules.VERBA_SEM_RETORNO: (
+        "Parte da verba saiu sem gerar contato nenhum: {verba_sem_retorno} no "
+        "período, que pelo custo médio da conta deveria ter trazido de "
+        "{esperado_min} a {esperado_max} registros. Quando há entrega e não há "
+        "resultado, o gargalo está na etapa de captação, não na comunicação "
+        "dos anúncios.",
+        "Parte da verba saiu sem gerar contato nenhum: {verba_sem_retorno} no "
+        "período, que pelo custo médio da conta deveria ter trazido de "
+        "{esperado_min} a {esperado_max} registros. Quando há entrega e não há "
+        "resultado, o gargalo está na etapa de captação, não na comunicação "
+        "dos anúncios.",
+    ),
+    # Mesma situação sem volume para cobrar: o valor parado é pequeno demais
+    # para significar alguma coisa.
+    "verba_sem_retorno_curta": (
+        "Parte da verba saiu sem gerar contato nenhum: {verba_sem_retorno} no "
+        "período. Quando há entrega e não há resultado, o gargalo está na "
+        "etapa de captação, não na comunicação dos anúncios.",
+        "Parte da verba saiu sem gerar contato nenhum: {verba_sem_retorno} no "
+        "período. Quando há entrega e não há resultado, o gargalo está na "
+        "etapa de captação, não na comunicação dos anúncios.",
+    ),
+    # O operador informou que a captação mudou E há verba parada: as duas
+    # coisas se explicam, e dizer isso é mais do que a soma das duas frases.
+    "captacao_com_verba_parada": (
+        "A forma de captação mudou no período, e a verba que passou por ela "
+        "saiu sem gerar contato: {verba_sem_retorno}, que pelo custo médio da "
+        "conta deveria ter trazido de {esperado_min} a {esperado_max} "
+        "registros. O gargalo está no caminho novo, não na comunicação dos "
+        "anúncios — que seguem entregando.",
+        "A forma de captação mudou no período, e a verba que passou por ela "
+        "saiu sem gerar contato: {verba_sem_retorno}, que pelo custo médio da "
+        "conta deveria ter trazido de {esperado_min} a {esperado_max} "
+        "registros. O gargalo está no caminho novo, não na comunicação dos "
+        "anúncios — que seguem entregando.",
+    ),
+    # Problema operacional ainda aberto: o ponto de atenção é ele, não a
+    # métrica. `{problema}` é o sujeito da frase, vindo de `_PROBLEMA_SUJEITO`.
+    "problema_aberto": (
+        "O gargalo do período está fora da mídia: {problema} não está "
+        "funcionando como deveria, e é ali que o contato se perde depois de já "
+        "ter custado verba. Enquanto isso não for destravado, melhorar o "
+        "anúncio rende pouco.",
+        "O gargalo do período está fora da mídia: {problema} não está "
+        "funcionando como deveria, e é ali que o contato se perde depois de já "
+        "ter custado verba. Enquanto isso não for destravado, melhorar o "
+        "anúncio rende pouco.",
+    ),
+    # Nada mudou na operação e o custo subiu: não há causa interna a apontar,
+    # e inventar uma seria pior que admitir que ela está fora daqui.
+    "nada_mudou_com_custo_alto": (
+        "Nada mudou na operação neste período — mesmo público, mesmas peças, "
+        "mesma verba —, e ainda assim o custo por resultado subiu. Quando "
+        "isso acontece, a causa costuma estar na disputa pelo espaço de "
+        "anúncio, que muda sozinha, e não em algo que tenha sido feito de "
+        "diferente.",
+        "Nada mudou na operação neste período — mesmo público, mesmas peças, "
+        "mesma verba —, e ainda assim o custo por resultado subiu. Quando "
+        "isso acontece, a causa costuma estar na disputa pelo espaço de "
+        "anúncio, que muda sozinha, e não em algo que tenha sido feito de "
+        "diferente.",
+    ),
+    rules.CAMPANHA_EM_APRENDIZADO: (
+        "Há estrutura nova no ar que ainda não gastou o equivalente a um "
+        "contato — não deu para julgar se funciona, e por isso ela fica fora "
+        "da conta do que rendeu ou deixou de render.",
+        "Há estrutura nova no ar que ainda não gastou o equivalente a um "
+        "contato: {verba_em_aprendizado} até aqui. Não deu para julgar se "
+        "funciona, e por isso ela fica fora da conta do que rendeu.",
+    ),
     # Último recurso: export enxuto, sem frequência, custo de exibição,
     # atenção nem estrutura. O bloco existe mesmo assim — a saída tem sempre
     # quatro blocos.
@@ -349,11 +454,32 @@ _SECUNDARIO = {
     ),
 }
 
-# Sinais que cobram algo do próximo ciclo. Definem o rótulo do bloco 2.
-_SINAIS_DE_ATENCAO = frozenset((
-    "frequencia_saturada", "frequencia_elevada", "cpm_elevado", "ctr_baixo",
+# Sinais que cobram algo do ciclo, em ordem de urgência. O primeiro que
+# aparecer vira o bloco "Ponto de atenção". As três primeiras chaves são
+# compostas — dependem do contexto informado pelo operador — e vêm antes
+# porque quem viu a operação sabe mais que a planilha.
+_ATENCAO_POR_PRECEDENCIA = (
+    "captacao_com_verba_parada",
+    "problema_aberto",
+    rules.VERBA_SEM_RETORNO,
+    "verba_sem_retorno_curta",
+    "nada_mudou_com_custo_alto",
+    "frequencia_saturada",
+    "frequencia_elevada",
+    "cpm_elevado",
+    "ctr_baixo",
     "_sem_sinal_atencao",
-))
+)
+
+# Sinais de apoio, na ordem em que servem de "Leitura atual": frequência
+# manda, o custo de entrega entra depois, e a estrutura fecha.
+_APOIO_POR_PRECEDENCIA = (
+    "frequencia_", "cpm_", "ctr_",
+    rules.CAMPANHA_EM_APRENDIZADO,
+    rules.RESULTADOS_CONCENTRADOS,
+    rules.CAMPANHA_UNICA,
+    rules.MULTIPLAS_CAMPANHAS,
+)
 
 # ----------------------------------------------------------------------
 # Bloco 3 — o que vamos fazer. Compromisso com ação, nunca com número.
@@ -379,6 +505,14 @@ _PASSO = {
         "Revisar para quem os anúncios estão sendo mostrados e o que as "
         "peças dizem, que são as duas alavancas diretas sobre o custo por "
         "resultado.",
+    "corrigir_a_captacao":
+        "Refazer o caminho que o interessado percorre depois do clique, que é "
+        "onde a verba está parando hoje, e só então voltar a distribuí-la "
+        "entre as frentes que já provaram entregar contato.",
+    "testar_sem_atribuir_causa":
+        "Rodar um teste controlado de público e de peça para achar onde o "
+        "custo cede, já que não houve mudança nossa a desfazer — é medindo "
+        "que se descobre, não supondo.",
     "redistribuir_verba":
         "Redistribuir a verba entre as campanhas, concentrando onde o custo "
         "por resultado já é menor e reduzindo o que rende pouco.",
@@ -411,6 +545,31 @@ _ESCADA = {
         "aumentar o volume de contatos sem perder eficiência.",
 }
 
+# O problema operacional entra no bloco de ação como primeira frase — é o que
+# o cliente quer ler antes de qualquer coisa sobre mídia. Sujeito e situação
+# se combinam, em vez de um catálogo de 4 problemas × 3 situações.
+_PROBLEMA_SUJEITO = {
+    ctx.PROBLEMA_FORMULARIO: "o formulário de cadastro",
+    ctx.PROBLEMA_ATENDIMENTO: "o atendimento aos contatos",
+    ctx.PROBLEMA_SITE: "o caminho de compra no site",
+    ctx.PROBLEMA_ESTOQUE: "a disponibilidade de estoque",
+}
+
+# As frases concordam com "a correção" ou usam infinitivo, nunca com o sujeito:
+# os sujeitos têm gêneros diferentes ("o formulário", "a disponibilidade"), e
+# um particípio fixo produziria "a disponibilidade está sendo corrigido".
+_ACAO_PROBLEMA = {
+    ctx.PROBLEMA_CORRIGIDO:
+        "A correção {de_problema} já foi feita, e o próximo período é o que "
+        "vai medir o efeito dela.",
+    ctx.PROBLEMA_EM_CORRECAO:
+        "A correção {de_problema} está em andamento e é a primeira coisa a "
+        "destravar.",
+    ctx.PROBLEMA_ABERTO:
+        "Destravar {problema} é a prioridade — sem isso, qualquer ajuste de "
+        "mídia rende menos do que poderia.",
+}
+
 _ESCADA_POR_MOTIVO = {
     rules.SEM_INVESTIMENTO:
         "o objetivo é fechar a leitura do período com o investimento no "
@@ -429,6 +588,8 @@ _PREFIXO_OBJETIVO = {
     "redistribuir_verba": "Com a verba concentrada onde ela já rende mais, ",
     "testar_segunda_estrutura": "Com uma segunda estrutura no ar, ",
     "conferir_os_dados_do_periodo": "Com o número de investimento recuperado, ",
+    "corrigir_a_captacao": "Com a captação corrigida, ",
+    "testar_sem_atribuir_causa": "Com os testes em campo, ",
     rules.PASSO_PADRAO: "Com o ritmo mantido e testes pontuais em curso, ",
 }
 
@@ -556,14 +717,23 @@ def redigir_grupo(avaliacao_grupo, metricas_grupo, *, destino=PDF,
     rotulo, dispersao = _dispersao(ag, incluir_numeros, numeros)
     blocos = (
         (ROTULO_LEITURA, "%s %s" % (_ABERTURA_GRUPO[ag.grupo.classificacao],
-                                    _motivo_grupo(ag, incluir_numeros, numeros))),
-        (rotulo, dispersao),
-        (ROTULO_ACAO, _PASSO_GRUPO[ag.proximo_passo]),
+                                    _motivo_grupo(ag, incluir_numeros, numeros)),
+         _FIXO),
+        # A dispersão é o que só o consolidado enxerga, então ela é a última
+        # coisa a sair — mas é a única opcional que existe aqui.
+        (rotulo, dispersao, _CORTE_ATENCAO),
+        (ROTULO_ACAO, _acao_grupo(ag), _FIXO),
         (ROTULO_OBJETIVO, _PREFIXO_OBJETIVO_GRUPO[ag.proximo_passo]
-         + _ESCADA_GRUPO[ag.grupo.classificacao]),
+         + _ESCADA_GRUPO[ag.grupo.classificacao], _FIXO),
     )
-    texto = "\n\n".join("<b>%s</b> %s" % bloco for bloco in blocos)
-    return _formatar(texto, destino)
+    return _formatar(_montar(blocos, destino, LIMITE_PDF_GRUPO), destino)
+
+
+def _acao_grupo(avaliacao_grupo):
+    """Mesma regra da conta: problema operacional declarado abre o bloco."""
+    frase = _frase_do_problema(avaliacao_grupo.contexto)
+    passo = _PASSO_GRUPO[avaliacao_grupo.proximo_passo]
+    return "%s %s" % (frase, passo) if frase else passo
 
 
 def _motivo_grupo(avaliacao_grupo, incluir_numeros, numeros):
@@ -594,19 +764,139 @@ def _dispersao(avaliacao_grupo, incluir_numeros, numeros):
 
 
 def redigir(avaliacao, metricas, *, destino=PDF, incluir_numeros=False):
-    """Texto final da Análise do Período, em quatro blocos rotulados."""
-    numeros = _numeros(metricas)
-    rotulo_secundario, secundario = _secundario(avaliacao, incluir_numeros,
-                                                numeros)
-    blocos = (
-        (ROTULO_LEITURA, "%s %s" % (_abertura(avaliacao),
-                                    _motivo(avaliacao, incluir_numeros, numeros))),
-        (rotulo_secundario, secundario),
-        (ROTULO_ACAO, _PASSO[avaliacao.proximo_passo]),
-        (ROTULO_OBJETIVO, _objetivo(avaliacao)),
-    )
-    texto = "\n\n".join("<b>%s</b> %s" % bloco for bloco in blocos)
-    return _formatar(texto, destino)
+    """Texto final da Análise do Período, em 3 a 5 blocos rotulados.
+
+    Leitura, ação e objetivo são fixos. Entre eles entram o ponto de atenção
+    (quando algum sinal cobra algo) e a leitura de apoio (quando sobrou sinal
+    que não foi usado no ponto de atenção) — é o que dá ao texto a densidade
+    de uma análise em vez de um parecer de três frases.
+    """
+    numeros = _numeros(metricas, avaliacao)
+    blocos = [(ROTULO_LEITURA, "%s %s" % (_abertura(avaliacao),
+                                          _motivo(avaliacao, incluir_numeros,
+                                                  numeros)), _FIXO)]
+    blocos.extend(_blocos_de_apoio(avaliacao, incluir_numeros, numeros))
+    blocos.append((ROTULO_ACAO, _acao(avaliacao), _FIXO))
+    blocos.append((ROTULO_OBJETIVO, _objetivo(avaliacao), _FIXO))
+    return _formatar(_montar(blocos, destino, LIMITE_PDF), destino)
+
+
+def _montar(blocos, destino, limite):
+    """Junta os blocos, descartando os opcionais — do menos relevante para o
+    mais — até o texto caber na página.
+
+    O teto vale só para o PDF: a mensagem de WhatsApp não tem página, e cortar
+    um bloco ali seria jogar fora conteúdo que cabe.
+    """
+    escolhidos = list(blocos)
+    while True:
+        texto = "\n\n".join("<b>%s</b> %s" % (r, t) for r, t, _p in escolhidos)
+        if destino != PDF or len(texto) <= limite:
+            return texto
+        opcionais = [i for i, b in enumerate(escolhidos) if b[2]]
+        if not opcionais:
+            # Só sobraram os fixos. Cortar mais seria entregar meia leitura —
+            # melhor uma segunda página do que uma análise mutilada.
+            return texto
+        escolhidos.pop(max(opcionais, key=lambda i: escolhidos[i][2]))
+
+
+def _blocos_de_apoio(avaliacao, incluir_numeros, numeros):
+    """Os zero, um ou dois blocos do meio.
+
+    O primeiro é o sinal mais urgente que cobra algo; o segundo é o sinal de
+    apoio de maior precedência que ainda não foi usado — e nunca da mesma
+    família do primeiro, para não dizer duas vezes a mesma coisa sobre a
+    frequência.
+    """
+    atencao = _sinal_de_atencao(avaliacao)
+    apoio = _sinal_de_apoio(avaliacao, exceto=atencao)
+    blocos = []
+    if atencao:
+        blocos.append((ROTULO_ATENCAO,
+                       _fragmento(atencao, incluir_numeros, numeros),
+                       _CORTE_ATENCAO))
+    if apoio:
+        # Depois de um ponto de atenção, o segundo bloco é a leitura do
+        # cenário; sozinho, ele é o que sustentou o resultado.
+        rotulo = ROTULO_ATUAL if atencao else ROTULO_SUSTENTOU
+        blocos.append((rotulo, _fragmento(apoio, incluir_numeros, numeros),
+                       _CORTE_APOIO))
+    if not blocos:
+        chave = ("_sem_sinal_atencao" if avaliacao.classificacao == ATENCAO
+                 else "_sem_sinal_favoravel")
+        rotulo = ROTULO_ATENCAO if avaliacao.classificacao == ATENCAO else ROTULO_SUSTENTOU
+        blocos.append((rotulo, _fragmento(chave, incluir_numeros, numeros),
+                       _CORTE_APOIO))
+    return blocos
+
+
+def _fragmento(chave, incluir_numeros, numeros):
+    par = _SECUNDARIO[chave]
+    return (par[1] if incluir_numeros else par[0]).format(**numeros)
+
+
+def _acao(avaliacao):
+    """O passo do motor, precedido — quando há problema operacional declarado —
+    da frase que diz em que pé ele está. É o que o cliente quer ler primeiro."""
+    frase = _frase_do_problema(avaliacao.contexto)
+    passo = _PASSO[avaliacao.proximo_passo]
+    return "%s %s" % (frase, passo) if frase else passo
+
+
+def _frase_do_problema(contexto):
+    """A frase de situação do problema operacional, ou "" quando não há."""
+    problema = ctx.problema(contexto)
+    situacao = (contexto or {}).get("situacao")
+    if not problema or situacao not in _ACAO_PROBLEMA:
+        return ""
+    sujeito = _PROBLEMA_SUJEITO[problema]
+    return _ACAO_PROBLEMA[situacao].format(
+        problema=sujeito, de_problema=_contrair(sujeito))
+
+
+def _contrair(sujeito):
+    """"o formulário" -> "do formulário"; "a disponibilidade" -> "da …"."""
+    artigo, _espaco, resto = sujeito.partition(" ")
+    return "d%s %s" % (artigo, resto) if artigo in ("o", "a") else "de " + sujeito
+
+
+def _sinal_de_atencao(avaliacao):
+    """A chave do ponto de atenção, resolvendo antes as compostas — as que só
+    existem porque o operador informou algo que a planilha não mostra."""
+    tem_verba_parada = avaliacao.tem(rules.VERBA_SEM_RETORNO)
+    tem_faixa = bool(avaliacao.derivados.get("resultados_esperados"))
+    compostas = {
+        "captacao_com_verba_parada": (avaliacao.tem(ctx.MUDOU_CAPTACAO)
+                                      and tem_verba_parada and tem_faixa),
+        "problema_aberto": bool(ctx.problema(avaliacao.contexto))
+                           and avaliacao.tem(ctx.PROBLEMA_ABERTO),
+        # Sem faixa de resultados esperados o fragmento longo não fecha a
+        # frase: o valor parado é pequeno demais para cobrar um número.
+        rules.VERBA_SEM_RETORNO: tem_verba_parada and tem_faixa,
+        "verba_sem_retorno_curta": tem_verba_parada and not tem_faixa,
+        "nada_mudou_com_custo_alto": (avaliacao.tem(ctx.NADA_MUDOU)
+                                      and avaliacao.tem(rules.CPA_ATENCAO)),
+    }
+    for chave in _ATENCAO_POR_PRECEDENCIA:
+        if compostas.get(chave, avaliacao.tem(chave)):
+            return chave
+    return ""
+
+
+def _sinal_de_apoio(avaliacao, exceto=""):
+    familia = exceto.split("_")[0] if exceto else ""
+    for chave in _APOIO_POR_PRECEDENCIA:
+        achado = (_sinal(avaliacao, chave) if chave.endswith("_")
+                  else (chave if avaliacao.tem(chave) else ""))
+        if not achado or achado == exceto or achado.startswith(familia + "_"):
+            continue
+        if achado in _ATENCAO_POR_PRECEDENCIA and exceto:
+            # Um segundo sinal negativo não vira "leitura atual": o ponto de
+            # atenção já é o lugar dele, e só cabe um por texto.
+            continue
+        return achado
+    return ""
 
 
 # ----------------------------------------------------------------------
@@ -626,33 +916,6 @@ def _motivo(avaliacao, incluir_numeros, numeros):
     return par[1].format(**numeros) if incluir_numeros else par[0]
 
 
-def _secundario(avaliacao, incluir_numeros, numeros):
-    """Frequência manda; o custo de exibição entra quando a frequência está
-    saudável ou ausente. Depois vêm atenção e estrutura, e por fim um
-    fragmento neutro — o bloco nunca some, porque a saída tem sempre quatro."""
-    escolhido = _sinal_secundario(avaliacao)
-    par = _SECUNDARIO[escolhido]
-    rotulo = ROTULO_ATENCAO if escolhido in _SINAIS_DE_ATENCAO else ROTULO_SUSTENTOU
-    texto = par[1].format(**numeros) if incluir_numeros else par[0]
-    return rotulo, texto
-
-
-def _sinal_secundario(avaliacao):
-    frequencia = _sinal(avaliacao, "frequencia_")
-    if frequencia and frequencia != "frequencia_saudavel":
-        return frequencia
-    for candidato in (_sinal(avaliacao, "cpm_"), frequencia,
-                      _sinal(avaliacao, "ctr_")):
-        if candidato:
-            return candidato
-    for estrutura in (rules.RESULTADOS_CONCENTRADOS, rules.CAMPANHA_UNICA,
-                      rules.MULTIPLAS_CAMPANHAS):
-        if avaliacao.tem(estrutura):
-            return estrutura
-    return ("_sem_sinal_atencao" if avaliacao.classificacao == ATENCAO
-            else "_sem_sinal_favoravel")
-
-
 def _objetivo(avaliacao):
     escada = (_ESCADA_POR_MOTIVO.get(avaliacao.motivo_principal)
               or _ESCADA[avaliacao.classificacao])
@@ -666,17 +929,31 @@ def _sinal(avaliacao, prefixo):
 # ----------------------------------------------------------------------
 # Números e formatação
 # ----------------------------------------------------------------------
-def _numeros(metricas):
+def _numeros(metricas, avaliacao=None):
+    """Tudo que os fragmentos podem interpolar, já formatado em pt-BR.
+
+    Os derivados entram aqui junto dos números do período porque, do ponto de
+    vista do texto, não há diferença — a diferença está em quem pode citá-los
+    sem número: só os derivados, que nenhuma tabela mostra.
+    """
     cpa = metricas.get("cpa")
     if cpa is None:
         cpa = metricas.get("custo_resultado")
+    derivados = getattr(avaliacao, "derivados", None) or {}
+    esperado = derivados.get("resultados_esperados") or [0, 0]
+    problema = ctx.problema(getattr(avaliacao, "contexto", None))
     return {
+        "problema": _PROBLEMA_SUJEITO.get(problema, ""),
         "cpa": _moeda(cpa),
         "cpm": _moeda(metricas.get("cpm")),
         "ctr": _percentual(metricas.get("ctr")),
         "investimento": _moeda(metricas.get("investimento")),
         "resultados": _inteiro(metricas.get("resultados")),
         "frequencia": _decimal(metricas.get("frequencia")),
+        "verba_sem_retorno": _moeda(derivados.get("verba_sem_retorno")),
+        "verba_em_aprendizado": _moeda(derivados.get("verba_em_aprendizado")),
+        "esperado_min": esperado[0],
+        "esperado_max": esperado[1],
     }
 
 

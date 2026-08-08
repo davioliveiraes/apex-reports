@@ -6,5 +6,8 @@ claude_resume.txt
 # PDFs de exemplo ignorados; a pasta de imagens (logo) é versionada
 docs/*
 !docs/img/
+# Redundante com a regra acima, e de propósito: o contexto do projeto não vai
+# para o repositório nem que `docs/*` seja estreitado um dia.
+docs/CONTEXTO.md
 venv
 staticfiles/

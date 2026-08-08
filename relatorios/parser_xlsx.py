@@ -342,15 +342,49 @@ def consolidar(registros, mapa, conta=None, perfil=None, meta_cpa=None):
     # derivado dessa decisão, não o contrário. A avaliação fica guardada em
     # `dados` porque é ela — não o texto — que vira payload nas etapas
     # seguintes (prompt de IA, mensagem de WhatsApp), sem reprocessar números.
-    metricas = _metricas_analise(dados["_num"], campanhas)
-    avaliacao = analysis.rules.avaliar(
-        metricas, perfil=perfil, meta_cpa=meta_cpa,
-        dias_periodo=_dias_periodo(inicio, termino))
-    dados["avaliacao"] = asdict(avaliacao)
-    dados["analise_sugerida"] = analysis.templates.redigir(
-        avaliacao, metricas, destino="pdf")
+    # `_metricas` e `_dias` ficam junto para a revisão poder regerar a análise
+    # com o contexto informado sem pedir o anexo de novo.
+    dados["_metricas"] = _metricas_analise(dados["_num"], campanhas)
+    dados["_dias"] = _dias_periodo(inicio, termino)
+    dados["_perfil"] = perfil
+    regerar_analise(dados, meta_cpa=meta_cpa)
 
     return dados
+
+
+def regerar_analise(dados, *, meta_cpa=None, contexto=None):
+    """
+    Recalcula avaliação e texto a partir do que já está em `dados`.
+
+    Chamada na leitura do anexo e de novo a cada "Regerar análise" na revisão,
+    quando o operador informa contexto ou meta. Não relê a planilha: tudo que o
+    motor precisa foi guardado na primeira passagem.
+    """
+    if dados.get("modo") == "grupo":
+        avaliacao = analysis.rules.avaliar_grupo(
+            [{"nome": u["nome"], "metricas": _metricas_unidade(u["num"])}
+             for u in dados["unidades"]],
+            _metricas_unidade(dados["_num"]),
+            perfil=dados.get("_perfil"), meta_cpa=meta_cpa, contexto=contexto,
+            dias_periodo=dados.get("_dias"))
+        texto = analysis.templates.redigir_grupo(
+            avaliacao, dados["_num"], destino="pdf")
+    else:
+        metricas = dados["_metricas"]
+        avaliacao = analysis.rules.avaliar(
+            metricas, perfil=dados.get("_perfil"), meta_cpa=meta_cpa,
+            contexto=contexto, dias_periodo=dados.get("_dias"))
+        texto = analysis.templates.redigir(avaliacao, metricas, destino="pdf")
+
+    dados["avaliacao"] = asdict(avaliacao)
+    dados["analise_sugerida"] = texto
+    return dados
+
+
+def _metricas_unidade(n):
+    """Totais no formato do motor. Sem campanhas: no consolidado a unidade é a
+    unidade de análise, e a estrutura interna dela não está na sessão."""
+    return dict(n, cpa=n.get("custo_resultado"))
 
 
 def _metricas_analise(n, campanhas):
@@ -358,7 +392,8 @@ def _metricas_analise(n, campanhas):
     forma de lista, que é o que `rules.avaliar` espera para medir estrutura e
     concentração."""
     return dict(n, cpa=n.get("custo_resultado"),
-                campanhas=[{"nome": nome, "resultados": c["res"]}
+                campanhas=[{"nome": nome, "resultados": c["res"],
+                            "investimento": c["inv"]}
                            for nome, c in campanhas.items()])
 
 
@@ -528,14 +563,9 @@ def consolidar_grupo(unidades):
     # contra o CPA do próprio grupo, no mesmo período. É a única referência do
     # sistema que não é estimativa nossa — e é ela que aponta qual praça está
     # cara e qual tem o método que vale copiar.
-    avaliacao = analysis.rules.avaliar_grupo(
-        [{"nome": u["nome"], "metricas": dict(u["num"], cpa=u["num"].get("custo_resultado"))}
-         for u in us],
-        dict(n, cpa=n.get("custo_resultado")),
-        dias_periodo=_dias_periodo_texto(dados["periodo"]))
-    dados["avaliacao"] = asdict(avaliacao)
-    dados["analise_sugerida"] = analysis.templates.redigir_grupo(
-        avaliacao, n, destino="pdf")
+    dados["_num"] = n
+    dados["_dias"] = _dias_periodo_texto(dados["periodo"])
+    regerar_analise(dados)
     return dados
 
 

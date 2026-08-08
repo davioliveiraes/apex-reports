@@ -130,7 +130,10 @@
 
   /* ---------- Análise ---------- */
   .analise p { font-size: 8.6pt; color: #D7DAE0; }
-  .analise p + p { margin-top: 1.6mm; }
+  /* Um bloco por parágrafo: o respiro entre eles é o que deixa o rótulo em
+     destaque funcionar como entrada de leitura, em vez de virar um texto
+     corrido com palavras vermelhas no meio. */
+  .analise p + p { margin-top: 2.6mm; }
 
   /* ---------- Rodapé ---------- */
   .rodape {

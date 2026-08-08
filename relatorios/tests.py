@@ -19,8 +19,9 @@ from django.test import TestCase
 from openpyxl import Workbook
 
 from . import analysis, benchmarks, metricas, parser_xlsx
+from .analysis import templates
 from .parser_xlsx import consolidar_grupo, ler_export_meta
-from .views import _MESES_PT
+from .views import _MESES_PT, _paragrafos as _paragrafos_analise
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -314,6 +315,353 @@ def _linhas_funil(dados):
             for m, v, l in etapa["linhas"]}
 
 
+class CasosReaisTest(TestCase):
+    """
+    Duas contas reais, do anexo à página impressa.
+
+    Elix Finance sai do PDF em `docs/Elix-Finance-anexounico-31-jul-26-6-ago-26.pdf`.
+    TecnoCell Chapada não tem PDF versionado: os números vêm do export
+    `Tecno-Cell-Chapada-Campanhas-30-de-jul-de-2026-5-de-ago-de-2026.xlsx`,
+    lido em 07/08/2026 — foi ele que revelou o rótulo `Valor gasto (BRL)`.
+    """
+
+    # 31/07 a 06/08/2026 · R$ 257,86 · 13 conversas · CPA R$ 19,84
+    ELIX = [{"nome": "[LEADS][CLINICA-BOLETO][ABO][31JUL26]", "res": 13,
+             "inv": 171.24, "imp": 3900, "alc": 1950},
+            {"nome": "[LEADS][CLINICA-BOL][ABO][04AGO26]", "res": 0,
+             "inv": 70.51, "imp": 1200, "alc": 600},
+            {"nome": "[LEADS][CLINICA-BOL][ABO][04AGO26] — Cópia", "res": 0,
+             "inv": 16.11, "imp": 460, "alc": 213}]
+
+    # 30/07 a 05/08/2026 · R$ 338,80 · 82 conversas · CPA R$ 4,13 · 1 campanha
+    TECNOCELL = [{"nome": "[VENDAS][IPHONE-ASSTECH][ABO][27JUL26]", "res": 82,
+                  "inv": 338.80, "imp": 35840, "alc": 10206}]
+
+    def _ler(self, campanhas, inicio, fim):
+        return parser_xlsx.ler_export_meta(io.BytesIO(
+            _planilha(campanhas, inicio=inicio, fim=fim)))
+
+    def _elix(self):
+        return self._ler(self.ELIX, "2026-07-31", "2026-08-06")
+
+    def _tecnocell(self):
+        return self._ler(self.TECNOCELL, "2026-07-30", "2026-08-05")
+
+    # ---- Elix: verba parada é o assunto do período ----
+    def test_elix_numeros_batem_com_o_pdf(self):
+        n = self._elix()["_num"]
+        self.assertAlmostEqual(n["investimento"], 257.86, places=2)
+        self.assertEqual(n["resultados"], 13)
+        self.assertAlmostEqual(n["custo_resultado"], 19.83, places=1)
+        self.assertAlmostEqual(n["frequencia"], 2.01, places=2)
+
+    def test_elix_aponta_a_verba_parada_e_a_faixa_esperada(self):
+        av = self._elix()["avaliacao"]
+        self.assertEqual(av["derivados"]["verba_sem_retorno"], 70.51)
+        self.assertEqual(av["derivados"]["verba_em_aprendizado"], 16.11)
+        self.assertEqual(av["derivados"]["resultados_esperados"], [3, 4])
+        self.assertEqual(av["proximo_passo"], "corrigir_a_captacao")
+
+    def test_elix_no_pdf_diz_que_o_gargalo_e_a_captacao(self):
+        dados = self._elix()
+        self.client.post("/", {"cliente": "Elix Finance", "arquivos": [
+            _arquivo("elix.xlsx", self.ELIX, inicio="2026-07-31",
+                     fim="2026-08-06")]})
+        r = self.client.post("/revisao/", {
+            "cliente": "Elix Finance", "periodo": "31/07/2026 a 06/08/2026",
+            "analise": dados["analise_sugerida"].replace("\n", "\r\n")})
+        pdf = _bytes_pdf(r)
+        self.assertEqual(_paginas(pdf), 1)
+        texto = _texto_pdf(pdf)
+        self.assertIn("R$ 70,51", texto)
+        self.assertIn("de 3 a 4 registros", texto)
+        self.assertIn("na etapa de captação", texto)
+        # E o número derivado NÃO é a soma das duas zeradas: a de R$ 16,11
+        # ainda não gastou o equivalente a um contato.
+        self.assertNotIn("R$ 86,62", texto)
+
+    # ---- TecnoCell: entrega sadia, público saturado ----
+    def test_tecnocell_numeros_batem_com_o_export(self):
+        n = self._tecnocell()["_num"]
+        self.assertAlmostEqual(n["investimento"], 338.80, places=2)
+        self.assertEqual(n["resultados"], 82)
+        self.assertAlmostEqual(n["custo_resultado"], 4.13, places=2)
+        self.assertAlmostEqual(n["frequencia"], 3.51, places=2)
+
+    def test_tecnocell_sem_verba_parada_e_publico_saturado(self):
+        av = self._tecnocell()["avaliacao"]
+        self.assertEqual(av["classificacao"], "BOM")   # 4,13 > teto 4,00
+        self.assertNotIn("verba_sem_retorno", av["sinais"])
+        self.assertIn("campanha_unica", av["sinais"])
+        self.assertIn("frequencia_saturada", av["sinais"])
+        self.assertEqual(av["proximo_passo"], "ampliar_publico_e_criativos")
+
+    def test_tecnocell_no_pdf_nao_repete_os_numeros_da_tabela(self):
+        dados = self._tecnocell()
+        self.assertNotRegex(dados["analise_sugerida"], r"\d")
+        self.assertNotIn("R$", dados["analise_sugerida"])
+
+    def test_as_duas_contas_sao_lidas_de_forma_diferente(self):
+        # Mesma janela de 7 dias e mesma aplicação: o texto tem que separar
+        # uma conta com gargalo de captação de uma com público desgastado.
+        elix = self._elix()["analise_sugerida"]
+        tecno = self._tecnocell()["analise_sugerida"]
+        self.assertNotEqual(elix, tecno)
+        self.assertIn("captação", elix)
+        self.assertNotIn("captação", tecno)
+        self.assertIn("já viu os anúncios muitas vezes", tecno)
+
+
+class OrcamentoDePaginaTest(TestCase):
+    """
+    O teto de caracteres da análise é MEDIDO, não estimado.
+
+    Acha por bissecção o maior texto que ainda cabe numa página, gerando PDF
+    de verdade em cada passo, e confere que o teto em `templates` está abaixo
+    disso com a folga de 10%. Mexeu na fonte, no espaçamento ou no layout? Este
+    teste falha dizendo o número novo.
+    """
+
+    ROTULOS = ["Leitura do período.", "Ponto de atenção.", "Leitura atual.",
+               "O que vamos fazer.", "Objetivo do próximo ciclo."]
+    FRASE = ("O custo por resultado ficou dentro da faixa de trabalho da conta "
+             "e a verba investida segue virando contato real com cliente de "
+             "forma previsível ao longo de todo o período observado. ")
+    FOLGA = 0.90
+    BLOCOS = 5          # pior caso: cada parágrafo custa o respiro entre eles
+
+    def _texto(self, total, blocos=None):
+        """String de exatamente `total` caracteres, em parágrafos rotulados —
+        rótulos e separadores contam, porque é a string inteira que o limite
+        controla."""
+        blocos = blocos or self.BLOCOS
+        marcas = ["<b>%s</b> " % self.ROTULOS[i % len(self.ROTULOS)]
+                  for i in range(blocos)]
+        sobra = total - sum(len(m) for m in marcas) - 2 * (blocos - 1)
+        por_bloco = sobra // blocos
+        partes = []
+        for i, marca in enumerate(marcas):
+            n = por_bloco if i < blocos - 1 else sobra - por_bloco * (blocos - 1)
+            partes.append(marca + (self.FRASE * (n // len(self.FRASE) + 2))[:n])
+        texto = "\n\n".join(partes)
+        self.assertEqual(len(texto), total)
+        return texto
+
+    def _cabe(self, campos, total):
+        r = self.client.post("/revisao/", dict(campos, analise=self._texto(total)))
+        return _paginas(_bytes_pdf(r)) == 1
+
+    def _maximo(self, campos, teto_busca=4000):
+        baixo, alto = 600, teto_busca
+        self.assertTrue(self._cabe(campos, baixo), "nem o texto mínimo cabe")
+        self.assertFalse(self._cabe(campos, alto),
+                         "o limite de busca não estoura a página — suba o teto")
+        while alto - baixo > 25:
+            meio = (baixo + alto) // 2
+            if self._cabe(campos, meio):
+                baixo = meio
+            else:
+                alto = meio
+        return baixo
+
+    def _conferir(self, limite, medido, modo):
+        self.assertLessEqual(
+            limite, int(medido * self.FOLGA),
+            "o teto de %s está alto demais: cabem %d caracteres, então o teto "
+            "com 10%% de folga é %d — atualize templates.py"
+            % (modo, medido, int(medido * self.FOLGA)))
+
+    def test_no_teto_ainda_cabe_uma_pagina(self):
+        # A verificação direta do que o teto promete: um texto do tamanho
+        # exato do limite sai numa página só, nos dois modos.
+        casos = [
+            ("conta", templates.LIMITE_PDF, [
+                _arquivo("a.xlsx", [
+                    {"nome": "Camp A", "res": 40, "inv": 80.0, "imp": 4000,
+                     "alc": 2500, "cliques": 300},
+                    {"nome": "Camp B", "res": 20, "inv": 120.0, "imp": 2000,
+                     "alc": 1000, "cliques": 120},
+                    {"nome": "Camp C", "res": 10, "inv": 60.0, "imp": 1500,
+                     "alc": 900, "cliques": 80},
+                    {"nome": "Camp D", "res": 5, "inv": 40.0, "imp": 900,
+                     "alc": 500, "cliques": 40}])],
+             {"cliente": "Medição", "periodo": "01/07/2026 a 31/07/2026"}),
+            ("consolidado", templates.LIMITE_PDF_GRUPO,
+             [_arquivo("u%d.xlsx" % i, [
+                 {"nome": "C", "res": 40 + i, "inv": 80.0 + i, "imp": 4000,
+                  "alc": 2500, "cliques": 300}]) for i in range(3)],
+             {"cliente": "Medição", "periodo": "01/07/2026 a 31/07/2026",
+              "unidade_0": "Praça A", "unidade_1": "Praça B",
+              "unidade_2": "Praça C"}),
+        ]
+        for modo, limite, arquivos, campos in casos:
+            with self.subTest(modo=modo):
+                self.client.post("/", {"cliente": "Medição",
+                                       "arquivos": arquivos})
+                for blocos in (3, 4, 5):
+                    r = self.client.post("/revisao/", dict(
+                        campos, analise=self._texto(limite, blocos)))
+                    self.assertEqual(
+                        _paginas(_bytes_pdf(r)), 1,
+                        "%s: %d caracteres em %d blocos estouraram a página"
+                        % (modo, limite, blocos))
+
+    def test_teto_da_conta_individual(self):
+        self.client.post("/", {"cliente": "Medição", "arquivos": [
+            _arquivo("a.xlsx", [
+                {"nome": "Camp A", "res": 40, "inv": 80.0, "imp": 4000,
+                 "alc": 2500, "cliques": 300},
+                {"nome": "Camp B", "res": 20, "inv": 120.0, "imp": 2000,
+                 "alc": 1000, "cliques": 120},
+                {"nome": "Camp C", "res": 10, "inv": 60.0, "imp": 1500,
+                 "alc": 900, "cliques": 80},
+                {"nome": "Camp D", "res": 5, "inv": 40.0, "imp": 900,
+                 "alc": 500, "cliques": 40}])]})
+        campos = {"cliente": "Medição", "periodo": "01/07/2026 a 31/07/2026"}
+        self._conferir(templates.LIMITE_PDF, self._maximo(campos), "conta")
+
+    def test_teto_do_consolidado(self):
+        self.client.post("/", {"cliente": "Medição", "arquivos": [
+            _arquivo("u%d.xlsx" % i, [
+                {"nome": "C", "res": 40 + i, "inv": 80.0 + i, "imp": 4000,
+                 "alc": 2500, "cliques": 300}]) for i in range(3)]})
+        campos = {"cliente": "Medição", "periodo": "01/07/2026 a 31/07/2026",
+                  "unidade_0": "Praça A", "unidade_1": "Praça B",
+                  "unidade_2": "Praça C"}
+        self._conferir(templates.LIMITE_PDF_GRUPO, self._maximo(campos),
+                       "consolidado")
+
+
+class ContextoDoPeriodoTest(TestCase):
+    """
+    Bloco "Contexto do período" na tela 02: campos opcionais que viram sinal e
+    o botão que regera a análise sem reenviar o anexo.
+    """
+
+    ELIX = [{"nome": "A", "res": 13, "inv": 171.24, "imp": 3900, "alc": 1950},
+            {"nome": "B", "res": 0, "inv": 70.51, "imp": 1200, "alc": 600},
+            {"nome": "C", "res": 0, "inv": 16.11, "imp": 460, "alc": 213}]
+
+    def _importar(self, campanhas=None, cliente="Elix"):
+        f = _arquivo("e.xlsx", campanhas or self.ELIX,
+                     inicio="2026-07-31", fim="2026-08-06")
+        self.client.post("/", {"cliente": cliente, "arquivos": [f]})
+        return self.client.session["relatorio_apex"]
+
+    def _regerar(self, **campos):
+        base = {"cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
+                "analise": "texto que o operador tinha", "regerar": "1"}
+        base.update(campos)
+        r = self.client.post("/revisao/", base)
+        self.assertEqual(r.status_code, 200)
+        return r, self.client.session["relatorio_apex"]
+
+    def test_bloco_aparece_na_tela_dois_e_nao_na_um(self):
+        self._importar()
+        painel = self.client.get("/").content.decode()
+        self.assertNotIn("Contexto do período", painel)
+        revisao = self.client.get("/revisao/").content.decode()
+        self.assertIn("Contexto do período", revisao)
+        self.assertIn('name="regerar"', revisao)
+        for campo in ("id_mudanca", "id_problema", "id_situacao",
+                      "id_passo", "id_meta_cpa"):
+            self.assertIn(campo, revisao)
+
+    def test_regerar_recalcula_e_preserva_os_campos(self):
+        antes = self._importar()["analise_sugerida"]
+        r, dados = self._regerar(mudanca="mudou_captacao")
+        self.assertNotEqual(dados["analise_sugerida"], antes)
+        self.assertIn("A forma de captação mudou", dados["analise_sugerida"])
+        # O textarea volta com o texto novo, e o select com o que foi marcado.
+        html = r.content.decode()
+        self.assertIn("A forma de captação mudou", html)
+        self.assertIn('value="mudou_captacao" selected', html)
+
+    def test_contexto_sobrevive_na_sessao_entre_regeracoes(self):
+        self._importar()
+        self._regerar(mudanca="mudou_captacao")
+        _r, dados = self._regerar(mudanca="mudou_captacao",
+                                  problema="problema_formulario",
+                                  situacao="problema_corrigido")
+        self.assertEqual(dados["_contexto"], {
+            "mudanca": "mudou_captacao", "problema": "problema_formulario",
+            "situacao": "problema_corrigido"})
+        # E o GET seguinte volta com tudo preenchido.
+        html = self.client.get("/revisao/").content.decode()
+        self.assertIn('value="problema_formulario" selected', html)
+
+    def test_regerar_nao_gera_pdf(self):
+        self._importar()
+        r, _dados = self._regerar(mudanca="nada_mudou")
+        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
+
+    def test_sem_contexto_a_analise_e_a_mesma_de_antes(self):
+        original = self._importar()["analise_sugerida"]
+        _r, dados = self._regerar()
+        self.assertEqual(dados["analise_sugerida"], original)
+
+    def test_meta_de_cpa_informada_vira_a_referencia(self):
+        self._importar()
+        _r, dados = self._regerar(meta_cpa="30,00")
+        self.assertEqual(dados["_meta_cpa"], 30.0)
+        av = dados["avaliacao"]
+        self.assertEqual(av["referencia"], "meta")
+        self.assertTrue(av["meta_definida"])
+        # CPA 19,84 contra meta 30,00 = razão 0,66 (ótimo), mas 13 resultados
+        # não sustentam afirmação forte: o rebaixamento por amostra vale igual.
+        self.assertEqual(av["classificacao"], "BOM")
+        self.assertIn("amostra_pequena", av["sinais"])
+        self.assertNotIn("meta_cpa_indefinida", av["sinais"])
+        self.assertIn("meta combinada", dados["analise_sugerida"])
+
+    def test_situacao_sem_problema_e_descartada(self):
+        self._importar()
+        _r, dados = self._regerar(situacao="problema_corrigido")
+        self.assertEqual(dados["_contexto"], {})
+        self.assertNotIn("já foi corrigido", dados["analise_sugerida"])
+
+    def test_passo_escolhido_pelo_operador(self):
+        self._importar()
+        _r, dados = self._regerar(passo="escalar_verba")
+        self.assertEqual(dados["avaliacao"]["proximo_passo"], "escalar_verba")
+
+    def test_pdf_sai_com_a_analise_regerada(self):
+        self._importar()
+        _r, dados = self._regerar(problema="problema_atendimento",
+                                  situacao="problema_aberto")
+        r = self.client.post("/revisao/", {
+            "cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
+            "analise": dados["analise_sugerida"].replace("\n", "\r\n")})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("atendimento aos contatos", texto)
+
+    def test_consolidado_tambem_tem_o_bloco(self):
+        arquivos = [
+            _arquivo("a.xlsx", [{"nome": "CA", "res": 50, "inv": 100.0,
+                                 "imp": 5000, "alc": 4000}]),
+            _arquivo("b.xlsx", [{"nome": "CB", "res": 10, "inv": 200.0,
+                                 "imp": 5000, "alc": 4000}]),
+        ]
+        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        html = self.client.get("/revisao/").content.decode()
+        self.assertIn("Contexto do período", html)
+        # O select de passo traz as opções de GRUPO, não as de conta.
+        self.assertIn("levar_o_metodo_das_melhores_as_demais", html)
+        self.assertNotIn("escalar_verba", html)
+
+        r = self.client.post("/revisao/", {
+            "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
+            "analise": "x", "regerar": "1", "unidade_0": "Praça A",
+            "unidade_1": "Praça B", "problema": "problema_estoque",
+            "situacao": "problema_em_correcao"})
+        self.assertEqual(r.status_code, 200)
+        dados = self.client.session["relatorio_apex"]
+        self.assertIn("A correção da disponibilidade de estoque está em andamento",
+                      dados["analise_sugerida"])
+        # Nomes das unidades preservados na regeração.
+        self.assertIn("Praça A", r.content.decode())
+
+
 class ColunaDeInvestimentoTest(TestCase):
     """O Meta alterna o rótulo da coluna de verba entre exports. Não
     reconhecê-la zera investimento e custo por resultado sem avisar
@@ -452,6 +800,39 @@ class AnaliseAutomaticaTest(TestCase):
                          "a análise mais longa estourou a página do relatório")
         # E o texto chegou inteiro: o último bloco é o que cairia fora.
         self.assertIn("Objetivo do próximo ciclo", _texto_pdf(pdf))
+
+    def test_quebra_de_bloco_sobrevive_ao_textarea(self):
+        # O navegador manda \r\n (HTML spec). Separar por "\n\n" cru não acha
+        # separador nenhum e a análise inteira sai num parágrafo só — era
+        # assim que o bug aparecia no PDF, com os rótulos vermelhos correndo
+        # no meio do texto.
+        f = _arquivo("conta.xlsx", [
+            {"nome": "Campanha A", "res": 40, "inv": 80.0, "imp": 4000,
+             "alc": 2500, "cliques": 300}])
+        self.client.post("/", {"cliente": "ILOC", "arquivos": [f]})
+        analise = self.client.session["relatorio_apex"]["analise_sugerida"]
+        blocos = analise.split("\n\n")
+        self.assertGreaterEqual(len(blocos), 3)
+
+        r = self.client.post("/revisao/", {
+            "cliente": "ILOC", "periodo": "01/07/2026 a 15/07/2026",
+            "analise": analise.replace("\n", "\r\n"),
+        })
+        texto = _texto_pdf(_bytes_pdf(r))
+        # Cada bloco começa num parágrafo próprio: o rótulo do último não pode
+        # aparecer grudado no fim do penúltimo.
+        for rotulo in ("Leitura do período.", "O que vamos fazer.",
+                       "Objetivo do próximo ciclo."):
+            self.assertIn(rotulo, texto)
+        self.assertEqual(len(_paragrafos_analise(analise.replace("\n", "\r\n"))),
+                         len(blocos))
+
+    def test_linha_em_branco_com_espaco_ainda_separa(self):
+        # Operador que edita o texto à mão deixa espaço na linha vazia.
+        self.assertEqual(_paragrafos_analise("Um.\r\n   \r\nDois."),
+                         ["Um.", "Dois."])
+        self.assertEqual(_paragrafos_analise("Um.\n\nDois.\n\n\nTrês."),
+                         ["Um.", "Dois.", "Três."])
 
     def test_analise_da_conta_vem_do_motor_de_regras(self):
         # 80/20 entre duas campanhas, CPA de R$ 2,60: período ótimo, e o

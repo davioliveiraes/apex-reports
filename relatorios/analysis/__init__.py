@@ -16,6 +16,6 @@ Nada aqui faz I/O, lê relógio ou sorteia: a mesma entrada devolve sempre a
 mesma saída.
 """
 
-from . import benchmarks, rules, templates  # noqa: F401
+from . import benchmarks, contexto, rules, templates  # noqa: F401
 
-__all__ = ["benchmarks", "rules", "templates"]
+__all__ = ["benchmarks", "contexto", "rules", "templates"]
