@@ -47,6 +47,17 @@ No Debian/Ubuntu:
 ```bash
 sudo apt install libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core
 ```
+No Windows nativo (sem WSL), o pip não instala essas libs — `import weasyprint`
+falha com `OSError: cannot load library 'libgobject-2.0-0'`. Resolve com
+[MSYS2](https://www.msys2.org/):
+```powershell
+winget install --id MSYS2.MSYS2 -e
+C:\msys64\usr\bin\bash.exe -lc "pacman -Sy --noconfirm && pacman -S --noconfirm mingw-w64-x86_64-pango"
+```
+Depois adicione `C:\msys64\mingw64\bin` ao PATH do usuário (Configurações →
+Sistema → Variáveis de ambiente, ou
+`[Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));C:\msys64\mingw64\bin", "User")`
+no PowerShell) e abra um terminal novo para o PATH atualizado valer.
 (Em outras distros/macOS, veja https://doc.courtbouillon.org/weasyprint/stable/first_steps.html.)
 As fontes são as do sistema — os templates do PDF pedem Helvetica e caem em
 DejaVu Sans, daí o `fonts-dejavu-core`; sem ele o PDF sai com outra fonte.
