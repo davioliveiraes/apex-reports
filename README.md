@@ -226,10 +226,15 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   `gerador_indicador.montar_tabela`) — o que se confere na tela é o que sai
   no arquivo.
 - Os ajustes de produção vêm do ambiente: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`,
-  `DJANGO_ALLOWED_HOSTS`, `DJANGO_STATIC_ROOT` e `DJANGO_SCRIPT_NAME`. Sem
-  nenhuma variável valem os padrões de desenvolvimento (debug ligado, qualquer
-  host, aplicação na raiz); na VPS o systemd carrega os valores de produção de
-  `/etc/apex-reports/env`.
+  `DJANGO_ALLOWED_HOSTS`, `DJANGO_STATIC_ROOT` e `DJANGO_SCRIPT_NAME`. Na VPS
+  o systemd carrega tudo de `/etc/apex-reports/env`, que o `deploy.sh` escreve.
+  O padrão do `settings.py` é **produção**: sem `DJANGO_SECRET_KEY` a
+  aplicação se recusa a subir, em vez de cair numa chave que está publicada
+  aqui no repositório; `DEBUG` só liga com `1`/`true`/`yes`/`on`, e sem
+  `DJANGO_ALLOWED_HOSTS` valem só os endereços locais. Quem liga o modo de
+  desenvolvimento é o `manage.py` — produção sobe por `gunicorn
+  apex_reports.wsgi`, que não passa por ele —, então `python manage.py
+  runserver` continua não precisando de variável nenhuma.
 - A aplicação não tem modelos próprios, mas a sessão que liga a importação à
   tela de revisão é gravada no banco — `migrate` é obrigatório também em
   produção.

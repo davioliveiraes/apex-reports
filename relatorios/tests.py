@@ -7,15 +7,19 @@ PyMuPDF como fallback.
 """
 import io
 import json
+import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 import fitz  # PyMuPDF — extração de texto e contagem de páginas
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from openpyxl import Workbook
 
 from . import analysis, benchmarks, metricas, parser_xlsx
@@ -1928,3 +1932,72 @@ class VeiculacaoTest(TestCase):
                                "arquivos": arquivos})
         texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
         self.assertIn("R$ 80,00", texto)    # centro inteira: 60 + 20
+
+
+class AmbienteDeProducaoTest(SimpleTestCase):
+    """
+    O padrão do `settings` é PRODUÇÃO; quem liga o desenvolvimento é o
+    `manage.py`.
+
+    Na VPS as variáveis vêm de /etc/apex-reports/env pelo systemd. O arquivo
+    inteiro sumir já derrubava o serviço (`EnvironmentFile` sem `-`), mas uma
+    variável apagada à mão passava batido: a aplicação subia com DEBUG ligado
+    e com a chave de exemplo, que está publicada no repositório. Agora o
+    caminho de produção se recusa a subir sem as variáveis, e o caminho de
+    desenvolvimento continua não precisando de nenhuma.
+
+    O comportamento é de tempo de import, então cada caso roda num processo
+    limpo, sem nenhuma DJANGO_* herdada de quem chamou a suíte.
+    """
+
+    RAIZ = Path(__file__).resolve().parent.parent
+
+    def _rodar(self, argumentos, **ambiente):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("DJANGO_")}
+        env.update(ambiente, DJANGO_SETTINGS_MODULE="apex_reports.settings")
+        return subprocess.run([sys.executable] + argumentos, cwd=str(self.RAIZ),
+                              env=env, capture_output=True, text=True)
+
+    def _wsgi(self, **ambiente):
+        """Sobe a aplicação como o gunicorn sobe — sem passar pelo manage.py."""
+        return self._rodar(["-c", "import apex_reports.wsgi;"
+                            "from django.conf import settings;"
+                            "print(settings.DEBUG, settings.ALLOWED_HOSTS)"],
+                           **ambiente)
+
+    def test_producao_sem_variaveis_recusa_subir(self):
+        r = self._wsgi()
+        self.assertNotEqual(r.returncode, 0, "subiu sem SECRET_KEY nenhuma")
+        self.assertIn("DJANGO_SECRET_KEY", r.stderr)
+
+    def test_producao_com_as_variaveis_sobe_travada(self):
+        r = self._wsgi(DJANGO_SECRET_KEY="chave-de-verdade", DJANGO_DEBUG="0",
+                       DJANGO_ALLOWED_HOSTS="203.0.113.10,localhost")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(),
+                         "False ['203.0.113.10', 'localhost']")
+
+    def test_valor_desconhecido_de_debug_cai_em_desligado(self):
+        """Errar o valor tem que errar para o lado seguro — "sim" não liga."""
+        for valor in ("", "sim", "0", "false"):
+            with self.subTest(valor=valor):
+                r = self._wsgi(DJANGO_SECRET_KEY="k", DJANGO_DEBUG=valor)
+                self.assertTrue(r.stdout.startswith("False"), r.stdout or r.stderr)
+
+    def test_manage_py_continua_rodando_sem_configurar_nada(self):
+        """A promessa do README: `python manage.py runserver` e pronto."""
+        r = self._rodar(["manage.py", "check"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_deploy_escreve_toda_variavel_que_o_settings_le(self):
+        """Guarda contra a deriva entre os dois arquivos: acrescentar uma
+        variável ao settings sem escrevê-la no deploy derruba a VPS no próximo
+        publish, e só lá."""
+        def variaveis(caminho):
+            return set(re.findall(r"DJANGO_[A-Z_]+",
+                                  (self.RAIZ / caminho).read_text(encoding="utf-8")))
+
+        lidas = variaveis("apex_reports/settings.py")
+        escritas = variaveis("deploy/deploy.sh")
+        self.assertTrue(lidas, "nenhuma variável encontrada no settings")
+        self.assertEqual(lidas - escritas, set())

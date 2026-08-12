@@ -13,26 +13,44 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Os três ajustes de produção vêm do ambiente — na VPS o systemd carrega
-# /etc/apex-reports/env (ver deploy/deploy.sh). Os padrões abaixo são os de
-# desenvolvimento: `python manage.py runserver` sem nenhuma variável continua
-# funcionando como antes.
-
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-l6hgb-u!f)@$gv_=--*=&2kq5btic7+70a60_#&m&pr=*9%kll")
+# Os ajustes de produção vêm do ambiente — na VPS o systemd carrega
+# /etc/apex-reports/env (ver deploy/deploy.sh). O padrão daqui é PRODUÇÃO, não
+# desenvolvimento: um env faltando ou uma variável apagada à mão derruba a
+# aplicação em vez de publicá-la com DEBUG ligado e a chave que está no
+# GitHub. Quem liga o modo de desenvolvimento é o `manage.py`, que é a porta
+# de entrada do dev — `python manage.py runserver` sem nenhuma variável
+# continua funcionando como antes.
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get("DJANGO_DEBUG", "1").strip().lower() not in ("0", "false", "no")
+# Só os valores conhecidos ligam: variável vazia ou com lixo cai em desligado,
+# que é o lado seguro de errar.
+DEBUG = os.environ.get("DJANGO_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
 
-# Em produção recebe o IP da VPS; sem a variável, aceita qualquer host (dev).
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "").strip()
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY não definida. Em produção ela vem de "
+            "/etc/apex-reports/env, que o deploy/deploy.sh escreve — rode o "
+            "deploy de novo se o arquivo se perdeu. Não há chave embutida "
+            "para cair: uma chave no repositório é uma chave pública."
+        )
+    # Fixa, e não sorteada a cada import, para a sessão sobreviver ao reload do
+    # runserver — o fluxo de duas etapas morreria a cada arquivo salvo.
+    SECRET_KEY = "django-insecure-somente-para-desenvolvimento-local"
+
+# Em produção recebe o IP da VPS. Sem a variável ficam só os endereços locais:
+# publicar sem informá-la devolve 400 em vez de atender por qualquer nome.
 ALLOWED_HOSTS = [h.strip() for h in
-                 os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
+                 os.environ.get("DJANGO_ALLOWED_HOSTS",
+                                "localhost,127.0.0.1").split(",") if h.strip()]
 
 # Subcaminho em que a aplicação é publicada (ex.: /apex-reports). O nginx tira o
 # prefixo antes de repassar, então é daqui que o Django aprende a recolocá-lo em

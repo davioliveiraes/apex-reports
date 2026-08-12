@@ -7,6 +7,14 @@ import sys
 def main():
     """Run administrative tasks."""
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'apex_reports.settings')
+    # Este arquivo é a porta de entrada do DESENVOLVIMENTO — produção sobe por
+    # `gunicorn apex_reports.wsgi`, que nunca passa por aqui. Por isso é aqui
+    # que o modo de desenvolvimento é ligado, e não no settings: lá o padrão é
+    # produção, para que um env faltando derrube a aplicação em vez de a
+    # publicar com DEBUG e a chave de exemplo. `setdefault` e não atribuição —
+    # o deploy chama `manage.py migrate` com as variáveis de produção
+    # explícitas, e são elas que valem.
+    os.environ.setdefault('DJANGO_DEBUG', '1')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
