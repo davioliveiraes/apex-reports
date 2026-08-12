@@ -11,3 +11,7 @@ docs/*
 docs/CONTEXTO.md
 venv
 staticfiles/
+# Allowlist de permissões do Claude Code, gravada por máquina. Só o
+# `.local.json`: um `.claude/settings.json` de projeto, se um dia existir, é
+# config compartilhada e deve ser versionada.
+.claude/settings.local.json
