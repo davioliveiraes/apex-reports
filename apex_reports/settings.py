@@ -66,13 +66,17 @@ if FORCE_SCRIPT_NAME:
 
 # Application definition
 
+# Só o que a aplicação usa de fato. Saíram as baterias que vieram do
+# `startproject` e nunca foram ligadas: `admin` (nenhum modelo para
+# administrar — ver apex_reports/urls.py), `auth` e `contenttypes` (a
+# aplicação não tem login próprio; quem barra o acesso é o basic auth do
+# nginx) e `messages` (nenhum template lê a fila). Cada uma trazia tabela,
+# middleware e processador de contexto para não fazer nada.
+#
+# `sessions` fica: é ela que liga a etapa de importação à de revisão, e é o
+# único motivo de existir banco aqui — `migrate` continua obrigatório.
 INSTALLED_APPS = [
-    # Sem `django.contrib.admin`: nenhum modelo para administrar e nenhuma
-    # rota que o publique (ver apex_reports/urls.py).
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
     'django.contrib.sessions',
-    'django.contrib.messages',
     'django.contrib.staticfiles',
     'relatorios',
 ]
@@ -82,8 +86,6 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
@@ -97,8 +99,6 @@ TEMPLATES = [
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
             ],
         },
     },
@@ -118,23 +118,9 @@ DATABASES = {
 }
 
 
-# Password validation
-# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
-
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
-]
+# Sem AUTH_PASSWORD_VALIDATORS: não há senha que a aplicação valide — ela não
+# tem cadastro nem login. A senha do painel é a do basic auth do nginx, criada
+# pelo `htpasswd` no deploy/deploy.sh.
 
 
 # Internationalization

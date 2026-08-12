@@ -2003,7 +2003,7 @@ class AmbienteDeProducaoTest(SimpleTestCase):
         self.assertEqual(lidas - escritas, set())
 
 
-class SuperficieExpostaTest(SimpleTestCase):
+class SuperficieExpostaTest(TestCase):
     """
     A aplicação publica duas rotas, e nada mais.
 
@@ -2020,3 +2020,21 @@ class SuperficieExpostaTest(SimpleTestCase):
         from apex_reports.urls import urlpatterns
         self.assertEqual([str(p.pattern) for p in urlpatterns],
                          ["", "revisao/"])
+
+    def test_so_ficam_instalados_os_apps_usados(self):
+        """`auth`, `contenttypes` e `messages` vieram do `startproject` e nunca
+        foram ligados: nenhum login, nenhum modelo, nenhum template lendo a
+        fila de mensagens. Traziam tabela e middleware para não fazer nada."""
+        from django.conf import settings
+        self.assertEqual(list(settings.INSTALLED_APPS), [
+            "django.contrib.sessions",
+            "django.contrib.staticfiles",
+            "relatorios",
+        ])
+
+    def test_o_banco_existe_so_para_a_sessao(self):
+        """Um `migrate` num banco novo cria só a tabela de sessão (mais o
+        controle de migrações do próprio Django)."""
+        from django.db import connection
+        self.assertEqual(sorted(connection.introspection.table_names()),
+                         ["django_migrations", "django_session"])

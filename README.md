@@ -240,4 +240,9 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   runserver` continua não precisando de variável nenhuma.
 - A aplicação não tem modelos próprios, mas a sessão que liga a importação à
   tela de revisão é gravada no banco — `migrate` é obrigatório também em
-  produção.
+  produção. Do Django ficam instalados só `sessions` e `staticfiles`: `admin`,
+  `auth`, `contenttypes` e `messages` vieram do `startproject` e nunca foram
+  usados (não há login próprio nem modelo nenhum). Num banco novo o `migrate`
+  passa a criar só `django_session`; nos bancos que já existem as tabelas
+  antigas continuam lá, sem efeito — o `migrate` passa por elas sem tocar em
+  nada.
