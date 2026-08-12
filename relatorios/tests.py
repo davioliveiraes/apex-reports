@@ -2001,3 +2001,22 @@ class AmbienteDeProducaoTest(SimpleTestCase):
         escritas = variaveis("deploy/deploy.sh")
         self.assertTrue(lidas, "nenhuma variável encontrada no settings")
         self.assertEqual(lidas - escritas, set())
+
+
+class SuperficieExpostaTest(SimpleTestCase):
+    """
+    A aplicação publica duas rotas, e nada mais.
+
+    O `/admin` do projeto recém-criado sobreviveu até aqui sem ter o que
+    administrar — não existe um único modelo. Na prática era um segundo
+    formulário de login exposto em HTTP puro: sem domínio não há HTTPS, e quem
+    protege o acesso é o basic auth do nginx.
+    """
+
+    def test_admin_nao_existe(self):
+        self.assertEqual(self.client.get("/admin/").status_code, 404)
+
+    def test_as_rotas_publicadas_sao_so_estas(self):
+        from apex_reports.urls import urlpatterns
+        self.assertEqual([str(p.pattern) for p in urlpatterns],
+                         ["", "revisao/"])

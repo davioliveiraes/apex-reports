@@ -15,7 +15,11 @@ BRANCH ?= main
 VPS    ?= deploy@$(IP)
 DIR    ?= ~/apex-reports
 
-PY := venv/bin/python
+# O interpretador do venv muda de lugar conforme o sistema: `Scripts/python.exe`
+# no Windows, `bin/python` no Linux e no macOS. Sem venv nenhum, cai no python3
+# do PATH — assim `make teste` não morre com "No such file or directory" numa
+# máquina recém-clonada, e sim com o erro de dependência, que diz o que fazer.
+PY := $(firstword $(wildcard venv/Scripts/python.exe venv/bin/python) python3)
 DEPLOY := sudo deploy/deploy.sh --ip $(IP) --repo $(REPO) --branch $(BRANCH)
 
 .DEFAULT_GOAL := ajuda

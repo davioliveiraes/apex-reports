@@ -103,7 +103,10 @@ sudo ~/apex-reports/deploy/deploy.sh --senha 'x'  # troca a senha do painel
 sudo journalctl -u apex-reports -f                # logs
 ```
 Sem domínio não há HTTPS: o tráfego trafega em texto puro entre o navegador e a
-VPS. A senha do nginx impede o uso por terceiros, mas não criptografa.
+VPS. A senha do nginx impede o uso por terceiros, mas não criptografa. Por isso
+a aplicação também não publica o `/admin` do Django: ela não tem modelo nenhum
+para administrar, e o painel seria um segundo formulário de login trafegando em
+texto puro.
 
 O subcaminho `/apex-reports` (mudável com `--caminho`) identifica a aplicação na
 URL e deixa a raiz do IP livre para outra. O nginx tira o prefixo antes de

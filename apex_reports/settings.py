@@ -67,7 +67,8 @@ if FORCE_SCRIPT_NAME:
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    # Sem `django.contrib.admin`: nenhum modelo para administrar e nenhuma
+    # rota que o publique (ver apex_reports/urls.py).
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
