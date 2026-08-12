@@ -227,6 +227,11 @@ def revisao(request):
             return render(request, "relatorios/revisao.html",
                           {"form": form, "dados": dados, "regerado": True})
         if form.is_valid():
+            pendencia = _pendencia_de_contexto(request, dados, form)
+            if pendencia:
+                form, extra = pendencia
+                return render(request, "relatorios/revisao.html",
+                              dict(extra, form=form, dados=dados))
             cd = form.cleaned_data
             relatorio = {
                 "titulo": "Relatório de Tráfego Pago",
@@ -261,6 +266,7 @@ def revisao(request):
 # Contexto do período — regeração da análise sem reenviar o anexo
 # ----------------------------------------------------------------------
 CAMPO_REGERAR = "regerar"
+CAMPO_ASSIM_MESMO = "gerar_assim_mesmo"
 
 
 def _regerando(request):
@@ -273,21 +279,72 @@ def _inicial_contexto(dados):
     return dict(guardado, meta_cpa=dados.get("_meta_cpa"))
 
 
+def _guardar(request, dados):
+    request.session[SESSION_KEY] = dados
+    request.session.modified = True
+
+
+def _aplicar_contexto(dados, form):
+    """Grava em `dados` o contexto e a meta do formulário; devolve o par.
+
+    Guardar mesmo quando a análise não vai ser recalculada é o que permite ao
+    operador ajustar um campo de cada vez sem perder os anteriores.
+    """
+    meta = form.cleaned_data.get("meta_cpa")
+    dados["_contexto"] = form.contexto()
+    dados["_meta_cpa"] = float(meta) if meta else None
+    return dados["_contexto"], dados["_meta_cpa"]
+
+
+def _pendencia_de_contexto(request, dados, form):
+    """O que o operador informou e ainda não entrou na análise.
+
+    O bloco "Contexto do período" só é aplicado pelo botão *Regerar análise*.
+    Quem preenche a meta de custo por resultado e vai direto ao *Gerar PDF*
+    receberia o relatório medido contra a faixa estimada do perfil, com o campo
+    preenchido na tela e nada avisando que ele não valeu — e a meta é
+    justamente a referência de MAIOR precedência do motor.
+
+    Aqui o PDF é segurado e a tela volta dizendo o que falta. Recalcular e
+    entregar o PDF na mesma resposta seria pior que o problema: o cliente
+    receberia um texto que o operador nunca leu.
+
+    Devolve `None` quando não há pendência — o caminho comum — ou o par
+    `(form a renderizar, contexto extra do template)`.
+    """
+    if CAMPO_ASSIM_MESMO in request.POST:
+        # Decisão explícita: vale o texto que está na tela. O contexto fica
+        # guardado assim mesmo, para uma regeração posterior não recomeçar.
+        _aplicar_contexto(dados, form)
+        _guardar(request, dados)
+        return None
+
+    meta = form.cleaned_data.get("meta_cpa")
+    if (form.contexto() == (dados.get("_contexto") or {})
+            and (float(meta) if meta else None) == dados.get("_meta_cpa")):
+        return None
+
+    if (_paragrafos(form.cleaned_data.get("analise") or "")
+            != _paragrafos(dados.get("analise_sugerida") or "")):
+        # Texto editado à mão: recalcular apagaria o trabalho do operador, e
+        # essa escolha é dele. O form segue como veio, com a edição intacta.
+        return form, {"contexto_ignorado": True}
+
+    # Texto ainda é o que o motor escreveu: recalcular não custa nada a
+    # ninguém, e é o que o operador quis dizer ao preencher os campos.
+    return _regerar(request, dados, form), {"regerado": True,
+                                            "contexto_aplicado_agora": True}
+
+
 def _regerar(request, dados, form):
     """Recalcula a análise com o contexto informado e devolve o form novo.
 
     O textarea volta com o texto recalculado; todo o resto do formulário volta
-    como estava. O contexto fica na sessão para sobreviver ao próximo POST — é
-    o que permite ao operador ajustar um campo de cada vez sem perder os
-    anteriores.
+    como estava.
     """
-    contexto = form.contexto()
-    meta = form.cleaned_data.get("meta_cpa")
-    dados["_contexto"] = contexto
-    dados["_meta_cpa"] = float(meta) if meta else None
-    regerar_analise(dados, meta_cpa=dados["_meta_cpa"], contexto=contexto)
-    request.session[SESSION_KEY] = dados
-    request.session.modified = True
+    contexto, meta = _aplicar_contexto(dados, form)
+    regerar_analise(dados, meta_cpa=meta, contexto=contexto)
+    _guardar(request, dados)
 
     # Um form novo: o `data` de um form já vinculado é imutável, então o texto
     # recalculado entra por `initial` num form não vinculado.
@@ -315,6 +372,12 @@ def _revisao_grupo(request, dados):
                 "pares_unidades": list(zip(unidades, form.campos_unidades())),
             })
         if form.is_valid():
+            pendencia = _pendencia_de_contexto(request, dados, form)
+            if pendencia:
+                form, extra = pendencia
+                return render(request, "relatorios/revisao.html", dict(
+                    extra, form=form, dados=dados, modo_grupo=True,
+                    pares_unidades=list(zip(unidades, form.campos_unidades()))))
             cd = form.cleaned_data
             nomes_finais = form.nomes_finais(nomes)
             for u, nome in zip(unidades, nomes_finais):

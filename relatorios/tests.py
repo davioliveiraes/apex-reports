@@ -629,8 +629,12 @@ class ContextoDoPeriodoTest(TestCase):
         self._importar()
         _r, dados = self._regerar(problema="problema_atendimento",
                                   situacao="problema_aberto")
+        # O navegador reenvia o bloco de contexto junto: são os mesmos campos
+        # da tela. Omiti-los aqui seria dizer que o operador os apagou — ver
+        # ContextoNaoAplicadoTest.
         r = self.client.post("/revisao/", {
             "cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
+            "problema": "problema_atendimento", "situacao": "problema_aberto",
             "analise": dados["analise_sugerida"].replace("\n", "\r\n")})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("atendimento aos contatos", texto)
@@ -660,6 +664,119 @@ class ContextoDoPeriodoTest(TestCase):
                       dados["analise_sugerida"])
         # Nomes das unidades preservados na regeração.
         self.assertIn("Praça A", r.content.decode())
+
+
+class ContextoNaoAplicadoTest(TestCase):
+    """
+    Contexto e meta preenchidos com o operador clicando direto em *Gerar PDF*.
+
+    O bloco só era aplicado pelo botão *Regerar análise*: quem preenchia a meta
+    de custo por resultado e ia direto ao PDF recebia o relatório medido contra
+    a faixa estimada do perfil, com o campo preenchido na tela e nada avisando.
+    Agora o PDF é segurado até a análise refletir o que foi informado — ou até
+    o operador dizer que é o texto dele que vale.
+    """
+
+    def _importar(self):
+        f = _arquivo("e.xlsx", ContextoDoPeriodoTest.ELIX,
+                     inicio="2026-07-31", fim="2026-08-06")
+        self.client.post("/", {"cliente": "Elix", "arquivos": [f]})
+        return self.client.session["relatorio_apex"]
+
+    def _gerar(self, analise, **campos):
+        """POST de *Gerar PDF* — sem `regerar`, como o botão do aside envia."""
+        base = {"cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
+                "analise": analise.replace("\n", "\r\n")}
+        base.update(campos)
+        return self.client.post("/revisao/", base)
+
+    def _sessao(self):
+        return self.client.session["relatorio_apex"]
+
+    def test_sem_contexto_o_pdf_sai_no_primeiro_clique(self):
+        dados = self._importar()
+        r = self._gerar(dados["analise_sugerida"])
+        self.assertEqual(_paginas(_bytes_pdf(r)), 1)
+
+    def test_meta_informada_segura_o_pdf_e_recalcula(self):
+        antes = self._importar()["analise_sugerida"]
+        r = self._gerar(antes, meta_cpa="30,00")
+
+        # Voltou a tela, não o arquivo.
+        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
+        dados = self._sessao()
+        self.assertEqual(dados["_meta_cpa"], 30.0)
+        self.assertEqual(dados["avaliacao"]["referencia"], "meta")
+        self.assertNotEqual(dados["analise_sugerida"], antes)
+        # E o texto novo está à vista, com o aviso do que aconteceu.
+        html = r.content.decode()
+        self.assertIn("meta combinada", html)
+        self.assertIn("acaba de ser recalculado", html)
+
+    def test_segundo_clique_gera_o_pdf(self):
+        self._importar()
+        self._gerar(self._sessao()["analise_sugerida"], meta_cpa="30,00")
+        r = self._gerar(self._sessao()["analise_sugerida"], meta_cpa="30,00")
+        self.assertIn("meta combinada", _texto_pdf(_bytes_pdf(r)))
+
+    def test_texto_editado_a_mao_nao_e_sobrescrito(self):
+        original = self._importar()["analise_sugerida"]
+        r = self._gerar("Texto que eu mesmo escrevi.", meta_cpa="30,00")
+
+        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
+        html = r.content.decode()
+        self.assertIn("Texto que eu mesmo escrevi.", html)
+        self.assertIn("gerar_assim_mesmo", html)
+        # A análise do motor continua a de antes: a edição não virou sugestão,
+        # e a meta ainda não foi aplicada.
+        self.assertEqual(self._sessao()["analise_sugerida"], original)
+
+    def test_gerar_assim_mesmo_sai_com_o_texto_do_operador(self):
+        self._importar()
+        r = self._gerar("Texto que eu mesmo escrevi.", meta_cpa="30,00",
+                        gerar_assim_mesmo="1")
+        self.assertIn("Texto que eu mesmo escrevi.", _texto_pdf(_bytes_pdf(r)))
+        # A meta fica guardada mesmo sem ter sido aplicada: regerar depois não
+        # obriga a digitar tudo de novo.
+        self.assertEqual(self._sessao()["_meta_cpa"], 30.0)
+
+    def test_contexto_apagado_tambem_segura_o_pdf(self):
+        """Tirar a meta é mudança como qualquer outra — a análise ainda cita
+        uma meta que o operador acabou de apagar."""
+        self._importar()
+        self.client.post("/revisao/", {
+            "cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
+            "analise": "x", "regerar": "1", "meta_cpa": "30,00"})
+        self.assertEqual(self._sessao()["_meta_cpa"], 30.0)
+
+        r = self._gerar(self._sessao()["analise_sugerida"])
+        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
+        dados = self._sessao()
+        self.assertIsNone(dados["_meta_cpa"])
+        self.assertEqual(dados["avaliacao"]["referencia"], "perfil")
+
+    def test_consolidado_segura_o_pdf_do_mesmo_jeito(self):
+        arquivos = [
+            _arquivo("a.xlsx", [{"nome": "CA", "res": 50, "inv": 100.0,
+                                 "imp": 5000, "alc": 4000}]),
+            _arquivo("b.xlsx", [{"nome": "CB", "res": 10, "inv": 200.0,
+                                 "imp": 5000, "alc": 4000}]),
+        ]
+        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        analise = self._sessao()["analise_sugerida"]
+
+        r = self.client.post("/revisao/", {
+            "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
+            "analise": analise.replace("\n", "\r\n"),
+            "unidade_0": "Praça A", "unidade_1": "Praça B",
+            "problema": "problema_estoque", "situacao": "problema_aberto"})
+
+        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
+        html = r.content.decode()
+        self.assertIn("acaba de ser recalculado", html)
+        # Os nomes das unidades sobrevivem à volta para a tela.
+        self.assertIn("Praça A", html)
+        self.assertIn("disponibilidade de estoque", self._sessao()["analise_sugerida"])
 
 
 class ColunaDeInvestimentoTest(TestCase):

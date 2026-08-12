@@ -213,10 +213,14 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   mudou (criativos, público, captação, orçamento), problema operacional e sua
   situação, meta de custo por resultado e próximo passo — tudo opcional. O
   botão *Regerar análise* recalcula o texto sem reenviar o anexo, e o contexto
-  fica na sessão. As opções vivem em `analysis/contexto.py`, fonte única do
-  formulário e do motor; nenhuma delas muda a classificação, que continua
-  sendo do CPA. Com tudo vazio a saída é idêntica à de antes de os campos
-  existirem.
+  fica na sessão. Preencher e ir direto ao *Gerar PDF* **não** perde o que foi
+  informado: o relatório é segurado e a tela volta com a análise recalculada,
+  para o operador ler antes de mandá-la ao cliente. Se o texto tiver sido
+  editado à mão, nada é sobrescrito — a tela pergunta, e *Gerar assim mesmo*
+  mantém o que o operador escreveu. As opções vivem em `analysis/contexto.py`,
+  fonte única do formulário e do motor; nenhuma delas muda a classificação,
+  que continua sendo do CPA. Com tudo vazio a saída é idêntica à de antes de
+  os campos existirem.
 - A prévia da revisão de listagem/indicador é montada pelas mesmas funções
   que alimentam o PDF (`gerador_listagem.linha_conta`,
   `gerador_indicador.montar_tabela`) — o que se confere na tela é o que sai

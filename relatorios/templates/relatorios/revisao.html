@@ -24,6 +24,23 @@
 {% if dados.aviso_indicador %}<div class="aviso">{{ dados.aviso_indicador }}</div>{% endif %}
 
 {# ------------------------------------------------------------------ #}
+{# Contexto informado que ainda não tinha entrado na análise           #}
+{# ------------------------------------------------------------------ #}
+{% if contexto_aplicado_agora %}
+<div class="aviso"><div>O que você informou em <b>Contexto do período</b> ainda
+  não estava na análise — o texto abaixo acaba de ser recalculado com esses
+  campos. Confira e clique em <b>Gerar PDF</b>.</div></div>
+{% elif contexto_ignorado %}
+<div class="aviso"><div>O que você informou em <b>Contexto do período</b> não
+  está na análise abaixo, que foi editada à mão. <b>Regerar análise</b>
+  reescreve o texto com esses campos e descarta a edição — ou gere o PDF com o
+  texto como está.
+  <button class="botao botao-sec" type="submit" name="gerar_assim_mesmo" value="1">
+    Gerar assim mesmo
+  </button></div></div>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
 {# 01 — o que foi lido dos anexos                                      #}
 {# ------------------------------------------------------------------ #}
 <div class="bloco">
@@ -204,7 +221,9 @@
   <span class="bloco-meta">opcional</span>
 </div>
 <p class="legenda">Tudo opcional. O que for informado entra na análise ao
-  clicar em <b>Regerar análise</b> — o texto continua editável depois.</p>
+  clicar em <b>Regerar análise</b> — o texto continua editável depois. Ir
+  direto ao <b>Gerar PDF</b> não perde o que está aqui: o relatório é segurado
+  até a análise refletir estes campos.</p>
 <div class="campos">
   <div class="campo">
     <label for="{{ form.mudanca.id_for_label }}">{{ form.mudanca.label }}</label>
