@@ -168,12 +168,19 @@ passo "Configuração do Django"
 # A chave da OpenAI é digitada à mão no env (o deploy não tem como gerá-la) e
 # este bloco reescreve o arquivo inteiro — sem relê-la antes, toda publicação
 # apagaria a chave e o botão de análise por IA sumiria da tela sem explicação.
+#
+# `tail -1` porque a linha pode estar repetida: quem acrescenta a chave com
+# `>>` fica com a linha vazia que este script escreveu MAIS a preenchida. O
+# systemd usa a última e funciona; aqui, sem o tail, as duas viriam juntas e o
+# valor multilinha quebraria o arquivo na publicação seguinte.
+valor_do_env() { sed -n "s/^$1=//p" "$AMBIENTE" | tail -1; }
+
 IA_CHAVE=""
 IA_MODELO=""
 if [[ -f "$AMBIENTE" ]]; then
-  SEGREDO=$(sed -n 's/^DJANGO_SECRET_KEY=//p' "$AMBIENTE")
-  IA_CHAVE=$(sed -n 's/^OPENAI_API_KEY=//p' "$AMBIENTE")
-  IA_MODELO=$(sed -n 's/^OPENAI_MODEL=//p' "$AMBIENTE")
+  SEGREDO=$(valor_do_env DJANGO_SECRET_KEY)
+  IA_CHAVE=$(valor_do_env OPENAI_API_KEY)
+  IA_MODELO=$(valor_do_env OPENAI_MODEL)
 else
   # token_urlsafe em vez do gerador do Django: o EnvironmentFile do systemd não
   # interpreta aspas nem escapes, e o alfabeto do Django tem $ # & ( ).
