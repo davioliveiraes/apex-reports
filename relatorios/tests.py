@@ -846,6 +846,73 @@ class AnalisePorIATest(TestCase):
             with self.assertRaises(redator_ia.ErroDeIA) as e:
                 redator_ia.gerar({})
         self.assertIn("OPENAI_API_KEY", str(e.exception))
+        self.assertEqual(e.exception.motivo, "chave")
+
+    def test_credito_acabado_vira_aviso_proprio_e_tira_o_botao(self):
+        """O caso que motivou a classificação: saldo zerado.
+
+        Um 429 genérico convidaria a clicar de novo; sem crédito, clicar de
+        novo é gastar o tempo do operador para receber o mesmo erro.
+        """
+        self._importar()
+        r, _dados, _ = self._pedir(resposta=redator_ia.ErroDeIA(
+            "Os créditos da IA acabaram.", "credito"))
+
+        html = r.content.decode()
+        self.assertIn("créditos da IA acabaram", html)
+        self.assertIn('class="erro"', html)          # vermelho, não amarelo
+        self.assertNotIn('name="analise_ia"', html)  # e sem botão para repetir
+
+    def test_falha_passageira_mantem_o_botao_na_tela(self):
+        """O oposto do teste acima: rede caiu, clicar de novo resolve."""
+        self._importar()
+        r, _dados, _ = self._pedir(resposta=redator_ia.ErroDeIA(
+            "A OpenAI não respondeu em 90 segundos.", "rede"))
+
+        html = r.content.decode()
+        self.assertIn('class="aviso"', html)
+        self.assertIn('name="analise_ia"', html)
+
+    # ---- de que a SDK falhou para o que a tela diz ----
+    def _erro_da_sdk(self, status=None, code=None, classe="APIStatusError"):
+        """Imita o erro que a SDK levanta: status HTTP e `code` no corpo."""
+        e = type(classe, (Exception,), {})("Error code: %s" % status)
+        e.status_code = status
+        if code:
+            e.body = {"error": {"code": code, "type": "insufficient_quota"}}
+        return e
+
+    def test_credito_e_excesso_de_chamadas_nao_se_confundem(self):
+        """Os dois chegam como HTTP 429; só o `code` separa um do outro."""
+        motivo, msg = redator_ia._classificar(
+            self._erro_da_sdk(429, "insufficient_quota"))
+        self.assertEqual(motivo, "credito")
+        self.assertIn("créditos", msg)
+
+        motivo, msg = redator_ia._classificar(
+            self._erro_da_sdk(429, "rate_limit_exceeded"))
+        self.assertEqual(motivo, "limite")
+        self.assertNotIn("créditos", msg)
+
+    def test_chave_modelo_rede_e_desconhecido_saem_classificados(self):
+        casos = [
+            (self._erro_da_sdk(401, "invalid_api_key"), "chave", "OPENAI_API_KEY"),
+            (self._erro_da_sdk(404, "model_not_found"), "modelo", "modelo-de-teste"),
+            (self._erro_da_sdk(500), "servico", "instabilidade"),
+            (self._erro_da_sdk(classe="APITimeoutError"), "rede", "90 segundos"),
+            (ValueError("coisa nunca vista"), "desconhecido", "coisa nunca vista"),
+        ]
+        for erro, esperado, trecho in casos:
+            with self.subTest(motivo=esperado):
+                motivo, msg = redator_ia._classificar(erro)
+                self.assertEqual(motivo, esperado)
+                self.assertIn(trecho, msg)
+
+    def test_o_code_do_atributo_vale_tanto_quanto_o_do_corpo(self):
+        """Versões da SDK diferem em preencher `.code`; o corpo é o fallback."""
+        e = self._erro_da_sdk(429)
+        e.code = "insufficient_quota"
+        self.assertEqual(redator_ia._classificar(e)[0], "credito")
 
     # ---- consolidado ----
     def test_consolidado_manda_as_unidades_e_aceita_o_texto(self):

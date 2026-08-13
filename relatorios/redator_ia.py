@@ -39,7 +39,21 @@ MAX_TOKENS = 4000
 
 
 class ErroDeIA(RuntimeError):
-    """Falha que o operador precisa ler na tela, já em português."""
+    """Falha que o operador precisa ler na tela, já em português.
+
+    `motivo` é o que a tela usa para decidir o tom do aviso e se ainda vale
+    oferecer o botão — ver `DEFINITIVOS`.
+    """
+
+    def __init__(self, mensagem, motivo="desconhecido"):
+        super().__init__(mensagem)
+        self.motivo = motivo
+
+
+# Motivos em que clicar de novo dá exatamente o mesmo erro: não é a rede nem o
+# momento, é a conta. A tela pinta o aviso de vermelho e esconde o botão, em
+# vez de convidar o operador a repetir uma chamada que já se sabe perdida.
+DEFINITIVOS = ("credito", "chave", "modelo")
 
 
 # ----------------------------------------------------------------------
@@ -352,6 +366,71 @@ def disponivel():
     return bool(getattr(settings, "OPENAI_API_KEY", ""))
 
 
+def _codigo_do_erro(e):
+    """O `code` que a OpenAI manda junto do erro — `insufficient_quota`,
+    `model_not_found`, `invalid_api_key`.
+
+    A SDK expõe em `.code`, mas nem sempre o preenche (erros de conexão não
+    têm corpo nenhum); o corpo cru é a fonte que não varia.
+    """
+    codigo = getattr(e, "code", None)
+    if codigo:
+        return codigo
+    corpo = getattr(e, "body", None)
+    if isinstance(corpo, dict) and isinstance(corpo.get("error"), dict):
+        return corpo["error"].get("code") or ""
+    return ""
+
+
+def _classificar(e):
+    """`(motivo, mensagem em português)` para a exceção que a SDK levantou.
+
+    O caso que interessa é o crédito, e ele não se distingue pelo status:
+    saldo zerado e excesso de chamadas chegam os dois como HTTP 429. O que
+    separa um do outro é o `code` — `insufficient_quota` contra
+    `rate_limit_exceeded`. Um pede recarga, o outro pede quinze segundos.
+    """
+    codigo = _codigo_do_erro(e)
+    status = getattr(e, "status_code", None)
+    classe = type(e).__name__
+
+    if codigo == "insufficient_quota":
+        return "credito", (
+            "Os créditos da IA acabaram — a OpenAI recusou a chamada por "
+            "saldo. Recarregue em platform.openai.com/settings/organization/"
+            "billing; enquanto isso o relatório sai normalmente com o texto "
+            "do motor de regras.")
+    if status == 429:
+        return "limite", (
+            "A OpenAI recusou por excesso de chamadas neste momento. Espere "
+            "alguns segundos e clique de novo.")
+    if status == 401 or codigo in ("invalid_api_key", "invalid_request_error"):
+        return "chave", (
+            "A OpenAI recusou a chave configurada. Confira o OPENAI_API_KEY "
+            "do ambiente (em produção, /etc/apex-reports/env) — se ela foi "
+            "revogada ou trocada no painel, é preciso colar a nova e "
+            "reiniciar o serviço.")
+    if codigo == "model_not_found" or status == 404:
+        return "modelo", (
+            f"O modelo {settings.OPENAI_MODEL} não existe ou não está "
+            "liberado para esta chave. Corrija o OPENAI_MODEL do ambiente e "
+            "reinicie o serviço.")
+    # Sem `openai` importado aqui não dá para usar `isinstance`; o nome da
+    # classe é o que a SDK garante em todas as versões da linha 1.x.
+    if classe in ("APITimeoutError", "APIConnectionError"):
+        return "rede", (
+            f"A OpenAI não respondeu em {TIMEOUT} segundos. Pode ser a rede "
+            "do servidor ou instabilidade do serviço; clique de novo.")
+    if status is not None and status >= 500:
+        return "servico", (
+            "A OpenAI está com instabilidade no momento (erro do lado "
+            "deles). Clique de novo em alguns instantes.")
+    # Nada reconhecido: a mensagem da SDK é técnica e em inglês, mas some
+    # junto com o erro se não for mostrada — e é a única pista que resta.
+    return "desconhecido", (
+        f"A chamada ao modelo {settings.OPENAI_MODEL} falhou: {e}")
+
+
 def _chamar(mensagens):
     """A única função deste projeto que faz I/O de rede.
 
@@ -362,7 +441,7 @@ def _chamar(mensagens):
         from openai import OpenAI
     except ImportError:                                  # pragma: no cover
         raise ErroDeIA("O pacote `openai` não está instalado neste ambiente — "
-                       "rode `pip install -r requirements.txt`.")
+                       "rode `pip install -r requirements.txt`.", "instalacao")
 
     cliente = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=TIMEOUT,
                      max_retries=1)
@@ -373,17 +452,15 @@ def _chamar(mensagens):
             max_completion_tokens=MAX_TOKENS,
         )
     except Exception as e:
-        # A mensagem da SDK é em inglês e técnica, mas some junto com o erro se
-        # não for mostrada — e é ela que diz se foi chave, crédito ou modelo.
-        raise ErroDeIA(
-            f"A chamada ao modelo {settings.OPENAI_MODEL} falhou: {e}") from e
+        motivo, mensagem = _classificar(e)
+        raise ErroDeIA(mensagem, motivo) from e
 
     texto = (resposta.choices[0].message.content or "").strip()
     if not texto:
         raise ErroDeIA(
             f"O modelo {settings.OPENAI_MODEL} respondeu vazio. Tente de novo; "
             "persistindo, confira se o modelo configurado em OPENAI_MODEL "
-            "existe na sua conta.")
+            "existe na sua conta.", "vazio")
     return texto
 
 
@@ -394,7 +471,8 @@ def gerar(dados):
     """
     if not disponivel():
         raise ErroDeIA("Nenhuma chave de API configurada: defina OPENAI_API_KEY "
-                       "no ambiente (em produção, /etc/apex-reports/env).")
+                       "no ambiente (em produção, /etc/apex-reports/env).",
+                       "chave")
     return _chamar([
         {"role": "system", "content": PROMPT_OPERADOR + REGRAS_DE_ENTRADA},
         {"role": "user", "content": json.dumps(montar_payload(dados),

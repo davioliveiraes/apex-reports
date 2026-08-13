@@ -288,7 +288,13 @@ def _analisar_com_ia(request, dados, form):
     try:
         bruto = redator_ia.gerar(dados)
     except redator_ia.ErroDeIA as e:
-        return form, {"erro_ia": str(e), "ia_disponivel": redator_ia.disponivel()}
+        # Crédito acabado, chave recusada, modelo inexistente: o botão sai da
+        # tela junto com o aviso. Continuar oferecendo um clique que já se sabe
+        # perdido é pior do que não oferecer nenhum.
+        definitivo = e.motivo in redator_ia.DEFINITIVOS
+        return form, {"erro_ia": str(e),
+                      "erro_ia_definitivo": definitivo,
+                      "ia_disponivel": redator_ia.disponivel() and not definitivo}
 
     limite = (templates_analise.LIMITE_PDF_GRUPO if dados.get("modo") == "grupo"
               else templates_analise.LIMITE_PDF)

@@ -27,7 +27,10 @@
 {# Resultado da última chamada à IA                                    #}
 {# ------------------------------------------------------------------ #}
 {% if erro_ia %}
-<div class="aviso"><div><b>A análise por IA não foi gerada.</b> {{ erro_ia }}
+{# Vermelho quando clicar de novo não adianta (crédito, chave, modelo): é #}
+{# coisa de conta, não do momento. Amarelo quando vale tentar outra vez.  #}
+<div class="{% if erro_ia_definitivo %}erro{% else %}aviso{% endif %}">
+  <div><b>A análise por IA não foi gerada.</b> {{ erro_ia }}
   O texto abaixo não foi tocado — dá para gerar o PDF com ele do mesmo
   jeito.</div></div>
 {% elif analise_ia_gerada %}
