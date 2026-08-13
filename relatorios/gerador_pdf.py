@@ -29,17 +29,29 @@ from django.template.loader import render_to_string
 from weasyprint import HTML
 
 VERMELHO = "#D8232A"
-# Tons de cinza das fatias secundárias (o vermelho é do destaque)
-CINZAS = ["#8A8F98", "#5F646D", "#4A4E56", "#383C43", "#2E3138",
-          "#A6ABB3", "#71767F", "#555A62"]
+# Extremos da escala de cinza das fatias secundárias (o vermelho é do
+# destaque). A escala é gerada no tamanho exato do donut em vez de vir de uma
+# lista fixa: sem agrupar em "Outras", um consolidado de 20 unidades tem 20
+# fatias, e uma paleta que se repete deixa duas linhas da legenda com a mesma
+# cor — ambíguo justamente onde a legenda existe para desambiguar.
+CINZA_CLARO = (0xA6, 0xAB, 0xB3)
+CINZA_ESCURO = (0x2E, 0x31, 0x38)
 
 LOGO_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "docs", "img", "logo_apex.png",
 )
 
-MAX_LINHAS_CAMPANHA = 5   # acima disso: 4 maiores + "Outras (N)"
-MIN_SHARE_FATIA = 3.0     # fatias menores que 3% agrupam em "Outras"
+# Até esta quantidade de campanhas, tabela e donut convivem lado a lado; acima
+# a tabela ficaria estreita demais e — pior — a seção vira um bloco alto que o
+# WeasyPrint não parte, empurrando tudo para a página seguinte e deixando meia
+# página em branco. Empilhados, a tabela quebra entre linhas e a página enche.
+MAX_LINHAS_LADO_A_LADO = 6
+
+# Abaixo deste share, a fatia continua desenhada mas sem o rótulo de % dentro
+# dela: em fatia fina o número sai por cima do vizinho e vira borrão. O dado
+# não se perde — está na tabela ao lado, e na legenda no consolidado.
+MIN_SHARE_ROTULO = 4.0
 
 
 # ----------------------------------------------------------------------
@@ -132,19 +144,19 @@ def _badge_resultados(funil):
 # Seção 2 — tabela de campanhas / fatias do donut
 # ----------------------------------------------------------------------
 def _linhas_campanhas(detalhes):
-    """Linhas da tabela ordenadas por resultados; acima de 5, agrupa em 'Outras'."""
+    """Uma linha por campanha do anexo, ordenadas por resultados.
+
+    **Todas** as campanhas entram, e o relatório ganha página se precisar
+    (12/08/2026). Antes, acima de cinco, as menores viravam uma linha
+    "Outras (N)": a soma fechava, mas o cliente não conseguia ver quanto cada
+    praça custou — que é justamente o que ele quer saber quando o relatório
+    tem uma campanha por cidade.
+    """
     linhas = []
     for nome, res_fmt, inv_fmt, _custo_fmt in detalhes.get("linhas", []):
         linhas.append({"nome": nome, "res": _parse_int(res_fmt),
                        "inv": _parse_moeda(inv_fmt) or 0.0})
     linhas.sort(key=lambda l: -l["res"])
-
-    if len(linhas) > MAX_LINHAS_CAMPANHA:
-        topo, resto = linhas[:MAX_LINHAS_CAMPANHA - 1], linhas[MAX_LINHAS_CAMPANHA - 1:]
-        outras = {"nome": f"Outras ({len(resto)})",
-                  "res": sum(l["res"] for l in resto),
-                  "inv": sum(l["inv"] for l in resto)}
-        linhas = topo + [outras]
 
     total = sum(l["res"] for l in linhas)
     for l in linhas:
@@ -155,22 +167,42 @@ def _linhas_campanhas(detalhes):
     return linhas
 
 
+def _empilhar(tabela):
+    """A tabela é longa demais para conviver com o donut na mesma linha?
+
+    Ver MAX_LINHAS_LADO_A_LADO: não é só estética, é o que decide se a seção
+    consegue atravessar a quebra de página.
+    """
+    return bool(tabela) and len(tabela) > MAX_LINHAS_LADO_A_LADO
+
+
+def _cinzas(quantidade):
+    """`quantidade` tons distintos entre o cinza claro e o escuro.
+
+    Gerada sob medida em vez de ciclar uma lista fixa — ver CINZA_CLARO.
+    """
+    if quantidade <= 1:
+        return ["#8A8F98"]
+    return ["#%02X%02X%02X" % tuple(
+        round(claro + (escuro - claro) * i / (quantidade - 1))
+        for claro, escuro in zip(CINZA_CLARO, CINZA_ESCURO))
+        for i in range(quantidade)]
+
+
 def _fatias(itens, destaque_nome=None):
-    """Fatias do donut a partir de {nome, valor, share}; <3% agrupa em 'Outras'."""
+    """Uma fatia por item de {nome, valor, share} — sem agrupar em 'Outras'.
+
+    Item com valor zero fica de fora: fatia de área nula não é omissão de
+    dado, é fatia invisível. Todo o resto aparece, por menor que seja.
+    """
     itens = sorted([dict(i) for i in itens if (i.get("valor") or 0) > 0],
                    key=lambda i: -i["valor"])
     total = sum(i["valor"] for i in itens)
     if not total or len(itens) < 2:
         return []
-    grandes = [i for i in itens if i["valor"] / total * 100 >= MIN_SHARE_FATIA]
-    pequenas = [i for i in itens if i["valor"] / total * 100 < MIN_SHARE_FATIA]
-    if len(pequenas) == 1:          # sobrando uma só, não vale a pena agrupar
-        grandes, pequenas = itens, []
-    fatias = [dict(i) for i in grandes]
-    if pequenas:
-        fatias.append({"nome": f"Outras ({len(pequenas)})",
-                       "valor": sum(i["valor"] for i in pequenas)})
 
+    fatias = [dict(i) for i in itens]
+    escala = _cinzas(sum(1 for f in fatias if f["nome"] != destaque_nome))
     cinza = 0
     for f in fatias:
         f["share"] = f["valor"] / total * 100
@@ -179,7 +211,7 @@ def _fatias(itens, destaque_nome=None):
         if f["destaque"]:
             f["cor"] = VERMELHO
         else:
-            f["cor"] = CINZAS[cinza % len(CINZAS)]
+            f["cor"] = escala[cinza % len(escala)]
             cinza += 1
     return fatias
 
@@ -191,12 +223,16 @@ def _donut_png(fatias, centro_valor, centro_rotulo):
     cores = [f["cor"] for f in fatias]
     wedges, _textos, autotextos = ax.pie(
         valores, colors=cores, startangle=90, counterclock=False,
-        autopct="%1.0f%%", pctdistance=0.78,
+        # Fatia fina não recebe rótulo: o número sairia por cima do vizinho.
+        autopct=lambda pct: "%1.0f%%" % pct if pct >= MIN_SHARE_ROTULO else "",
+        pctdistance=0.78,
         wedgeprops={"width": 0.42, "edgecolor": "#0B0B0D", "linewidth": 2},
     )
+    # Com muitas fatias o rótulo precisa encolher para caber no anel.
+    corpo = 11 if len(valores) <= 6 else 9 if len(valores) <= 12 else 8
     for t in autotextos:
         t.set_color("white")
-        t.set_fontsize(11)
+        t.set_fontsize(corpo)
         t.set_fontweight("bold")
         t.set_fontfamily("DejaVu Sans")
     ax.text(0, 0.06, centro_valor, ha="center", va="center", color="white",
@@ -266,13 +302,15 @@ def gerar_relatorio(dados: dict, arquivo_saida="relatorio_apex.pdf"):
     else:
         tabela, donut = _secao_campanhas(dados)
 
-    rodape = dados.get(
-        "rodape",
-        "Relatório gerado a partir de dados exportados do Meta Ads Manager.",
-    )
-    legenda_funil = (dados.get("funil") or {}).get("legenda")
-    if modo_grupo and legenda_funil:
-        rodape += " " + legenda_funil
+    # O rodapé é uma margin box do @page, com a altura da margem: cabe uma
+    # linha ou duas, e o que passar disso é CORTADO. Por isso ele leva só a
+    # frase fixa — a lista de unidades do consolidado é conteúdo do documento
+    # (com 20 nomes longos ela sozinha passa de dez linhas) e sai como nota no
+    # fim do fluxo, onde pode ocupar o espaço que precisar.
+    rodape = "Relatório gerado a partir de dados exportados do Meta Ads Manager."
+    notas = [n for n in (dados.get("nota_unidades"),
+                         (dados.get("funil") or {}).get("legenda")
+                         if modo_grupo else None) if n]
 
     contexto = {
         "titulo": dados.get("titulo", "Relatório de Tráfego Pago"),
@@ -284,9 +322,11 @@ def gerar_relatorio(dados: dict, arquivo_saida="relatorio_apex.pdf"):
         "cards": _cards_funil(dados.get("funil")),
         "modo_grupo": modo_grupo,
         "tabela": tabela,
+        "tabela_longa": _empilhar(tabela),
         "donut": donut,
         "analise": dados.get("analise") or [],
         "rodape": rodape,
+        "notas": notas,
     }
     html = render_to_string("relatorios/pdf_relatorio.html", contexto)
     HTML(string=html).write_pdf(arquivo_saida)

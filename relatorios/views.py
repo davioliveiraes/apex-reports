@@ -8,6 +8,8 @@ from datetime import date, datetime
 from django.http import FileResponse
 from django.shortcuts import redirect, render
 
+from . import redator_ia
+from .analysis import templates as templates_analise
 from .forms import (RevisaoForm, RevisaoGrupoForm, RevisaoIndicadorForm,
                     RevisaoListagemForm, UploadForm)
 from .gerador_indicador import gerar_indicador, montar_tabela
@@ -15,7 +17,7 @@ from .gerador_listagem import gerar_listagem, montar_linhas
 from .gerador_pdf import gerar_relatorio
 from .parser_xlsx import (VEICULACAO_TODAS, VEICULACOES, consolidar,
                           consolidar_grupo, filtrar_veiculacao, ler_export_meta,
-                          ler_registros, montar_composicao, regerar_analise)
+                          ler_registros, montar_composicao)
 
 SESSION_KEY = "relatorio_apex"
 
@@ -52,8 +54,10 @@ def index(request):
                     }
                     return redirect("revisao")
                 if modo == UploadForm.MODO_UNICO:
+                    # `_num` fica na sessão (o consolidado sempre precisou
+                    # dele): é a fonte dos totais no payload do redator de IA,
+                    # e são onze números — não é ele que engorda a sessão.
                     dados = lidos[0]["dados"]
-                    dados.pop("_num", None)
                 else:
                     dados = consolidar_grupo(lidos)
                 dados["cliente"] = form.cleaned_data["cliente"]
@@ -222,16 +226,11 @@ def revisao(request):
 
     if request.method == "POST":
         form = RevisaoForm(request.POST)
-        if form.is_valid() and _regerando(request):
-            form = _regerar(request, dados, form)
+        if form.is_valid() and _pediu_ia(request):
+            form, extra = _analisar_com_ia(request, dados, form)
             return render(request, "relatorios/revisao.html",
-                          {"form": form, "dados": dados, "regerado": True})
+                          dict(extra, form=form, dados=dados))
         if form.is_valid():
-            pendencia = _pendencia_de_contexto(request, dados, form)
-            if pendencia:
-                form, extra = pendencia
-                return render(request, "relatorios/revisao.html",
-                              dict(extra, form=form, dados=dados))
             cd = form.cleaned_data
             relatorio = {
                 "titulo": "Relatório de Tráfego Pago",
@@ -253,107 +252,71 @@ def revisao(request):
             return _sinalizar_download(
                 request, FileResponse(buffer, as_attachment=True, filename=nome))
     else:
-        form = RevisaoForm(initial=dict(_inicial_contexto(dados), **{
+        form = RevisaoForm(initial={
             "cliente": dados.get("cliente", ""),
             "periodo": dados.get("periodo", ""),
-            "analise": dados.get("analise_sugerida", ""),
-        }))
+            "analise": _texto_da_analise(dados),
+        })
 
-    return render(request, "relatorios/revisao.html", {"form": form, "dados": dados})
+    return render(request, "relatorios/revisao.html",
+                  {"form": form, "dados": dados, "ia_disponivel": redator_ia.disponivel()})
 
 
 # ----------------------------------------------------------------------
-# Contexto do período — regeração da análise sem reenviar o anexo
+# Análise do Período escrita por IA
 # ----------------------------------------------------------------------
-CAMPO_REGERAR = "regerar"
-CAMPO_ASSIM_MESMO = "gerar_assim_mesmo"
+CAMPO_IA = "analise_ia"
 
 
-def _regerando(request):
-    return CAMPO_REGERAR in request.POST
+def _pediu_ia(request):
+    return CAMPO_IA in request.POST
 
 
-def _inicial_contexto(dados):
-    """Contexto e meta guardados na sessão, para o form voltar preenchido."""
-    guardado = dados.get("_contexto") or {}
-    return dict(guardado, meta_cpa=dados.get("_meta_cpa"))
+def _texto_da_analise(dados):
+    """O que o textarea mostra: a última análise da IA, se houve uma, e o
+    texto do motor de regras enquanto não houver."""
+    return dados.get("analise_ia") or dados.get("analise_sugerida", "")
 
 
-def _guardar(request, dados):
+def _analisar_com_ia(request, dados, form):
+    """Pede o texto ao modelo e devolve `(form a renderizar, contexto extra)`.
+
+    Falhar aqui é rotina — rede, crédito, modelo errado —, e falhar não pode
+    custar o relatório: o erro vira aviso na tela e o texto que estava no
+    formulário continua onde estava, sem ser tocado.
+    """
+    try:
+        bruto = redator_ia.gerar(dados)
+    except redator_ia.ErroDeIA as e:
+        return form, {"erro_ia": str(e), "ia_disponivel": redator_ia.disponivel()}
+
+    limite = (templates_analise.LIMITE_PDF_GRUPO if dados.get("modo") == "grupo"
+              else templates_analise.LIMITE_PDF)
+    texto, avisos = redator_ia.para_pdf(bruto, limite=limite)
+
+    # O bruto fica guardado com os asteriscos: é ele que serve para o WhatsApp,
+    # e regerar a mesma análise só para mudar de destino custaria outra chamada.
+    dados["analise_ia_bruta"] = bruto
+    dados["analise_ia"] = texto
     request.session[SESSION_KEY] = dados
     request.session.modified = True
 
+    return _com_texto(form, texto), {"analise_ia_gerada": True,
+                                     "avisos_ia": avisos,
+                                     "ia_disponivel": True}
 
-def _aplicar_contexto(dados, form):
-    """Grava em `dados` o contexto e a meta do formulário; devolve o par.
 
-    Guardar mesmo quando a análise não vai ser recalculada é o que permite ao
-    operador ajustar um campo de cada vez sem perder os anteriores.
+def _com_texto(form, texto):
+    """O mesmo formulário, com o textarea trocado.
+
+    O `data` de um form já vinculado é imutável, então o texto novo entra por
+    `initial` num form não vinculado — o resto dos campos volta como veio.
     """
-    meta = form.cleaned_data.get("meta_cpa")
-    dados["_contexto"] = form.contexto()
-    dados["_meta_cpa"] = float(meta) if meta else None
-    return dados["_contexto"], dados["_meta_cpa"]
-
-
-def _pendencia_de_contexto(request, dados, form):
-    """O que o operador informou e ainda não entrou na análise.
-
-    O bloco "Contexto do período" só é aplicado pelo botão *Regerar análise*.
-    Quem preenche a meta de custo por resultado e vai direto ao *Gerar PDF*
-    receberia o relatório medido contra a faixa estimada do perfil, com o campo
-    preenchido na tela e nada avisando que ele não valeu — e a meta é
-    justamente a referência de MAIOR precedência do motor.
-
-    Aqui o PDF é segurado e a tela volta dizendo o que falta. Recalcular e
-    entregar o PDF na mesma resposta seria pior que o problema: o cliente
-    receberia um texto que o operador nunca leu.
-
-    Devolve `None` quando não há pendência — o caminho comum — ou o par
-    `(form a renderizar, contexto extra do template)`.
-    """
-    if CAMPO_ASSIM_MESMO in request.POST:
-        # Decisão explícita: vale o texto que está na tela. O contexto fica
-        # guardado assim mesmo, para uma regeração posterior não recomeçar.
-        _aplicar_contexto(dados, form)
-        _guardar(request, dados)
-        return None
-
-    meta = form.cleaned_data.get("meta_cpa")
-    if (form.contexto() == (dados.get("_contexto") or {})
-            and (float(meta) if meta else None) == dados.get("_meta_cpa")):
-        return None
-
-    if (_paragrafos(form.cleaned_data.get("analise") or "")
-            != _paragrafos(dados.get("analise_sugerida") or "")):
-        # Texto editado à mão: recalcular apagaria o trabalho do operador, e
-        # essa escolha é dele. O form segue como veio, com a edição intacta.
-        return form, {"contexto_ignorado": True}
-
-    # Texto ainda é o que o motor escreveu: recalcular não custa nada a
-    # ninguém, e é o que o operador quis dizer ao preencher os campos.
-    return _regerar(request, dados, form), {"regerado": True,
-                                            "contexto_aplicado_agora": True}
-
-
-def _regerar(request, dados, form):
-    """Recalcula a análise com o contexto informado e devolve o form novo.
-
-    O textarea volta com o texto recalculado; todo o resto do formulário volta
-    como estava.
-    """
-    contexto, meta = _aplicar_contexto(dados, form)
-    regerar_analise(dados, meta_cpa=meta, contexto=contexto)
-    _guardar(request, dados)
-
-    # Um form novo: o `data` de um form já vinculado é imutável, então o texto
-    # recalculado entra por `initial` num form não vinculado.
-    inicial = dict(form.cleaned_data, analise=dados["analise_sugerida"])
+    inicial = dict(form.cleaned_data, analise=texto)
     kwargs = {}
     if hasattr(form, "n_unidades"):
-        kwargs["nomes_unidades"] = [
-            form.cleaned_data.get(f"unidade_{i}") or ""
-            for i in range(form.n_unidades)]
+        kwargs["nomes_unidades"] = [form.cleaned_data.get(f"unidade_{i}") or ""
+                                    for i in range(form.n_unidades)]
     return type(form)(initial=inicial, **kwargs)
 
 
@@ -364,28 +327,18 @@ def _revisao_grupo(request, dados):
 
     if request.method == "POST":
         form = RevisaoGrupoForm(request.POST, nomes_unidades=nomes)
-        if form.is_valid() and _regerando(request):
-            form = _regerar(request, dados, form)
-            return render(request, "relatorios/revisao.html", {
-                "form": form, "dados": dados, "modo_grupo": True,
-                "regerado": True,
-                "pares_unidades": list(zip(unidades, form.campos_unidades())),
-            })
+        if form.is_valid() and _pediu_ia(request):
+            form, extra = _analisar_com_ia(request, dados, form)
+            return render(request, "relatorios/revisao.html", dict(
+                extra, form=form, dados=dados, modo_grupo=True,
+                pares_unidades=list(zip(unidades, form.campos_unidades()))))
         if form.is_valid():
-            pendencia = _pendencia_de_contexto(request, dados, form)
-            if pendencia:
-                form, extra = pendencia
-                return render(request, "relatorios/revisao.html", dict(
-                    extra, form=form, dados=dados, modo_grupo=True,
-                    pares_unidades=list(zip(unidades, form.campos_unidades()))))
             cd = form.cleaned_data
             nomes_finais = form.nomes_finais(nomes)
             for u, nome in zip(unidades, nomes_finais):
                 u["nome"] = nome
-            rodape = ("Unidades incluídas no consolidado: "
-                      + ", ".join(nomes_finais)
-                      + ". Relatório gerado a partir de dados exportados do "
-                      "Meta Ads Manager.")
+            nota_unidades = ("Unidades incluídas no consolidado: "
+                             + ", ".join(nomes_finais) + ".")
             relatorio = {
                 "titulo": "Relatório de Tráfego Pago",
                 "cliente": cd["cliente"],
@@ -397,7 +350,7 @@ def _revisao_grupo(request, dados):
                 "composicao": montar_composicao(unidades),
                 "unidades": [{"nome": n} for n in nomes_finais],
                 "analise": _paragrafos(cd["analise"]),
-                "rodape": rodape,
+                "nota_unidades": nota_unidades,
             }
             buffer = io.BytesIO()
             gerar_relatorio(relatorio, buffer)
@@ -407,17 +360,17 @@ def _revisao_grupo(request, dados):
             return _sinalizar_download(
                 request, FileResponse(buffer, as_attachment=True, filename=nome))
     else:
-        form = RevisaoGrupoForm(nomes_unidades=nomes,
-                                initial=dict(_inicial_contexto(dados), **{
-                                    "cliente": dados.get("cliente", ""),
-                                    "periodo": dados.get("periodo", ""),
-                                    "analise": dados.get("analise_sugerida", ""),
-                                }))
+        form = RevisaoGrupoForm(nomes_unidades=nomes, initial={
+            "cliente": dados.get("cliente", ""),
+            "periodo": dados.get("periodo", ""),
+            "analise": _texto_da_analise(dados),
+        })
 
     contexto = {
         "form": form,
         "dados": dados,
         "modo_grupo": True,
+        "ia_disponivel": redator_ia.disponivel(),
         "pares_unidades": list(zip(unidades, form.campos_unidades())),
     }
     return render(request, "relatorios/revisao.html", contexto)

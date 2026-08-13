@@ -133,7 +133,7 @@ POST, e a obrigatoriedade real vem do `UploadForm.clean()` por modo.
 <dl class="resumo-lista">
   <div class="resumo-item"><dt>Modo</dt><dd id="rs-modo">Anexo único</dd></div>
   <div class="resumo-item"><dt>Anexos</dt><dd class="num" id="rs-anexos">00 de 20</dd></div>
-  <div class="resumo-item"><dt>Saída</dt><dd id="rs-saida">PDF individual · 1 página</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd id="rs-saida">PDF individual · 1–2 páginas</dd></div>
 </dl>
 
 <div class="resumo-titulo" style="margin:22px 0 12px">Pré-requisitos</div>
@@ -163,8 +163,8 @@ POST, e a obrigatoriedade real vem do `UploadForm.clean()` por modo.
   // Registro dos modos: os limites são os mesmos validados em
   // UploadForm.clean() — o front só antecipa a mensagem.
   const MODOS = {
-    unico:       {nome:'Anexo único',     min:1, max:1,  limite:'1 arquivo',     saida:'PDF individual · 1 página'},
-    consolidado: {nome:'Consolidado',     min:2, max:20, limite:'2 a 20 contas', saida:'PDF consolidado · 1 página'},
+    unico:       {nome:'Anexo único',     min:1, max:1,  limite:'1 arquivo',     saida:'PDF individual · 1–2 páginas'},
+    consolidado: {nome:'Consolidado',     min:2, max:20, limite:'2 a 20 contas', saida:'PDF consolidado · 1–2 páginas'},
     listagem:    {nome:'Listagem',        min:1, max:20, limite:'até 20 contas', saida:'PDF em paisagem'},
     indicador:   {nome:'Indicador único', min:2, max:20, limite:'2 a 20 contas', saida:'PDF de indicador'},
   };

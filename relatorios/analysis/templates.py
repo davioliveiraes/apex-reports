@@ -57,13 +57,28 @@ PDF, WHATSAPP = "pdf", "whatsapp"
 # ----------------------------------------------------------------------
 # Orçamento de página
 # ----------------------------------------------------------------------
-# O relatório é de UMA página fechada, e com blocos variáveis o texto pode
-# crescer. Estes tetos são medidos, não estimados: `OrcamentoDePaginaTest`
-# acha por bissecção o maior texto que ainda cabe, gerando PDF de verdade, e
-# o teto é esse valor menos 10%. Última medição:
+# O texto do MOTOR cabe numa página; o PDF em si aceita mais de uma desde
+# 12/08/2026, e é por lá que a análise escrita por IA transborda quando o
+# modelo escreve muito. Este orçamento governa só quantos blocos o motor
+# escreve — ele não corta nada que venha de fora.
 #
-#     conta        cabe até 2390 caracteres  ->  teto 2151
-#     consolidado  cabe até 1843 caracteres  ->  teto 1658
+# Os tetos são medidos, não estimados: `OrcamentoDePaginaTest` acha por
+# bissecção o maior texto que ainda sai em UMA página, gerando PDF de verdade,
+# e o teto é esse valor menos 10%. Última medição:
+#
+#     conta        cabe até 1861 caracteres  ->  teto 1674
+#     consolidado  cabe até 1250 caracteres  ->  teto 1125
+#
+# **Os números caíram em 12/08/2026 e a medição antiga é que estava errada**,
+# não o layout novo: a página tinha altura travada com `overflow: hidden`, e o
+# texto excedente era desenhado POR CIMA do rodapé sem mudar a contagem de
+# páginas. A bissecção media, portanto, o ponto em que o texto ficava ilegível
+# — não o ponto em que ele deixava de caber. Agora a seção de análise não se
+# parte: ou cabe no que sobrou da página, ou desce inteira para a seguinte.
+#
+# Na prática nenhum texto do motor chega perto: os reais medem 819 a 1125
+# (conta) e 753 a 960 (consolidado). O orçamento é rede de segurança, não
+# tesoura de uso diário.
 #
 # O consolidado é mais apertado porque o donut de composição ocupa mais altura
 # que a tabela de campanhas. Os números valem para 5 blocos, o pior caso: cada
@@ -72,8 +87,8 @@ PDF, WHATSAPP = "pdf", "whatsapp"
 #
 # Mexeu no layout do PDF ou no tamanho da fonte? Rode o teste: ele mede de
 # novo e falha dizendo o número certo.
-LIMITE_PDF = 2151
-LIMITE_PDF_GRUPO = 1658
+LIMITE_PDF = 1674
+LIMITE_PDF_GRUPO = 1125
 
 # Ordem de corte quando o texto não cabe: o fixo nunca sai, o apoio sai
 # primeiro e o ponto de atenção só depois — o mais relevante fica.

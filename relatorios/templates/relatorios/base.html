@@ -244,6 +244,11 @@
   .botao-sec:hover{background:var(--surface-2);border-color:var(--silver-dim)}
   .botao.carregando{background:var(--surface-2);border-color:var(--line);
     color:var(--silver);cursor:progress}
+  /* Ação de IA no aside: vem ANTES do Gerar PDF, então o respiro do .botao-sec
+     precisa mudar de lado. A nota abaixo dela é o que explica o que o clique
+     faz — sem isso o botão parece um segundo "gerar". */
+  .botao-ia{margin-top:0}
+  .acao-nota{font:12px/1.4 var(--sans);color:var(--silver-mute);margin:9px 0 16px}
 
   /* ------------------------------------------------------------------ */
   /* Status — pé do aside                                               */
@@ -293,13 +298,6 @@
   .legenda{font:12px/1.4 var(--sans);color:var(--silver-mute);margin:7px 0 18px}
   .secao-titulo{margin:22px 0 8px;font:600 12.5px/1 var(--sans);color:var(--white)}
   .campo-lista{display:flex;flex-direction:column;gap:14px;margin-bottom:4px}
-  /* Radios em linha (situação do problema): o Django renderiza <div><label>
-     por opção, então o alinhamento vem do container. */
-  .opcoes-radio{display:flex;flex-wrap:wrap;gap:6px 18px;padding:9px 0 2px}
-  .opcoes-radio label{display:flex;align-items:center;gap:6px;margin:0;
-    font:400 13px/1 var(--sans);color:var(--silver);cursor:pointer;
-    letter-spacing:normal;text-transform:none}
-  .opcoes-radio input{accent-color:var(--red);margin:0}
   .campo[aria-disabled=true]{opacity:.45;pointer-events:none}
 
   :focus-visible{outline:2px solid var(--red);outline-offset:2px}

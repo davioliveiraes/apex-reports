@@ -342,11 +342,14 @@ def consolidar(registros, mapa, conta=None, perfil=None, meta_cpa=None):
     # derivado dessa decisão, não o contrário. A avaliação fica guardada em
     # `dados` porque é ela — não o texto — que vira payload nas etapas
     # seguintes (prompt de IA, mensagem de WhatsApp), sem reprocessar números.
-    # `_metricas` e `_dias` ficam junto para a revisão poder regerar a análise
-    # com o contexto informado sem pedir o anexo de novo.
+    # `_metricas` e `_dias` ficam junto para a análise poder ser recalculada
+    # sem pedir o anexo de novo.
     dados["_metricas"] = _metricas_analise(dados["_num"], campanhas)
     dados["_dias"] = _dias_periodo(inicio, termino)
     dados["_perfil"] = perfil
+    # Os brutos por campanha, para o payload do redator de IA montar o recorte
+    # sem reler a planilha nem desformatar o "R$ 225,75" da tabela.
+    dados["_campanhas"] = campanhas
     regerar_analise(dados, meta_cpa=meta_cpa)
 
     return dados
@@ -356,9 +359,9 @@ def regerar_analise(dados, *, meta_cpa=None, contexto=None):
     """
     Recalcula avaliação e texto a partir do que já está em `dados`.
 
-    Chamada na leitura do anexo e de novo a cada "Regerar análise" na revisão,
-    quando o operador informa contexto ou meta. Não relê a planilha: tudo que o
-    motor precisa foi guardado na primeira passagem.
+    Chamada na leitura do anexo, e disponível para recalcular depois com meta
+    ou contexto informados. Não relê a planilha: tudo que o motor precisa foi
+    guardado na primeira passagem.
     """
     if dados.get("modo") == "grupo":
         avaliacao = analysis.rules.avaliar_grupo(

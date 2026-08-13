@@ -1,12 +1,21 @@
-{# Relatório PDF Apex — layout dark de dashboard, UMA página A4 (WeasyPrint) #}
+{# Relatório PDF Apex — layout dark de dashboard, A4 (WeasyPrint).           #}
+{# Uma página é o caso comum, não uma trava: a Análise do Período pode ser   #}
+{# longa (a escrita por IA não tem catálogo fixo de blocos) e o texto        #}
+{# transborda para a página seguinte em vez de passar por cima do rodapé.    #}
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
 <meta charset="utf-8">
 <style>
-  @page { size: A4; margin: 0; background: #0B0B0D; }
+  /* A margem da página é o que antes era padding do .pagina; a de baixo
+     reserva a faixa do rodapé, que agora vive numa margin box e por isso se
+     repete em toda página gerada. */
+  @page {
+    size: A4; margin: 7mm 7mm 16mm; background: #0B0B0D;
+    @bottom-center { content: element(rodape); }
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 210mm; height: 297mm; background: #0B0B0D; }
+  html, body { background: #0B0B0D; }
   body {
     background: #0B0B0D;
     color: #C7CBD1;
@@ -14,14 +23,11 @@
     font-size: 8pt;
     line-height: 1.35;
   }
-  /* Bloco com altura fixa (flex-coluna com height não é confiável no WeasyPrint) */
-  .pagina {
-    position: relative;
-    width: 210mm; height: 297mm;
-    padding: 7mm 7mm 16mm;
-    overflow: hidden;            /* regra de ouro: nada vaza para uma 2ª página */
-  }
+  /* Sem altura fixa e sem `overflow: hidden`: era o par que fazia o texto
+     longo ser desenhado por cima do rodapé em vez de empurrar página. */
   .pagina > div { margin-bottom: 3.4mm; }
+  /* Cabeçalho de seção nunca fica órfão no pé da página. */
+  .secao-cabecalho { break-after: avoid; }
   b { color: #D8232A; font-weight: 700; }
 
   /* ---------- Cabeçalho ---------- */
@@ -93,6 +99,17 @@
   /* ---------- Seção 2: tabela + donut ---------- */
   .sec2 { display: flex; gap: 3.5mm; align-items: stretch; }
   .sec2 .col-tabela { flex: 1.45; }
+  /* Tabela longa: o WeasyPrint não parte um container flex, então a seção
+     inteira pularia para a página seguinte e deixaria meia página em branco.
+     Empilhado ela é bloco comum, e a tabela quebra entre linhas como deve. */
+  .sec2.empilhado { display: block; }
+  .sec2.empilhado .col-tabela,
+  .sec2.empilhado .col-donut { display: block; }
+  /* Empilhado o donut vem DEPOIS da tabela (é a ordem do HTML): a tabela
+     começa logo abaixo do cabeçalho da seção e é ela que atravessa a quebra,
+     que é o que precisa fluir. */
+  .sec2.empilhado .col-donut { text-align: center; margin-top: 3mm; }
+  .sec2.empilhado .donut-img { width: 44mm; }
   .sec2 .col-donut {
     flex: 1; display: flex; flex-direction: column; align-items: center;
     justify-content: center; gap: 1.5mm;
@@ -128,18 +145,33 @@
   .legenda-donut .destaque { color: #FFFFFF; font-weight: 700; }
   .total-donut { font-size: 7.5pt; color: #A6ABB3; text-align: center; }
 
-  /* ---------- Análise ---------- */
-  .analise p { font-size: 8.6pt; color: #D7DAE0; }
+  /* ---------- Análise ----------
+     A seção não se parte: ou cabe inteira no que sobrou da página, ou desce
+     inteira para a seguinte, com o próprio cabeçalho junto. Partir deixava um
+     parágrafo órfão sozinho numa página em branco, que parece defeito. Se um
+     dia o texto for maior que uma página inteira, o `avoid` é ignorado e ele
+     quebra normalmente — que é o comportamento certo nesse caso. */
+  .secao-analise { break-inside: avoid; }
+  .analise p { font-size: 8.6pt; color: #D7DAE0; orphans: 3; widows: 3; }
   /* Um bloco por parágrafo: o respiro entre eles é o que deixa o rótulo em
      destaque funcionar como entrada de leitura, em vez de virar um texto
      corrido com palavras vermelhas no meio. */
   .analise p + p { margin-top: 2.6mm; }
 
-  /* ---------- Rodapé ---------- */
+  /* ---------- Notas de fim ---------- */
+  .notas p { font-size: 6.8pt; color: #8A8F98; }
+  .notas p + p { margin-top: 1mm; }
+
+  /* ---------- Rodapé ----------
+     `position: running()` tira o rodapé do fluxo e o entrega à margin box
+     declarada no @page. Duas consequências que são o objetivo: ele aparece em
+     TODA página, e o texto nunca mais passa por baixo dele — a faixa de 16mm
+     é margem de página, não área de conteúdo. */
   .rodape {
-    position: absolute; left: 7mm; right: 7mm; bottom: 6mm;
+    position: running(rodape); width: 100%;
     border-top: 1px solid #2A2D33; padding-top: 2.2mm;
     display: flex; align-items: flex-end; gap: 6mm; font-size: 6.8pt; color: #8A8F98;
+    text-align: left;
   }
   .rodape .texto { flex: 1; }
   .rodape .marca { color: #C7CBD1; font-weight: 800; font-size: 8.5pt; white-space: nowrap; }
@@ -147,6 +179,15 @@
 </style>
 </head>
 <body>
+
+{# O rodapé ABRE o documento, embora saia impresso no pé de cada página: um #}
+{# elemento `running()` só vale a partir de onde aparece no fluxo, então    #}
+{# declarado no fim ele sairia impresso só na última página.                #}
+<div class="rodape">
+  <div class="texto">{{ rodape }}</div>
+  <div class="marca"><span>A</span>PEX — Gestão de Tráfego Pago</div>
+</div>
+
 <div class="pagina">
 
   <!-- Cabeçalho -->
@@ -206,12 +247,15 @@
       <div class="risco"></div>
     </div>
     <div class="painel">
-      <div class="sec2 {% if modo_grupo %}consolidado{% endif %}">
+      <div class="sec2 {% if modo_grupo %}consolidado{% endif %}{% if tabela_longa %}empilhado{% endif %}">
         {% if tabela %}
         <div class="col-tabela">
           <table class="campanhas">
-            <tr><th>Campanha</th><th>Resultados</th><th>% dos Resultados</th>
-                <th>Investimento</th><th>Custo/Resultado</th></tr>
+            <thead>
+              <tr><th>Campanha</th><th>Resultados</th><th>% dos Resultados</th>
+                  <th>Investimento</th><th>Custo/Resultado</th></tr>
+            </thead>
+            <tbody>
             {% for l in tabela %}
             <tr {% if l.destaque %}class="destaque"{% endif %}>
               <td>{{ l.nome }}</td>
@@ -222,6 +266,7 @@
               <td class="custo">{{ l.custo_fmt }}</td>
             </tr>
             {% endfor %}
+            </tbody>
           </table>
         </div>
         {% endif %}
@@ -247,7 +292,7 @@
 
   <!-- 3 · Análise do Período -->
   {% if analise %}
-  <div>
+  <div class="secao-analise">
     <div class="secao-cabecalho">
       <div class="num">3</div>
       <h2>Análise do Período</h2>
@@ -259,11 +304,13 @@
   </div>
   {% endif %}
 
-  <!-- Rodapé -->
-  <div class="rodape">
-    <div class="texto">{{ rodape }}</div>
-    <div class="marca"><span>A</span>PEX — Gestão de Tráfego Pago</div>
+  {# Notas de fim — quem entrou no consolidado, legenda do funil. Ficavam no #}
+  {# rodapé, que hoje é margin box de altura fixa e as cortaria.             #}
+  {% if notas %}
+  <div class="notas">
+    {% for n in notas %}<p>{{ n }}</p>{% endfor %}
   </div>
+  {% endif %}
 
 </div>
 </body>

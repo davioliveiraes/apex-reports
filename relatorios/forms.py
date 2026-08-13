@@ -2,8 +2,6 @@
 from django import forms
 
 from . import metricas
-from .analysis import contexto as ctx
-from .analysis import rules
 from .parser_xlsx import VEICULACAO_TODAS, VEICULACOES
 
 
@@ -121,86 +119,7 @@ class UploadForm(forms.Form):
         return cd
 
 
-class _DecimalPtBr(forms.DecimalField):
-    """Aceita `19,84` além de `19.84`.
-
-    O operador digita como fala, e o resto da aplicação é toda em pt-BR. Mesma
-    heurística de `parser_xlsx._to_float`: só trata o ponto como separador de
-    milhar quando existe uma vírgula para ser o decimal.
-    """
-
-    def to_python(self, valor):
-        if isinstance(valor, str) and "," in valor:
-            valor = valor.replace(".", "").replace(",", ".")
-        return super().to_python(valor)
-
-
-def _rotulo_passo(chave):
-    """`ampliar_publico_e_criativos` -> `Ampliar publico e criativos`. O rótulo
-    bonito de cada passo é o texto que ele gera, e esse é longo demais para um
-    select — aqui basta o operador reconhecer a opção."""
-    return chave.replace("_", " ").capitalize()
-
-
-class _ComContexto(forms.Form):
-    """
-    Bloco "Contexto do período" — o que o operador sabe e a planilha não.
-
-    Todos os campos são opcionais, e todos vêm de `analysis.contexto`, que é a
-    mesma fonte que o motor lê. Vazio em tudo produz exatamente o texto que a
-    aplicação produzia antes de existirem estes campos.
-    """
-
-    PASSOS = rules.PASSOS
-
-    mudanca = forms.ChoiceField(
-        label="O que mudou no período", choices=ctx.MUDANCAS, required=False,
-        help_text="Muda a leitura da causa — não muda a classificação.",
-    )
-    problema = forms.ChoiceField(
-        label="Problema operacional", choices=ctx.PROBLEMAS, required=False,
-        help_text="Gargalo fora da mídia que atrapalhou o período.",
-    )
-    situacao = forms.ChoiceField(
-        label="Situação do problema", choices=ctx.SITUACOES, required=False,
-        widget=forms.RadioSelect,
-    )
-    meta_cpa = _DecimalPtBr(
-        label="Meta de custo por resultado (R$)", required=False,
-        min_value=0, max_digits=9, decimal_places=2,
-        widget=forms.NumberInput(attrs={"step": "0.01", "placeholder": "—"}),
-        help_text="Com meta, a análise compara o custo com ela em vez da "
-                  "faixa estimada do perfil.",
-    )
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields["passo"] = forms.ChoiceField(
-            label="Próximo passo", required=False,
-            choices=[("", "Deixar o motor escolher")]
-                    + [(p, _rotulo_passo(p)) for p in self.PASSOS],
-            help_text="Sobrepõe a escolha automática do próximo passo.",
-        )
-
-    def clean(self):
-        cd = super().clean()
-        # Situação sem problema não descreve nada — e "já corrigido" sozinho
-        # faria o texto falar de uma correção que ninguém disse existir.
-        if cd.get("problema") not in ctx.PROBLEMAS_REAIS:
-            cd["situacao"] = ""
-        return cd
-
-    def contexto(self):
-        """O contexto no formato que `rules.avaliar` espera."""
-        cd = self.cleaned_data if self.is_bound and self.is_valid() else {}
-        return ctx.limpar({campo: cd.get(campo) or "" for campo in ctx.CAMPOS})
-
-    def campos_contexto(self):
-        return [self[c] for c in ("mudanca", "problema", "situacao", "passo",
-                                  "meta_cpa")]
-
-
-class RevisaoForm(_ComContexto):
+class RevisaoForm(forms.Form):
     """Etapa 2 — revisar/editar os textos antes de gerar o PDF."""
     cliente = forms.CharField(label="Cliente", max_length=120)
     periodo = forms.CharField(label="Período", max_length=80, required=False)
@@ -236,10 +155,8 @@ class _ComUnidades(forms.Form):
                 for i, atual in enumerate(atuais)]
 
 
-class RevisaoGrupoForm(_ComContexto, _ComUnidades):
+class RevisaoGrupoForm(_ComUnidades):
     """Etapa 2 no modo consolidado (2+ anexos): nomes das unidades + análise geral."""
-
-    PASSOS = rules.PASSOS_GRUPO
 
     cliente = forms.CharField(label="Nome do grupo / cliente", max_length=120)
     periodo = forms.CharField(label="Período", max_length=80, required=False)

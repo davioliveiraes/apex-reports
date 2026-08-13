@@ -19,10 +19,10 @@ from unittest.mock import patch
 
 import fitz  # PyMuPDF — extração de texto e contagem de páginas
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from openpyxl import Workbook
 
-from . import analysis, benchmarks, metricas, parser_xlsx
+from . import analysis, benchmarks, metricas, parser_xlsx, redator_ia
 from .analysis import templates
 from .parser_xlsx import consolidar_grupo, ler_export_meta
 from .views import _MESES_PT, _paragrafos as _paragrafos_analise
@@ -160,11 +160,17 @@ class FluxoIndividualTest(TestCase):
         # Status de veiculação é assunto interno — não aparece no relatório
         self.assertNotIn("Status", texto)
 
-    def test_oito_campanhas_agrupam_em_outras(self):
+    def test_toda_campanha_do_anexo_sai_no_pdf(self):
+        """Nenhuma campanha é resumida em "Outras (N)" (12/08/2026).
+
+        A soma fechava, mas o cliente não via quanto cada praça custou — e num
+        relatório de uma campanha por cidade é exatamente isso que ele quer
+        saber. Se não couber, o PDF ganha página.
+        """
         f = _arquivo("conta.xlsx", [
-            {"nome": f"Campanha {i}", "res": 10 * (8 - i), "inv": 50.0 + i,
+            {"nome": f"Campanha {i}", "res": 10 * (12 - i), "inv": 50.0 + i,
              "imp": 3000, "alc": 2000, "cliques": 200}
-            for i in range(8)
+            for i in range(12)
         ])
         r = self.client.post("/", {"cliente": "ILOC", "arquivos": [f]})
         self.assertEqual(r.status_code, 302)
@@ -172,14 +178,19 @@ class FluxoIndividualTest(TestCase):
         r = self._gerar_pdf()
         self.assertEqual(r.status_code, 200)
         pdf = _bytes_pdf(r)
-        self.assertEqual(_paginas(pdf), 1,
-                         "8 campanhas devem agrupar em 'Outras' e manter 1 página")
         texto = _texto_pdf(pdf)
-        # 4 maiores + linha agregada com as 4 restantes
-        self.assertIn("Campanha 0", texto)
-        self.assertIn("Campanha 3", texto)
-        self.assertIn("Outras (4)", texto)
-        self.assertNotIn("Campanha 7", texto)
+        for i in range(12):
+            self.assertIn(f"Campanha {i}", texto)
+        self.assertNotIn("Outras", texto)
+        self.assertEqual(_paginas_com_rodape_invadido(pdf), [])
+
+    def test_tabela_longa_empilha_em_vez_de_dividir_a_largura(self):
+        """Em flex o WeasyPrint não parte a seção: ela pularia inteira para a
+        página seguinte e deixaria meia folha em branco."""
+        from .gerador_pdf import MAX_LINHAS_LADO_A_LADO as MAX, _empilhar
+        self.assertFalse(_empilhar([{"nome": "C"}] * MAX))
+        self.assertTrue(_empilhar([{"nome": "C"}] * (MAX + 1)))
+        self.assertFalse(_empilhar(None))
 
 
 class FluxoConsolidadoTest(TestCase):
@@ -299,13 +310,14 @@ class FluxoConsolidadoTest(TestCase):
         r = self.client.post("/revisao/", post)
         self.assertEqual(r.status_code, 200)
         pdf = _bytes_pdf(r)
-        self.assertEqual(_paginas(pdf), 1,
-                         "20 unidades devem caber em 1 página (fatias <3% viram 'Outras')")
         texto = _texto_pdf(pdf)
         self.assertIn("Consolidado de 20 unidades", texto)
-        # Rodapé lista todas as unidades
-        self.assertIn("Unidade 00", texto)
-        self.assertIn("Unidade 19", texto)
+        # As 20 na legenda do donut, uma a uma — sem "Outras (N)" desde
+        # 12/08/2026 —, e as 20 outra vez no rodapé.
+        self.assertNotIn("Outras", texto)
+        for i in range(20):
+            self.assertIn(f"Unidade {i:02d}", texto)
+        self.assertEqual(_paginas_com_rodape_invadido(pdf), [])
 
 
 def _dados(campanhas, **kw):
@@ -416,14 +428,55 @@ class CasosReaisTest(TestCase):
         self.assertIn("já viu os anúncios muitas vezes", tecno)
 
 
+MARCA_RODAPE = "APEX — Gestão de Tráfego Pago"
+
+
+def _paginas_com_rodape_invadido(pdf_bytes):
+    """Páginas em que algum texto passa por baixo do rodapé.
+
+    Era o defeito de 12/08/2026: a página tinha altura fixa e `overflow:
+    hidden`, com o rodapé preso no fundo por `position: absolute`, então texto
+    longo era DESENHADO POR CIMA dele em vez de empurrar página. Contar
+    páginas não pega isso — o PDF continua com uma página, só que ilegível.
+    Aqui a conferência é geométrica: nenhum bloco de texto pode terminar
+    abaixo do topo do rodapé.
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    invadidas = []
+    for numero, pagina in enumerate(doc, 1):
+        blocos = [b for b in pagina.get_text("blocks") if b[4].strip()]
+        rodape = [b for b in blocos if MARCA_RODAPE in b[4]]
+        if not rodape:
+            invadidas.append((numero, "sem rodapé"))
+            continue
+        topo = min(b[1] for b in rodape)
+        for b in blocos:
+            if (MARCA_RODAPE not in b[4]
+                    and "Relatório gerado a partir" not in b[4]
+                    and b[3] > topo + 1):          # 1pt de tolerância
+                invadidas.append((numero, b[4].strip()[:40]))
+    doc.close()
+    return invadidas
+
+
 class OrcamentoDePaginaTest(TestCase):
     """
-    O teto de caracteres da análise é MEDIDO, não estimado.
+    O teto de caracteres é o ORÇAMENTO DO MOTOR — não uma promessa de página.
 
-    Acha por bissecção o maior texto que ainda cabe numa página, gerando PDF
-    de verdade em cada passo, e confere que o teto em `templates` está abaixo
-    disso com a folga de 10%. Mexeu na fonte, no espaçamento ou no layout? Este
-    teste falha dizendo o número novo.
+    Até 12/08/2026 ele prometia uma página: o motor cortava blocos até o texto
+    caber. A promessa caiu junto com a página de altura fixa, e por dois
+    motivos. O primeiro é que ela nunca foi verdade — a medição antiga contava
+    páginas num layout que desenhava o excedente por cima do rodapé. O segundo
+    é que sustentá-la agora custaria conteúdo: o consolidado passou a listar
+    todas as unidades, e o teto que garantiria uma página cortaria um bloco
+    inteiro dos textos reais do motor. Encurtar o que o cliente lê para
+    economizar uma folha é a troca errada.
+
+    O que o teto ainda faz, e é testado aqui: impedir que o texto do motor
+    cresça sem limite. No teto, ele sai INTEIRO, sem sobrepor o rodapé e sem
+    passar de duas páginas — e o número continua ancorado no que de fato cabe
+    numa página, medido por bissecção. O texto da IA não passa por aqui: esse
+    transborda de propósito.
     """
 
     ROTULOS = ["Leitura do período.", "Ponto de atenção.", "Leitura atual.",
@@ -431,8 +484,10 @@ class OrcamentoDePaginaTest(TestCase):
     FRASE = ("O custo por resultado ficou dentro da faixa de trabalho da conta "
              "e a verba investida segue virando contato real com cliente de "
              "forma previsível ao longo de todo o período observado. ")
-    FOLGA = 0.90
-    BLOCOS = 5          # pior caso: cada parágrafo custa o respiro entre eles
+    # O teto pode passar do que cabe numa página, mas não pode virar outra
+    # coisa: acima disso o relatório deixaria de ser de leitura rápida.
+    TETO_SOBRE_CAPACIDADE = 2.0
+    BLOCOS = 5
 
     def _texto(self, total, blocos=None):
         """String de exatamente `total` caracteres, em parágrafos rotulados —
@@ -470,14 +525,16 @@ class OrcamentoDePaginaTest(TestCase):
 
     def _conferir(self, limite, medido, modo):
         self.assertLessEqual(
-            limite, int(medido * self.FOLGA),
-            "o teto de %s está alto demais: cabem %d caracteres, então o teto "
-            "com 10%% de folga é %d — atualize templates.py"
-            % (modo, medido, int(medido * self.FOLGA)))
+            limite, int(medido * self.TETO_SOBRE_CAPACIDADE),
+            "o teto de %s está solto demais: cabem %d caracteres numa página e "
+            "o teto é %d — mais que o dobro. Ou o layout encolheu muito, ou o "
+            "teto virou outra coisa; reveja templates.py"
+            % (modo, medido, limite))
 
-    def test_no_teto_ainda_cabe_uma_pagina(self):
-        # A verificação direta do que o teto promete: um texto do tamanho
-        # exato do limite sai numa página só, nos dois modos.
+    def test_no_teto_o_texto_sai_inteiro_e_sem_sobrepor(self):
+        # O que o teto promete hoje: no limite, o texto aparece inteiro, não
+        # invade o rodapé e não passa de duas páginas — em qualquer número de
+        # blocos e nos dois modos.
         casos = [
             ("conta", templates.LIMITE_PDF, [
                 _arquivo("a.xlsx", [
@@ -503,12 +560,19 @@ class OrcamentoDePaginaTest(TestCase):
                 self.client.post("/", {"cliente": "Medição",
                                        "arquivos": arquivos})
                 for blocos in (3, 4, 5):
-                    r = self.client.post("/revisao/", dict(
-                        campos, analise=self._texto(limite, blocos)))
-                    self.assertEqual(
-                        _paginas(_bytes_pdf(r)), 1,
-                        "%s: %d caracteres em %d blocos estouraram a página"
-                        % (modo, limite, blocos))
+                    texto = self._texto(limite, blocos)
+                    r = self.client.post("/revisao/",
+                                         dict(campos, analise=texto))
+                    pdf = _bytes_pdf(r)
+                    onde = "%s: %d caracteres em %d blocos" % (modo, limite,
+                                                               blocos)
+                    self.assertEqual(_paginas_com_rodape_invadido(pdf), [],
+                                     onde + " passou por cima do rodapé")
+                    self.assertLessEqual(_paginas(pdf), 2,
+                                         onde + " precisou de mais de 2 páginas")
+                    # Última frase do último bloco: prova que nada foi cortado.
+                    fim = " ".join(texto.split()[-6:])
+                    self.assertIn(fim, _texto_pdf(pdf), onde + " saiu cortado")
 
     def test_teto_da_conta_individual(self):
         self.client.post("/", {"cliente": "Medição", "arquivos": [
@@ -535,231 +599,256 @@ class OrcamentoDePaginaTest(TestCase):
         self._conferir(templates.LIMITE_PDF_GRUPO, self._maximo(campos),
                        "consolidado")
 
+    def test_o_texto_real_do_motor_fica_bem_dentro_do_orcamento(self):
+        """O orçamento é rede de segurança, não tesoura de uso diário.
 
-class ContextoDoPeriodoTest(TestCase):
+        Se um texto real do motor encostar no teto, o corte por precedência
+        começa a agir no dia a dia — e o cliente passa a receber um bloco a
+        menos sem que ninguém tenha decidido isso.
+        """
+        maiores = []
+        for cpa in (1.0, 5.0, 12.0, 30.0):
+            for resultados in (5, 50, 500):
+                for frequencia in (1.2, 3.9):
+                    dados = _dados([{"nome": "C", "res": resultados,
+                                     "inv": cpa * resultados, "imp": 40000,
+                                     "alc": int(40000 / frequencia),
+                                     "cliques": 500}])
+                    maiores.append(len(dados["analise_sugerida"]))
+        self.assertLess(max(maiores), templates.LIMITE_PDF * 0.9,
+                        "texto do motor encostando no teto: %d de %d"
+                        % (max(maiores), templates.LIMITE_PDF))
+
+    def test_o_texto_real_do_grupo_fica_bem_dentro_do_orcamento(self):
+        grupo = consolidar_grupo([
+            {"nome": "Praça %d" % i,
+             "dados": _dados([{"nome": "C", "res": 10 + i * 30,
+                               "inv": 400.0 - i * 90, "imp": 9000,
+                               "alc": 4000, "cliques": 400}])}
+            for i in range(4)])
+        self.assertLess(len(grupo["analise_sugerida"]),
+                        templates.LIMITE_PDF_GRUPO * 0.9,
+                        "texto do grupo encostando no teto: %d de %d"
+                        % (len(grupo["analise_sugerida"]),
+                           templates.LIMITE_PDF_GRUPO))
+
+
+RESPOSTA_IA ="""*Período analisado: 01/07/2026 a 15/07/2026*
+
+*Leitura do período: BOM*
+
+No período, investimos R$ 257,86 nas campanhas e geramos 13 conversas, \
+resultando em um custo médio de R$ 19,84 por contato. A operação manteve um \
+volume estável de oportunidades.
+
+O principal destaque positivo foi Hortolândia, com custo de R$ 4,92 por \
+conversa. Em contrapartida, Jaguariúna ficou em R$ 21,96.
+
+No geral, os números mostram uma operação equilibrada, com diferenças \
+relevantes entre as praças."""
+
+
+@override_settings(OPENAI_API_KEY="chave-de-teste", OPENAI_MODEL="modelo-de-teste")
+class AnalisePorIATest(TestCase):
     """
-    Bloco "Contexto do período" na tela 02: campos opcionais que viram sinal e
-    o botão que regera a análise sem reenviar o anexo.
+    O botão "Escrever com IA" na tela 02.
+
+    Nenhum teste desta classe toca a rede: `_chamar` é a única função que fala
+    com a OpenAI e é ela que fica trocada por uma resposta fixa. Suíte offline
+    continua sendo requisito do projeto — e chamada de verdade custa dinheiro.
     """
 
-    ELIX = [{"nome": "A", "res": 13, "inv": 171.24, "imp": 3900, "alc": 1950},
-            {"nome": "B", "res": 0, "inv": 70.51, "imp": 1200, "alc": 600},
-            {"nome": "C", "res": 0, "inv": 16.11, "imp": 460, "alc": 213}]
+    ELIX = [{"nome": "[VAGAS][TIM][ABO][HORTOLANDIA][30JUL26]", "res": 13,
+             "inv": 171.24, "imp": 3900, "alc": 1950, "cliques": 40},
+            {"nome": "[VAGAS][TIM][ABO][JAGUARIUNA][23JUL26]", "res": 0,
+             "inv": 70.51, "imp": 1200, "alc": 600, "cliques": 12},
+            {"nome": "[VAGAS][REALME][ABO][ITU][07AGOS26]", "res": 0,
+             "inv": 16.11, "imp": 460, "alc": 213}]
 
     def _importar(self, campanhas=None, cliente="Elix"):
-        f = _arquivo("e.xlsx", campanhas or self.ELIX,
-                     inicio="2026-07-31", fim="2026-08-06")
+        f = _arquivo("e.xlsx", campanhas or self.ELIX)
         self.client.post("/", {"cliente": cliente, "arquivos": [f]})
         return self.client.session["relatorio_apex"]
 
-    def _regerar(self, **campos):
-        base = {"cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
-                "analise": "texto que o operador tinha", "regerar": "1"}
+    def _pedir(self, resposta=RESPOSTA_IA, analise="texto do motor", **campos):
+        """Clica em "Escrever com IA" com a resposta do modelo já decidida."""
+        base = {"cliente": "Elix", "periodo": "01/07/2026 a 15/07/2026",
+                "analise": analise, "analise_ia": "1"}
         base.update(campos)
-        r = self.client.post("/revisao/", base)
+        alvo = "relatorios.redator_ia._chamar"
+        efeito = ({"side_effect": resposta} if isinstance(resposta, Exception)
+                  else {"return_value": resposta})
+        with patch(alvo, **efeito) as chamada:
+            r = self.client.post("/revisao/", base)
         self.assertEqual(r.status_code, 200)
-        return r, self.client.session["relatorio_apex"]
+        return r, self.client.session["relatorio_apex"], chamada
 
-    def test_bloco_aparece_na_tela_dois_e_nao_na_um(self):
+    # ---- a tela ----
+    def test_botao_so_aparece_havendo_chave(self):
         self._importar()
-        painel = self.client.get("/").content.decode()
-        self.assertNotIn("Contexto do período", painel)
-        revisao = self.client.get("/revisao/").content.decode()
-        self.assertIn("Contexto do período", revisao)
-        self.assertIn('name="regerar"', revisao)
-        for campo in ("id_mudanca", "id_problema", "id_situacao",
-                      "id_passo", "id_meta_cpa"):
-            self.assertIn(campo, revisao)
+        self.assertIn('name="analise_ia"',
+                      self.client.get("/revisao/").content.decode())
+        with override_settings(OPENAI_API_KEY=""):
+            self.assertNotIn('name="analise_ia"',
+                             self.client.get("/revisao/").content.decode())
 
-    def test_regerar_recalcula_e_preserva_os_campos(self):
-        antes = self._importar()["analise_sugerida"]
-        r, dados = self._regerar(mudanca="mudou_captacao")
-        self.assertNotEqual(dados["analise_sugerida"], antes)
-        self.assertIn("A forma de captação mudou", dados["analise_sugerida"])
-        # O textarea volta com o texto novo, e o select com o que foi marcado.
-        html = r.content.decode()
-        self.assertIn("A forma de captação mudou", html)
-        self.assertIn('value="mudou_captacao" selected', html)
+    def test_texto_do_modelo_entra_no_textarea_e_na_sessao(self):
+        do_motor = self._importar()["analise_sugerida"]
+        r, dados, _ = self._pedir()
 
-    def test_contexto_sobrevive_na_sessao_entre_regeracoes(self):
+        self.assertIn("O principal destaque positivo foi Hortolândia",
+                      r.content.decode())
+        self.assertIn("Hortolândia", dados["analise_ia"])
+        # O texto do motor continua guardado: a IA não o apaga, só deixa de ser
+        # o que a tela mostra.
+        self.assertEqual(dados["analise_sugerida"], do_motor)
+        self.assertEqual(dados["analise_ia_bruta"], RESPOSTA_IA)
+
+    def test_asterisco_vira_negrito_e_o_periodo_repetido_sai(self):
         self._importar()
-        self._regerar(mudanca="mudou_captacao")
-        _r, dados = self._regerar(mudanca="mudou_captacao",
-                                  problema="problema_formulario",
-                                  situacao="problema_corrigido")
-        self.assertEqual(dados["_contexto"], {
-            "mudanca": "mudou_captacao", "problema": "problema_formulario",
-            "situacao": "problema_corrigido"})
-        # E o GET seguinte volta com tudo preenchido.
-        html = self.client.get("/revisao/").content.decode()
-        self.assertIn('value="problema_formulario" selected', html)
+        _r, dados, _ = self._pedir()
+        texto = dados["analise_ia"]
+        self.assertIn("<b>Leitura do período: BOM</b>", texto)
+        self.assertNotIn("*", texto)
+        # O período já está no cabeçalho do PDF — repeti-lo na análise é
+        # duplicação que o cliente lê como descuido.
+        self.assertNotIn("Período analisado", texto)
 
-    def test_regerar_nao_gera_pdf(self):
+    def test_pedir_analise_nao_gera_pdf(self):
         self._importar()
-        r, _dados = self._regerar(mudanca="nada_mudou")
+        r, _dados, _ = self._pedir()
         self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
 
-    def test_sem_contexto_a_analise_e_a_mesma_de_antes(self):
-        original = self._importar()["analise_sugerida"]
-        _r, dados = self._regerar()
-        self.assertEqual(dados["analise_sugerida"], original)
-
-    def test_meta_de_cpa_informada_vira_a_referencia(self):
+    def test_recarregar_a_tela_mantem_o_texto_da_ia(self):
         self._importar()
-        _r, dados = self._regerar(meta_cpa="30,00")
-        self.assertEqual(dados["_meta_cpa"], 30.0)
-        av = dados["avaliacao"]
-        self.assertEqual(av["referencia"], "meta")
-        self.assertTrue(av["meta_definida"])
-        # CPA 19,84 contra meta 30,00 = razão 0,66 (ótimo), mas 13 resultados
-        # não sustentam afirmação forte: o rebaixamento por amostra vale igual.
-        self.assertEqual(av["classificacao"], "BOM")
-        self.assertIn("amostra_pequena", av["sinais"])
-        self.assertNotIn("meta_cpa_indefinida", av["sinais"])
-        self.assertIn("meta combinada", dados["analise_sugerida"])
+        self._pedir()
+        self.assertIn("Hortolândia", self.client.get("/revisao/").content.decode())
 
-    def test_situacao_sem_problema_e_descartada(self):
+    def test_pdf_sai_com_o_texto_da_ia(self):
         self._importar()
-        _r, dados = self._regerar(situacao="problema_corrigido")
-        self.assertEqual(dados["_contexto"], {})
-        self.assertNotIn("já foi corrigido", dados["analise_sugerida"])
-
-    def test_passo_escolhido_pelo_operador(self):
-        self._importar()
-        _r, dados = self._regerar(passo="escalar_verba")
-        self.assertEqual(dados["avaliacao"]["proximo_passo"], "escalar_verba")
-
-    def test_pdf_sai_com_a_analise_regerada(self):
-        self._importar()
-        _r, dados = self._regerar(problema="problema_atendimento",
-                                  situacao="problema_aberto")
-        # O navegador reenvia o bloco de contexto junto: são os mesmos campos
-        # da tela. Omiti-los aqui seria dizer que o operador os apagou — ver
-        # ContextoNaoAplicadoTest.
+        _r, dados, _ = self._pedir()
         r = self.client.post("/revisao/", {
-            "cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
-            "problema": "problema_atendimento", "situacao": "problema_aberto",
-            "analise": dados["analise_sugerida"].replace("\n", "\r\n")})
+            "cliente": "Elix", "periodo": "01/07/2026 a 15/07/2026",
+            "analise": dados["analise_ia"].replace("\n", "\r\n")})
         texto = _texto_pdf(_bytes_pdf(r))
-        self.assertIn("atendimento aos contatos", texto)
+        self.assertIn("destaque positivo foi Hortolândia", texto)
+        self.assertEqual(_paginas(_bytes_pdf(self.client.post("/revisao/", {
+            "cliente": "Elix", "periodo": "01/07/2026 a 15/07/2026",
+            "analise": dados["analise_ia"].replace("\n", "\r\n")}))), 1)
 
-    def test_consolidado_tambem_tem_o_bloco(self):
-        arquivos = [
-            _arquivo("a.xlsx", [{"nome": "CA", "res": 50, "inv": 100.0,
-                                 "imp": 5000, "alc": 4000}]),
-            _arquivo("b.xlsx", [{"nome": "CB", "res": 10, "inv": 200.0,
-                                 "imp": 5000, "alc": 4000}]),
-        ]
-        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
-        html = self.client.get("/revisao/").content.decode()
-        self.assertIn("Contexto do período", html)
-        # O select de passo traz as opções de GRUPO, não as de conta.
-        self.assertIn("levar_o_metodo_das_melhores_as_demais", html)
-        self.assertNotIn("escalar_verba", html)
-
-        r = self.client.post("/revisao/", {
-            "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
-            "analise": "x", "regerar": "1", "unidade_0": "Praça A",
-            "unidade_1": "Praça B", "problema": "problema_estoque",
-            "situacao": "problema_em_correcao"})
-        self.assertEqual(r.status_code, 200)
-        dados = self.client.session["relatorio_apex"]
-        self.assertIn("A correção da disponibilidade de estoque está em andamento",
-                      dados["analise_sugerida"])
-        # Nomes das unidades preservados na regeração.
-        self.assertIn("Praça A", r.content.decode())
-
-
-class ContextoNaoAplicadoTest(TestCase):
-    """
-    Contexto e meta preenchidos com o operador clicando direto em *Gerar PDF*.
-
-    O bloco só era aplicado pelo botão *Regerar análise*: quem preenchia a meta
-    de custo por resultado e ia direto ao PDF recebia o relatório medido contra
-    a faixa estimada do perfil, com o campo preenchido na tela e nada avisando.
-    Agora o PDF é segurado até a análise refletir o que foi informado — ou até
-    o operador dizer que é o texto dele que vale.
-    """
-
-    def _importar(self):
-        f = _arquivo("e.xlsx", ContextoDoPeriodoTest.ELIX,
-                     inicio="2026-07-31", fim="2026-08-06")
-        self.client.post("/", {"cliente": "Elix", "arquivos": [f]})
-        return self.client.session["relatorio_apex"]
-
-    def _gerar(self, analise, **campos):
-        """POST de *Gerar PDF* — sem `regerar`, como o botão do aside envia."""
-        base = {"cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
-                "analise": analise.replace("\n", "\r\n")}
-        base.update(campos)
-        return self.client.post("/revisao/", base)
-
-    def _sessao(self):
-        return self.client.session["relatorio_apex"]
-
-    def test_sem_contexto_o_pdf_sai_no_primeiro_clique(self):
+    # ---- o que chega ao modelo ----
+    def test_payload_leva_os_totais_e_o_recorte_por_campanha(self):
         dados = self._importar()
-        r = self._gerar(dados["analise_sugerida"])
-        self.assertEqual(_paginas(_bytes_pdf(r)), 1)
+        payload = redator_ia.montar_payload(dados)
 
-    def test_meta_informada_segura_o_pdf_e_recalcula(self):
-        antes = self._importar()["analise_sugerida"]
-        r = self._gerar(antes, meta_cpa="30,00")
+        self.assertEqual(payload["periodo_analisado"], "01/07/2026 a 15/07/2026")
+        self.assertEqual(payload["totais"]["resultados"], 13)
+        self.assertEqual(payload["totais"]["investimento_reais"], 257.86)
+        self.assertEqual(payload["totais"]["custo_por_resultado_reais"], 19.84)
+        # Custo por campanha calculado aqui, não pelo modelo: divisão feita por
+        # LLM sai errada sem ninguém perceber.
+        primeira = payload["campanhas"][0]
+        self.assertEqual(primeira["resultados"], 13)
+        self.assertEqual(primeira["custo_por_resultado_reais"], 13.17)
+        # Campanha sem resultado não vira divisão por zero.
+        self.assertIsNone(payload["campanhas"][-1]["custo_por_resultado_reais"])
 
-        # Voltou a tela, não o arquivo.
-        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
-        dados = self._sessao()
-        self.assertEqual(dados["_meta_cpa"], 30.0)
-        self.assertEqual(dados["avaliacao"]["referencia"], "meta")
-        self.assertNotEqual(dados["analise_sugerida"], antes)
-        # E o texto novo está à vista, com o aviso do que aconteceu.
+    def test_payload_declara_o_que_o_relatorio_nao_tem(self):
+        """A lista de ausências é o que segura a alucinação: sem ela o modelo
+        compara com "o mês passado" que não existe no arquivo."""
+        payload = redator_ia.montar_payload(self._importar())
+        ausentes = " ".join(payload["dados_ausentes"])
+        for esperado in ("período anterior", "recorte por dia",
+                         "conjunto de anúncios", "ROAS"):
+            self.assertIn(esperado, ausentes)
+
+    def test_coluna_ausente_no_export_e_declarada_ausente(self):
+        """Coluna que não veio ≠ métrica igual a zero. A soma de uma coluna
+        inexistente dá zero, e mandar "0 cliques" ao modelo é oferecer um
+        parágrafo sobre um fracasso que ninguém mediu."""
+        wb = Workbook()
+        ws = wb.active
+        ws.append([c for c in CABECALHO if c != "Cliques no link"])
+        ws.append(["[VAGAS][TIM][ABO][ITU][06AGOS26]", "active", 13, INDICADOR,
+                   171.24, 3900, 1950, "2026-07-01", "2026-07-15"])
+        buf = io.BytesIO()
+        wb.save(buf)
+        self.client.post("/", {"cliente": "Elix", "arquivos": [
+            SimpleUploadedFile("s.xlsx", buf.getvalue(), content_type=XLSX_MIME)]})
+
+        payload = redator_ia.montar_payload(self.client.session["relatorio_apex"])
+        self.assertNotIn("cliques_no_link", payload["totais"])
+        self.assertIn("cliques, CTR e custo por clique", payload["dados_ausentes"])
+        # E o que a planilha traz continua indo.
+        self.assertEqual(payload["totais"]["resultados"], 13)
+
+    def test_zero_medido_continua_sendo_zero(self):
+        """O contrário do teste acima: a coluna veio, e veio vazia. Isso é
+        informação — o modelo pode dizer que não houve clique."""
+        payload = redator_ia.montar_payload(
+            self._importar([dict(c, cliques=None) for c in self.ELIX]))
+        self.assertEqual(payload["totais"]["cliques_no_link"], 0)
+        self.assertNotIn("cliques, CTR e custo por clique",
+                         payload["dados_ausentes"])
+
+    def test_o_prompt_do_operador_vai_inteiro_no_system(self):
+        self._importar()
+        _r, _dados, chamada = self._pedir()
+        mensagens = chamada.call_args.args[0]
+        self.assertEqual(mensagens[0]["role"], "system")
+        self.assertIn("Atue como gestor de tráfego pago sênior",
+                      mensagens[0]["content"])
+        self.assertIn("Exatamente 3 parágrafos de análise", mensagens[0]["content"])
+        # E o relatório entra como JSON na mensagem do usuário.
+        self.assertEqual(json.loads(mensagens[1]["content"])["totais"]["resultados"], 13)
+
+    # ---- o que volta do modelo ----
+    def test_html_vindo_do_modelo_e_escapado(self):
+        """O template do PDF renderiza a análise com `|safe`. O que volta da
+        API é texto de terceiro e não pode chegar lá como marcação."""
+        self._importar()
+        _r, dados, _ = self._pedir(
+            resposta='*Leitura do período: BOM*\n\n<script>alert(1)</script>')
+        self.assertNotIn("<script>", dados["analise_ia"])
+        self.assertIn("&lt;script&gt;", dados["analise_ia"])
+
+    def test_texto_longo_avisa_da_segunda_pagina_sem_cortar(self):
+        self._importar()
+        longo = "*Leitura do período: BOM*\n\n" + ("palavra " * 600)
+        r, dados, _ = self._pedir(resposta=longo)
+        self.assertIn("desce inteira para uma segunda", r.content.decode())
+        # E o texto chega inteiro ao textarea: quem encurta é o operador.
+        self.assertGreater(len(dados["analise_ia"]), templates.LIMITE_PDF)
+
+    def test_formato_fora_do_esperado_avisa(self):
+        self._importar()
+        r, _dados, _ = self._pedir(resposta="Um parágrafo só, sem cabeçalho.")
+        self.assertIn("vieram 1 blocos", r.content.decode())
+
+    # ---- quando falha ----
+    def test_falha_da_api_nao_custa_o_relatorio(self):
+        do_motor = self._importar()["analise_sugerida"]
+        r, dados, _ = self._pedir(
+            resposta=redator_ia.ErroDeIA("sem crédito na conta"),
+            analise=do_motor)
+
         html = r.content.decode()
-        self.assertIn("meta combinada", html)
-        self.assertIn("acaba de ser recalculado", html)
+        self.assertIn("sem crédito na conta", html)
+        self.assertIn("não foi gerada", html)
+        # O texto que estava na tela continua lá (o textarea escapa as tags do
+        # motor, então a comparação é pela frase), e nada foi gravado.
+        self.assertIn(_paragrafos_analise(do_motor)[0][-60:].replace("<b>", ""),
+                      html)
+        self.assertNotIn("analise_ia", dados)
 
-    def test_segundo_clique_gera_o_pdf(self):
-        self._importar()
-        self._gerar(self._sessao()["analise_sugerida"], meta_cpa="30,00")
-        r = self._gerar(self._sessao()["analise_sugerida"], meta_cpa="30,00")
-        self.assertIn("meta combinada", _texto_pdf(_bytes_pdf(r)))
+    def test_sem_chave_configurada_o_erro_diz_o_que_fazer(self):
+        with override_settings(OPENAI_API_KEY=""):
+            with self.assertRaises(redator_ia.ErroDeIA) as e:
+                redator_ia.gerar({})
+        self.assertIn("OPENAI_API_KEY", str(e.exception))
 
-    def test_texto_editado_a_mao_nao_e_sobrescrito(self):
-        original = self._importar()["analise_sugerida"]
-        r = self._gerar("Texto que eu mesmo escrevi.", meta_cpa="30,00")
-
-        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
-        html = r.content.decode()
-        self.assertIn("Texto que eu mesmo escrevi.", html)
-        self.assertIn("gerar_assim_mesmo", html)
-        # A análise do motor continua a de antes: a edição não virou sugestão,
-        # e a meta ainda não foi aplicada.
-        self.assertEqual(self._sessao()["analise_sugerida"], original)
-
-    def test_gerar_assim_mesmo_sai_com_o_texto_do_operador(self):
-        self._importar()
-        r = self._gerar("Texto que eu mesmo escrevi.", meta_cpa="30,00",
-                        gerar_assim_mesmo="1")
-        self.assertIn("Texto que eu mesmo escrevi.", _texto_pdf(_bytes_pdf(r)))
-        # A meta fica guardada mesmo sem ter sido aplicada: regerar depois não
-        # obriga a digitar tudo de novo.
-        self.assertEqual(self._sessao()["_meta_cpa"], 30.0)
-
-    def test_contexto_apagado_tambem_segura_o_pdf(self):
-        """Tirar a meta é mudança como qualquer outra — a análise ainda cita
-        uma meta que o operador acabou de apagar."""
-        self._importar()
-        self.client.post("/revisao/", {
-            "cliente": "Elix", "periodo": "31/07/2026 a 06/08/2026",
-            "analise": "x", "regerar": "1", "meta_cpa": "30,00"})
-        self.assertEqual(self._sessao()["_meta_cpa"], 30.0)
-
-        r = self._gerar(self._sessao()["analise_sugerida"])
-        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
-        dados = self._sessao()
-        self.assertIsNone(dados["_meta_cpa"])
-        self.assertEqual(dados["avaliacao"]["referencia"], "perfil")
-
-    def test_consolidado_segura_o_pdf_do_mesmo_jeito(self):
+    # ---- consolidado ----
+    def test_consolidado_manda_as_unidades_e_aceita_o_texto(self):
         arquivos = [
             _arquivo("a.xlsx", [{"nome": "CA", "res": 50, "inv": 100.0,
                                  "imp": 5000, "alc": 4000}]),
@@ -767,20 +856,115 @@ class ContextoNaoAplicadoTest(TestCase):
                                  "imp": 5000, "alc": 4000}]),
         ]
         self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
-        analise = self._sessao()["analise_sugerida"]
+        dados = self.client.session["relatorio_apex"]
 
-        r = self.client.post("/revisao/", {
-            "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
-            "analise": analise.replace("\n", "\r\n"),
-            "unidade_0": "Praça A", "unidade_1": "Praça B",
-            "problema": "problema_estoque", "situacao": "problema_aberto"})
+        payload = redator_ia.montar_payload(dados)
+        self.assertEqual([u["nome_da_unidade"] for u in payload["unidades"]],
+                         ["a", "b"])
+        self.assertNotIn("campanhas", payload)
 
-        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
+        with patch("relatorios.redator_ia._chamar", return_value=RESPOSTA_IA):
+            r = self.client.post("/revisao/", {
+                "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
+                "analise": "x", "analise_ia": "1",
+                "unidade_0": "Praça A", "unidade_1": "Praça B"})
+
+        self.assertEqual(r.status_code, 200)
         html = r.content.decode()
-        self.assertIn("acaba de ser recalculado", html)
+        self.assertIn("Hortolândia", html)
         # Os nomes das unidades sobrevivem à volta para a tela.
         self.assertIn("Praça A", html)
-        self.assertIn("disponibilidade de estoque", self._sessao()["analise_sugerida"])
+
+    def test_consolidado_usa_o_teto_de_pagina_do_consolidado(self):
+        """O consolidado cabe menos texto que o individual (a composição por
+        unidade ocupa a página), então o aviso tem que vir antes."""
+        arquivos = [_arquivo(f"{n}.xlsx", [{"nome": n, "res": 50, "inv": 100.0,
+                                            "imp": 5000, "alc": 4000}])
+                    for n in ("a", "b")]
+        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        entre_os_dois = "x" * ((templates.LIMITE_PDF_GRUPO
+                                + templates.LIMITE_PDF) // 2)
+        with patch("relatorios.redator_ia._chamar", return_value=entre_os_dois):
+            r = self.client.post("/revisao/", {
+                "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
+                "analise": "x", "analise_ia": "1",
+                "unidade_0": "A", "unidade_1": "B"})
+        self.assertIn(str(templates.LIMITE_PDF_GRUPO), r.content.decode())
+
+
+class TextoLongoNoPdfTest(TestCase):
+    """
+    Análise longa transborda para outra página — nunca por cima do rodapé.
+
+    A escrita por IA não tem catálogo fixo de blocos: o tamanho do texto é
+    decidido pelo modelo, e o relatório precisa aguentar isso. Antes de
+    12/08/2026 a página tinha altura travada e o excedente era desenhado sobre
+    o rodapé; com o export novo (que preenche o meio do funil) bastavam 1.200
+    caracteres para o defeito aparecer.
+    """
+
+    CAMPANHAS = [{"nome": f"[VAGAS][TIM][ABO][CIDADE{i}][23JUL26]",
+                  "res": 40 - i, "inv": 200.0 - i, "imp": 12000, "alc": 6000,
+                  "cliques": 90} for i in range(5)]
+
+    def _pdf(self, analise):
+        f = _arquivo("e.xlsx", self.CAMPANHAS)
+        self.client.post("/", {"cliente": "Mobile Magazine", "arquivos": [f]})
+        r = self.client.post("/revisao/", {
+            "cliente": "Mobile Magazine", "periodo": "05/08/2026 a 11/08/2026",
+            "analise": analise.replace("\n", "\r\n")})
+        return _bytes_pdf(r)
+
+    def _analise(self, blocos):
+        frase = ("O custo por resultado ficou dentro da faixa de trabalho da "
+                 "conta e a verba investida segue virando contato real. ")
+        return "\n\n".join("<b>Bloco %d.</b> %s" % (i, frase * 4)
+                           for i in range(1, blocos + 1))
+
+    def test_analise_curta_continua_em_uma_pagina(self):
+        """A regressão a evitar do outro lado: relatório normal não pode
+        passar a sair com duas páginas."""
+        pdf = self._pdf("<b>Leitura do período.</b> Texto curto do motor.")
+        self.assertEqual(_paginas(pdf), 1)
+        self.assertEqual(_paginas_com_rodape_invadido(pdf), [])
+
+    def test_analise_longa_ganha_pagina_em_vez_de_sobrepor(self):
+        pdf = self._pdf(self._analise(6))
+        self.assertGreater(_paginas(pdf), 1)
+        self.assertEqual(_paginas_com_rodape_invadido(pdf), [])
+
+    def test_o_rodape_sai_em_toda_pagina(self):
+        pdf = self._pdf(self._analise(6))
+        doc = fitz.open(stream=pdf, filetype="pdf")
+        paginas = [MARCA_RODAPE in p.get_text() for p in doc]
+        doc.close()
+        self.assertTrue(all(paginas), f"rodapé faltando em {paginas}")
+
+    def test_a_analise_nao_se_parte_ao_meio(self):
+        """Cabeçalho da seção e texto viajam juntos: partir deixava um
+        parágrafo órfão numa página em branco."""
+        pdf = self._pdf(self._analise(3))
+        doc = fitz.open(stream=pdf, filetype="pdf")
+        paginas = [p.get_text() for p in doc]
+        doc.close()
+        com_titulo = [i for i, t in enumerate(paginas) if "Análise do Período" in t]
+        com_texto = [i for i, t in enumerate(paginas) if "Bloco 1." in t]
+        self.assertEqual(com_titulo, com_texto)
+        # E o último bloco não ficou para trás numa página sozinho.
+        self.assertIn("Bloco 3.", paginas[com_titulo[0]])
+
+    def test_consolidado_tambem_transborda_sem_sobrepor(self):
+        arquivos = [_arquivo(f"{n}.xlsx", [{"nome": n, "res": 50, "inv": 100.0,
+                                            "imp": 5000, "alc": 4000}])
+                    for n in ("a", "b", "c")]
+        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        r = self.client.post("/revisao/", {
+            "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
+            "unidade_0": "A", "unidade_1": "B", "unidade_2": "C",
+            "analise": self._analise(6).replace("\n", "\r\n")})
+        pdf = _bytes_pdf(r)
+        self.assertGreater(_paginas(pdf), 1)
+        self.assertEqual(_paginas_com_rodape_invadido(pdf), [])
 
 
 class ColunaDeInvestimentoTest(TestCase):
@@ -1110,9 +1294,11 @@ class AnaliseAutomaticaTest(TestCase):
         self.assertIn("Barata", analise)    # e a que tem o método a copiar
         self.assertNotIn("R$", analise)     # os números estão na tabela acima
 
-    def test_analise_do_grupo_cabe_na_pagina_com_nomes_longos(self):
+    def test_analise_do_grupo_sai_inteira_com_nomes_longos(self):
         # O bloco 2 do consolidado nomeia duas praças, e o nome vem do
-        # operador. O consolidado também é de UMA página fechada.
+        # operador. Com 20 unidades de nome comprido — todas listadas na
+        # legenda desde 12/08/2026 — o relatório passa de uma página; o que
+        # não pode é o texto sair cortado ou por cima do rodapé.
         nomes = ["Tim %02d — Maxi Shopping Jundiaí Zona Norte" % i
                  for i in range(20)]
         arquivos = [_arquivo("u%d.xlsx" % i, [
@@ -1127,9 +1313,11 @@ class AnaliseAutomaticaTest(TestCase):
         campos.update({"unidade_%d" % i: n for i, n in enumerate(nomes)})
         r = self.client.post("/revisao/", campos)
         pdf = _bytes_pdf(r)
-        self.assertEqual(_paginas(pdf), 1,
-                         "a análise do grupo estourou a página do consolidado")
-        self.assertIn("Objetivo do próximo ciclo", _texto_pdf(pdf))
+        texto = _texto_pdf(pdf)
+        self.assertEqual(_paginas_com_rodape_invadido(pdf), [])
+        self.assertIn("Objetivo do próximo ciclo", texto)
+        self.assertIn(nomes[0], texto)
+        self.assertIn(nomes[-1], texto)
 
     def test_avaliacao_do_grupo_e_serializavel(self):
         grupo = consolidar_grupo([
@@ -1992,15 +2180,117 @@ class AmbienteDeProducaoTest(SimpleTestCase):
     def test_deploy_escreve_toda_variavel_que_o_settings_le(self):
         """Guarda contra a deriva entre os dois arquivos: acrescentar uma
         variável ao settings sem escrevê-la no deploy derruba a VPS no próximo
-        publish, e só lá."""
+        publish, e só lá.
+
+        Vale também para as OPENAI_*: o deploy reescreve o env inteiro a cada
+        publicação, então uma variável que ele não conheça é uma variável que
+        o próximo `make deploy` apaga."""
         def variaveis(caminho):
-            return set(re.findall(r"DJANGO_[A-Z_]+",
+            return set(re.findall(r"(?:DJANGO|OPENAI)_[A-Z_]+",
                                   (self.RAIZ / caminho).read_text(encoding="utf-8")))
 
         lidas = variaveis("apex_reports/settings.py")
         escritas = variaveis("deploy/deploy.sh")
         self.assertTrue(lidas, "nenhuma variável encontrada no settings")
         self.assertEqual(lidas - escritas, set())
+
+
+class ComentarioDeTemplateTest(SimpleTestCase):
+    """
+    `{# … #}` do Django NÃO atravessa linha.
+
+    Um comentário aberto numa linha e fechado noutra não é comentário: é texto,
+    e sai impresso — na tela de revisão e, pior, dentro do PDF que vai ao
+    cliente. Aconteceu duas vezes em 12/08/2026, nos dois templates. Comentário
+    de várias linhas se escreve com um par por linha, ou com
+    `{% comment %}`.
+    """
+
+    TEMPLATES = Path(__file__).resolve().parent / "templates" / "relatorios"
+
+    def test_nenhum_comentario_de_template_atravessa_linha(self):
+        soltos = []
+        for arquivo in sorted(self.TEMPLATES.glob("*.html")):
+            dentro = False
+            for n, linha in enumerate(
+                    arquivo.read_text(encoding="utf-8").splitlines(), 1):
+                abre, fecha = linha.count("{#"), linha.count("#}")
+                if dentro or abre != fecha:
+                    soltos.append(f"{arquivo.name}:{n}: {linha.strip()[:60]}")
+                dentro = (abre > fecha) if abre != fecha else dentro
+        self.assertEqual(soltos, [], "comentário {# #} sem fechar na mesma "
+                                     "linha — ele SAI IMPRESSO na página:\n"
+                                     + "\n".join(soltos))
+
+
+class ArquivoEnvTest(SimpleTestCase):
+    """
+    O `.env` de desenvolvimento — a chave da OpenAI num arquivo, em vez de
+    numa variável de terminal que morre ao fechar a janela.
+
+    A regra que não pode quebrar é a precedência: variável que já existe no
+    ambiente vence o arquivo. É ela que mantém o `manage.py migrate` do deploy
+    rodando com as variáveis de produção, numa máquina que por acaso tenha um
+    `.env` esquecido na raiz.
+    """
+
+    RAIZ = Path(__file__).resolve().parent.parent
+
+    def _carregar(self, conteudo, ambiente=None):
+        from apex_reports.settings import carregar_env
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / ".env"
+            caminho.write_text(conteudo, encoding="utf-8")
+            with patch.dict(os.environ, ambiente or {}, clear=False):
+                antes = set(os.environ)
+                carregar_env(caminho)
+                lidas = {k: os.environ[k] for k in set(os.environ) - antes}
+                for k in lidas:                       # não vaza para os outros
+                    del os.environ[k]
+        return lidas
+
+    def test_le_par_por_linha(self):
+        self.assertEqual(self._carregar("APEX_TESTE_A=1\nAPEX_TESTE_B=dois\n"),
+                         {"APEX_TESTE_A": "1", "APEX_TESTE_B": "dois"})
+
+    def test_ignora_comentario_linha_vazia_e_aspas(self):
+        lidas = self._carregar('# comentário\n\nAPEX_TESTE_C="com aspas"\n'
+                               "export APEX_TESTE_D='exportado'\n")
+        self.assertEqual(lidas, {"APEX_TESTE_C": "com aspas",
+                                 "APEX_TESTE_D": "exportado"})
+
+    def test_valor_com_igual_nao_e_cortado(self):
+        """Chave de API com `=` no meio não pode chegar truncada — o erro
+        apareceria só na primeira chamada, como "chave inválida"."""
+        self.assertEqual(self._carregar("APEX_TESTE_E=sk-abc=def==\n"),
+                         {"APEX_TESTE_E": "sk-abc=def=="})
+
+    def test_ambiente_vence_o_arquivo(self):
+        lidas = self._carregar("APEX_TESTE_F=do-arquivo\n",
+                               {"APEX_TESTE_F": "do-ambiente"})
+        self.assertEqual(lidas, {})
+        self.assertNotIn("APEX_TESTE_F", os.environ)
+
+    def test_arquivo_ausente_nao_e_erro(self):
+        from apex_reports.settings import carregar_env
+        carregar_env(self.RAIZ / "nao-existe-mesmo.env")   # não levanta
+
+    def test_env_fica_fora_do_repositorio(self):
+        """Uma chave no repositório é uma chave pública — mesma regra da
+        SECRET_KEY. O `.env.example` é o que fica versionado."""
+        ignorados = (self.RAIZ / ".gitignore").read_text(encoding="utf-8").split()
+        self.assertIn(".env", ignorados)
+        self.assertTrue((self.RAIZ / ".env.example").exists())
+
+    def test_o_exemplo_cita_toda_variavel_que_o_settings_le(self):
+        """Mesmo guarda do deploy.sh, do lado do desenvolvimento: variável
+        nova sem linha no exemplo é variável que ninguém descobre existir."""
+        def variaveis(caminho, padrao=r"(?:DJANGO|OPENAI)_[A-Z_]+"):
+            return set(re.findall(padrao,
+                                  (self.RAIZ / caminho).read_text(encoding="utf-8")))
+
+        self.assertEqual(variaveis("apex_reports/settings.py")
+                         - variaveis(".env.example"), set())
 
 
 class SuperficieExpostaTest(TestCase):

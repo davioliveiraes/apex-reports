@@ -4,3 +4,4 @@ weasyprint>=61
 matplotlib>=3.8
 gunicorn>=21.2  # servidor de produção na VPS (ver deploy/deploy.sh)
 pymupdf>=1.24  # usado apenas nos testes (leitura do PDF gerado)
+openai>=1.60  # Análise do Período por IA; sem OPENAI_API_KEY nada é chamado

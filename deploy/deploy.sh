@@ -165,8 +165,15 @@ como_app "$DESTINO/venv/bin/pip" install --quiet -r "$DESTINO/requirements.txt"
 
 
 passo "Configuração do Django"
+# A chave da OpenAI é digitada à mão no env (o deploy não tem como gerá-la) e
+# este bloco reescreve o arquivo inteiro — sem relê-la antes, toda publicação
+# apagaria a chave e o botão de análise por IA sumiria da tela sem explicação.
+IA_CHAVE=""
+IA_MODELO=""
 if [[ -f "$AMBIENTE" ]]; then
   SEGREDO=$(sed -n 's/^DJANGO_SECRET_KEY=//p' "$AMBIENTE")
+  IA_CHAVE=$(sed -n 's/^OPENAI_API_KEY=//p' "$AMBIENTE")
+  IA_MODELO=$(sed -n 's/^OPENAI_MODEL=//p' "$AMBIENTE")
 else
   # token_urlsafe em vez do gerador do Django: o EnvironmentFile do systemd não
   # interpreta aspas nem escapes, e o alfabeto do Django tem $ # & ( ).
@@ -179,9 +186,16 @@ DJANGO_DEBUG=0
 DJANGO_ALLOWED_HOSTS=$HOSTS
 DJANGO_STATIC_ROOT=$ESTATICOS
 DJANGO_SCRIPT_NAME=$PREFIXO
+OPENAI_API_KEY=$IA_CHAVE
+OPENAI_MODEL=$IA_MODELO
 EOF
 chown root:"$USUARIO_APP" "$AMBIENTE"
 chmod 640 "$AMBIENTE"
+if [[ -z "$IA_CHAVE" ]]; then
+  echo "  sem OPENAI_API_KEY: a análise por IA fica desligada (o motor de"
+  echo "  regras continua escrevendo). Para ligar, acrescente a linha"
+  echo "  OPENAI_API_KEY=sk-... em $AMBIENTE e reinicie o serviço."
+fi
 
 manage() { como_app env DJANGO_SECRET_KEY="$SEGREDO" DJANGO_DEBUG=0 \
            DJANGO_ALLOWED_HOSTS="$HOSTS" DJANGO_STATIC_ROOT="$ESTATICOS" \

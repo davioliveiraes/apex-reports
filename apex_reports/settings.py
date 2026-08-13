@@ -19,6 +19,43 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def carregar_env(caminho=None):
+    """Lê um `.env` na raiz do projeto para dentro de `os.environ`.
+
+    Existe para o desenvolvimento: a chave da OpenAI fica num arquivo que o
+    git ignora, em vez de num `$env:` que morre junto com a janela do
+    terminal. Escrito à mão, e não com `python-dotenv`, porque são doze linhas
+    contra mais uma dependência num projeto que tem seis.
+
+    **Variável que já existe no ambiente vence o arquivo.** É o que mantém o
+    deploy funcionando: ele chama `manage.py migrate` com as variáveis de
+    produção explícitas, e na VPS quem entrega tudo é o systemd, lendo
+    /etc/apex-reports/env — lá este arquivo nem existe. Vale também para o
+    `DJANGO_DEBUG=1` que o `manage.py` liga antes de o settings ser importado:
+    escrevê-lo no `.env` não desliga o modo de desenvolvimento.
+
+    Formato aceito: `CHAVE=valor` por linha, `#` comenta a linha inteira,
+    `export` na frente é ignorado e aspas em volta do valor são retiradas.
+    Arquivo ausente não é erro — é o caso normal em produção.
+    """
+    caminho = Path(caminho) if caminho else BASE_DIR / ".env"
+    try:
+        conteudo = caminho.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for linha in conteudo.splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith("#"):
+            continue
+        chave, sep, valor = linha.removeprefix("export ").partition("=")
+        chave = chave.strip()
+        if sep and chave and chave not in os.environ:
+            os.environ[chave] = valor.strip().strip('"').strip("'")
+
+
+carregar_env()
+
+
 # Os ajustes de produção vêm do ambiente — na VPS o systemd carrega
 # /etc/apex-reports/env (ver deploy/deploy.sh). O padrão daqui é PRODUÇÃO, não
 # desenvolvimento: um env faltando ou uma variável apagada à mão derruba a
@@ -62,6 +99,15 @@ FORCE_SCRIPT_NAME = os.environ.get("DJANGO_SCRIPT_NAME", "").rstrip("/") or None
 if FORCE_SCRIPT_NAME:
     SESSION_COOKIE_PATH = FORCE_SCRIPT_NAME
     CSRF_COOKIE_PATH = FORCE_SCRIPT_NAME
+
+
+# ---- Análise do Período escrita por IA (opcional) ----
+# Sem chave a aplicação sobe igual e o botão nem aparece na revisão: o texto do
+# motor de regras continua sendo o padrão. Estas duas NÃO levam o prefixo
+# DJANGO_ porque não são ajuste do Django — é credencial de terceiro, e o
+# deploy PRESERVA o valor entre publicações em vez de reescrevê-lo.
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "").strip() or "gpt-5"
 
 
 # Application definition

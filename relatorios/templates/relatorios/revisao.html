@@ -24,20 +24,16 @@
 {% if dados.aviso_indicador %}<div class="aviso">{{ dados.aviso_indicador }}</div>{% endif %}
 
 {# ------------------------------------------------------------------ #}
-{# Contexto informado que ainda não tinha entrado na análise           #}
+{# Resultado da última chamada à IA                                    #}
 {# ------------------------------------------------------------------ #}
-{% if contexto_aplicado_agora %}
-<div class="aviso"><div>O que você informou em <b>Contexto do período</b> ainda
-  não estava na análise — o texto abaixo acaba de ser recalculado com esses
-  campos. Confira e clique em <b>Gerar PDF</b>.</div></div>
-{% elif contexto_ignorado %}
-<div class="aviso"><div>O que você informou em <b>Contexto do período</b> não
-  está na análise abaixo, que foi editada à mão. <b>Regerar análise</b>
-  reescreve o texto com esses campos e descarta a edição — ou gere o PDF com o
-  texto como está.
-  <button class="botao botao-sec" type="submit" name="gerar_assim_mesmo" value="1">
-    Gerar assim mesmo
-  </button></div></div>
+{% if erro_ia %}
+<div class="aviso"><div><b>A análise por IA não foi gerada.</b> {{ erro_ia }}
+  O texto abaixo não foi tocado — dá para gerar o PDF com ele do mesmo
+  jeito.</div></div>
+{% elif analise_ia_gerada %}
+<div class="aviso"><div>Análise reescrita pela IA a partir dos números lidos.
+  <b>Leia antes de gerar o PDF</b>: o texto vai ao cliente como está.
+  {% for a in avisos_ia %}<br>{{ a }}{% endfor %}</div></div>
 {% endif %}
 
 {# ------------------------------------------------------------------ #}
@@ -211,62 +207,6 @@
 </div>
 
 {# ------------------------------------------------------------------ #}
-{# Contexto do período — o que o operador sabe e a planilha não        #}
-{# ------------------------------------------------------------------ #}
-{% if form.campos_contexto %}
-<div class="bloco">
-  <span class="bloco-idx">+</span>
-  <span class="bloco-nome">Contexto do período</span>
-  <span class="bloco-rule"></span>
-  <span class="bloco-meta">opcional</span>
-</div>
-<p class="legenda">Tudo opcional. O que for informado entra na análise ao
-  clicar em <b>Regerar análise</b> — o texto continua editável depois. Ir
-  direto ao <b>Gerar PDF</b> não perde o que está aqui: o relatório é segurado
-  até a análise refletir estes campos.</p>
-<div class="campos">
-  <div class="campo">
-    <label for="{{ form.mudanca.id_for_label }}">{{ form.mudanca.label }}</label>
-    {{ form.mudanca }}
-    <span class="ajuda">{{ form.mudanca.help_text }}</span>
-    {{ form.mudanca.errors }}
-  </div>
-  <div class="campo">
-    <label for="{{ form.problema.id_for_label }}">{{ form.problema.label }}</label>
-    {{ form.problema }}
-    <span class="ajuda">{{ form.problema.help_text }}</span>
-    {{ form.problema.errors }}
-  </div>
-  <div class="campo" id="campo-situacao">
-    <label>{{ form.situacao.label }}</label>
-    <div class="opcoes-radio">{{ form.situacao }}</div>
-    <span class="ajuda">Só vale havendo problema selecionado.</span>
-    {{ form.situacao.errors }}
-  </div>
-  <div class="campo">
-    <label for="{{ form.meta_cpa.id_for_label }}">{{ form.meta_cpa.label }}</label>
-    {{ form.meta_cpa }}
-    <span class="ajuda">{{ form.meta_cpa.help_text }}</span>
-    {{ form.meta_cpa.errors }}
-  </div>
-  <div class="campo campo-largo">
-    <label for="{{ form.passo.id_for_label }}">{{ form.passo.label }}</label>
-    {{ form.passo }}
-    <span class="ajuda">{{ form.passo.help_text }}</span>
-    {{ form.passo.errors }}
-  </div>
-  <div class="campo campo-largo">
-    <button class="botao botao-sec" type="submit" name="regerar" value="1">
-      Regerar análise
-    </button>
-    {% if regerado %}
-    <span class="ajuda">Análise recalculada com o contexto acima.</span>
-    {% endif %}
-  </div>
-</div>
-{% endif %}
-
-{# ------------------------------------------------------------------ #}
 {# 03 — nomes das contas, com os KPIs de cada uma à vista              #}
 {# ------------------------------------------------------------------ #}
 {% if pares_unidades %}
@@ -311,16 +251,27 @@
   <div class="resumo-item"><dt>Cliente</dt><dd>{{ dados.cliente }}</dd></div>
   <div class="resumo-item"><dt>Unidades</dt><dd class="num">{{ dados.unidades|length }}</dd></div>
   <div class="resumo-item"><dt>Período</dt><dd>{{ dados.periodo|default:"—" }}</dd></div>
-  <div class="resumo-item"><dt>Saída</dt><dd>PDF consolidado · 1 página</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>PDF consolidado · 1–2 páginas</dd></div>
   {% else %}
   <div class="resumo-item"><dt>Modo</dt><dd>Anexo único</dd></div>
   <div class="resumo-item"><dt>Cliente</dt><dd>{{ dados.cliente }}</dd></div>
   <div class="resumo-item"><dt>Período</dt><dd>{{ dados.periodo|default:"—" }}</dd></div>
-  <div class="resumo-item"><dt>Saída</dt><dd>PDF individual · 1 página</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>PDF individual · 1–2 páginas</dd></div>
   {% endif %}
 </dl>
 
 <div class="acao">
+  {# Acima do Gerar PDF porque vem antes na ordem de trabalho: escrever, #}
+  {# ler, e só então gerar o arquivo.                                    #}
+  {% if ia_disponivel %}
+  <button class="botao botao-sec botao-ia" type="submit" name="analise_ia"
+          value="1" id="btn-ia">
+    <span id="btn-ia-rotulo">Escrever análise com IA</span>
+  </button>
+  <p class="acao-nota">Reescreve a Análise do Período a partir dos números
+    lidos. Leva alguns segundos e o texto continua editável. Sem clicar,
+    vale o texto do motor de regras.</p>
+  {% endif %}
   <input type="hidden" name="download_token" id="download-token">
   <button class="botao" type="submit" id="btn-gerar">
     <span id="btn-rotulo">Gerar PDF</span>
@@ -356,9 +307,21 @@
     document.cookie.split('; ').find(c => c.startsWith(nome + '='))?.split('=')[1];
 
   form.addEventListener('submit', (ev) => {
-    // "Regerar análise" recarrega a própria tela: não há download para
-    // esperar, e prender o botão em "Gerando PDF…" deixaria a página travada.
-    if (ev.submitter && ev.submitter.name === 'regerar') return;
+    // "Escrever com IA" recarrega a própria tela — não há download para
+    // esperar. Prender o botão de PDF em "Gerando…" deixaria a página travada,
+    // então quem marca a espera é o próprio botão da IA, que demora segundos.
+    if (ev.submitter && ev.submitter.name === 'analise_ia') {
+      const rotulo = document.getElementById('btn-ia-rotulo');
+      if (rotulo) rotulo.textContent = 'Escrevendo…';
+      // Desabilitar dentro do próprio evento faz o navegador deixar o
+      // name/value do botão fora do POST — a view não saberia que a IA foi
+      // pedida. Sai da fila do evento antes de travar o clique duplo, que
+      // aqui custa uma chamada de API a mais.
+      setTimeout(() => { ev.submitter.disabled = true; }, 0);
+      statusEixo.classList.add('ativo');
+      statusTxt.textContent = 'Consultando a IA…';
+      return;
+    }
     btn.classList.add('carregando');
     btnRotulo.textContent = 'Gerando PDF…';
     btn.disabled = true;
@@ -379,23 +342,5 @@
       statusTxt.textContent = 'PDF baixado — ajuste e gere de novo, ou importe outros arquivos';
     }, 400);
   });
-
-  // "Situação do problema" só faz sentido havendo problema. Apagar em vez de
-  // esconder mantém o formulário parado no lugar — mesma escolha do painel.
-  const campoProblema = document.getElementById('id_problema');
-  const campoSituacao = document.getElementById('campo-situacao');
-  if (campoProblema && campoSituacao) {
-    const semProblema = new Set(['', 'sem_problema']);
-    const sincronizar = () => {
-      const off = semProblema.has(campoProblema.value);
-      campoSituacao.setAttribute('aria-disabled', off);
-      campoSituacao.querySelectorAll('input').forEach(i => {
-        i.disabled = off;
-        if (off) i.checked = false;
-      });
-    };
-    campoProblema.addEventListener('change', sincronizar);
-    sincronizar();
-  }
 </script>
 {% endblock %}

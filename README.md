@@ -36,10 +36,16 @@ painel, por anexo (em branco, cai no nome do arquivo).
 ## Rodando
 ```bash
 pip install -r requirements.txt
+cp .env.example .env
 python manage.py migrate
 python manage.py runserver
 ```
 Acesse http://127.0.0.1:8000/
+
+O `.env` é opcional: sem ele a aplicação sobe igual, só sem a análise por IA.
+Para ligá-la, cole a chave em `OPENAI_API_KEY=` **e reinicie o servidor** — o
+arquivo é lido no import do settings, não a cada requisição. O botão
+*Escrever análise com IA* aparece então na tela **02**, na coluna da direita.
 
 ### Dependências de sistema (WeasyPrint)
 O PDF é renderizado com **WeasyPrint**, que desenha o texto com Pango/HarfBuzz.
@@ -131,12 +137,17 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   precedência das referências), `rules.py` (`avaliar` classifica o período em
   ÓTIMO/BOM/ATENÇÃO, emite os sinais e escolhe o próximo passo; `avaliar_grupo`
   faz o mesmo para o grupo e mede cada unidade contra o CPA do grupo),
-  `contexto.py` (vocabulário do que o operador informa na revisão — fonte
-  única do formulário e do motor) e `templates.py` (`redigir`/`redigir_grupo`
+  `contexto.py` (vocabulário do contexto do período — hoje sem formulário na
+  tela, mas ainda aceito por `avaliar`/`avaliar_grupo`) e `templates.py` (`redigir`/`redigir_grupo`
   escrevem a partir dessa decisão, em 3 a 5 blocos rotulados, com ou sem
   números, para PDF ou WhatsApp). Testes em `relatorios/analysis/tests/`
+- `relatorios/redator_ia.py` — **Análise do Período escrita por IA** (OpenAI):
+  o prompt do operador na íntegra, o payload que o modelo recebe (com a lista
+  do que o relatório não tem) e a conversão da resposta para o que o PDF
+  aceita. `_chamar` é a única função do projeto que faz I/O de rede
 - `relatorios/gerador_pdf.py` — gerador do PDF individual/consolidado
-  (HTML + CSS → WeasyPrint, layout dark de dashboard em 1 página; donut
+  (HTML + CSS → WeasyPrint, layout dark de dashboard que flui em 1 ou mais
+  páginas conforme o texto e o nº de campanhas; donut
   via matplotlib embutido)
 - `relatorios/gerador_listagem.py` — gerador do PDF de listagem (paisagem,
   tabela 1 linha por conta, paginação no rodapé)
@@ -212,18 +223,33 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   sustentam o argumento. Ficam em `avaliacao["derivados"]`. O mesmo motor
   redige com todos os números (`incluir_numeros=True`) para destinos sem
   tabela.
-- Na tela **02 Revisar e gerar** há o bloco **Contexto do período**: o que
-  mudou (criativos, público, captação, orçamento), problema operacional e sua
-  situação, meta de custo por resultado e próximo passo — tudo opcional. O
-  botão *Regerar análise* recalcula o texto sem reenviar o anexo, e o contexto
-  fica na sessão. Preencher e ir direto ao *Gerar PDF* **não** perde o que foi
-  informado: o relatório é segurado e a tela volta com a análise recalculada,
-  para o operador ler antes de mandá-la ao cliente. Se o texto tiver sido
-  editado à mão, nada é sobrescrito — a tela pergunta, e *Gerar assim mesmo*
-  mantém o que o operador escreveu. As opções vivem em `analysis/contexto.py`,
-  fonte única do formulário e do motor; nenhuma delas muda a classificação,
-  que continua sendo do CPA. Com tudo vazio a saída é idêntica à de antes de
-  os campos existirem.
+- Na tela **02 Revisar e gerar**, o botão **Escrever com IA** reescreve a
+  Análise do Período com o prompt do operador (`relatorios/redator_ia.py`,
+  constante `PROMPT_OPERADOR` — é o produto, não mexa sem pedido). O motor de
+  regras continua sendo o texto padrão: a IA só entra por clique, e falha de
+  rede, de chave ou de crédito vira aviso na tela sem custar o relatório. O
+  modelo recebe um JSON com período, totais, recorte por campanha (ou por
+  unidade) e — o que segura a alucinação — a lista `dados_ausentes` do que o
+  relatório NÃO tem. O que volta é escapado antes de virar HTML (o template do
+  PDF renderiza com `|safe`), o `*asterisco*` vira `<b>`, a linha de período
+  repetida sai, e o texto longo vira aviso de 2ª página em vez de corte.
+  Sem `OPENAI_API_KEY` o botão não aparece e nada é chamado; a suíte roda
+  offline trocando `redator_ia._chamar`, a única função que fala com a rede.
+- A tela **02 Revisar e gerar** não tem mais o bloco *Contexto do período*
+  (removido em 12/08/2026, junto da meta de custo por resultado e do botão
+  *Regerar análise*): a análise chega pronta do motor e o operador ajusta o
+  texto no próprio textarea. O motor continua aceitando `contexto=` e
+  `meta_cpa=` (`analysis/contexto.py`, `rules.avaliar`) — o que saiu foi a
+  superfície da tela, não a capacidade.
+- **Toda campanha do anexo aparece no PDF** (12/08/2026): não há mais a linha
+  "Outras (N)" somando as menores, nem o agrupamento das fatias abaixo de 3%
+  no donut. Num relatório com uma campanha por cidade era justamente o custo
+  de cada praça que sumia. O PDF **flui em quantas páginas precisar**: o
+  rodapé é uma *margin box* do `@page` e se repete, a seção de análise não se
+  parte, e acima de 6 campanhas a tabela empilha em cima do donut — em
+  `display:flex` o WeasyPrint não parte a seção e ela pularia inteira de
+  página, deixando meia folha em branco. A lista de unidades do consolidado
+  saiu do rodapé (que é de altura fixa e a cortaria) e virou nota no fim.
 - A prévia da revisão de listagem/indicador é montada pelas mesmas funções
   que alimentam o PDF (`gerador_listagem.linha_conta`,
   `gerador_indicador.montar_tabela`) — o que se confere na tela é o que sai
@@ -238,6 +264,22 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   desenvolvimento é o `manage.py` — produção sobe por `gunicorn
   apex_reports.wsgi`, que não passa por ele —, então `python manage.py
   runserver` continua não precisando de variável nenhuma.
+- **`OPENAI_API_KEY` e `OPENAI_MODEL`** (esta com padrão `gpt-5`) ligam a
+  análise por IA e são as únicas variáveis sem o prefixo `DJANGO_`: são
+  credencial de terceiro, não ajuste do Django. Ausentes, a aplicação sobe
+  igual e o botão não aparece. A chave é digitada à mão em
+  `/etc/apex-reports/env` (o deploy não tem como gerá-la) e o `deploy.sh` a
+  **preserva** ao reescrever o arquivo — sem isso toda publicação a apagaria.
+  Há teste exigindo que toda variável lida pelo settings apareça no
+  `deploy.sh` **e** no `.env.example`.
+- Em desenvolvimento as variáveis saem de um **`.env` na raiz** (`cp
+  .env.example .env`), lido pelo `settings.carregar_env()` no import — doze
+  linhas escritas à mão, sem `python-dotenv`. **Variável já presente no
+  ambiente vence o arquivo**, que é o que mantém o `manage.py migrate` do
+  deploy rodando com as variáveis de produção. O `.env` é ignorado pelo git
+  (uma chave no repositório é uma chave pública, mesma regra da
+  `SECRET_KEY`); o versionado é o `.env.example`. Em produção o arquivo nem
+  existe: quem entrega tudo é o systemd.
 - A aplicação não tem modelos próprios, mas a sessão que liga a importação à
   tela de revisão é gravada no banco — `migrate` é obrigatório também em
   produção. Do Django ficam instalados só `sessions` e `staticfiles`: `admin`,
