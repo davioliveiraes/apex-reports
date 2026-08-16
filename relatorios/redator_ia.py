@@ -41,6 +41,15 @@ TIMEOUT = 90
 # aqui não é gasto: token não usado não é cobrado.
 MAX_TOKENS = 12000
 
+# Quanto o modelo pensa antes de escrever. Sem este parâmetro a OpenAI aplica
+# `medium`, e o relatório fica refém do que ela decidir mudar no padrão. Medido
+# no mesmo consolidado de 13 unidades, com o `gpt-5.6-sol`: `none` 0 tokens de
+# raciocínio, `low` 145, `medium` 334, `high` 375, `xhigh` 1495. `high` custa
+# quase o mesmo que o padrão e lê melhor a diferença entre as unidades — que é
+# justamente o trabalho aqui. `max` existe no modelo mas o endpoint
+# `chat.completions` o recusa com 400; só sai pelo `/v1/responses`.
+ESFORCO = "high"
+
 
 class ErroDeIA(RuntimeError):
     """Falha que o operador precisa ler na tela, já em português.
@@ -371,19 +380,19 @@ def disponivel():
     return bool(getattr(settings, "OPENAI_API_KEY", ""))
 
 
-def _codigo_do_erro(e):
-    """O `code` que a OpenAI manda junto do erro — `insufficient_quota`,
-    `model_not_found`, `invalid_api_key`.
+def _campo_do_erro(e, nome):
+    """Um campo do erro da OpenAI: `code` (`insufficient_quota`,
+    `model_not_found`, `invalid_api_key`) ou `param` (o parâmetro recusado).
 
-    A SDK expõe em `.code`, mas nem sempre o preenche (erros de conexão não
-    têm corpo nenhum); o corpo cru é a fonte que não varia.
+    A SDK expõe os dois como atributo, mas nem sempre os preenche (erro de
+    conexão não tem corpo nenhum); o corpo cru é a fonte que não varia.
     """
-    codigo = getattr(e, "code", None)
-    if codigo:
-        return codigo
+    valor = getattr(e, nome, None)
+    if valor:
+        return valor
     corpo = getattr(e, "body", None)
     if isinstance(corpo, dict) and isinstance(corpo.get("error"), dict):
-        return corpo["error"].get("code") or ""
+        return corpo["error"].get(nome) or ""
     return ""
 
 
@@ -395,7 +404,7 @@ def _classificar(e):
     separa um do outro é o `code` — `insufficient_quota` contra
     `rate_limit_exceeded`. Um pede recarga, o outro pede quinze segundos.
     """
-    codigo = _codigo_do_erro(e)
+    codigo = _campo_do_erro(e, "code")
     status = getattr(e, "status_code", None)
     classe = type(e).__name__
 
@@ -420,6 +429,15 @@ def _classificar(e):
             f"O modelo {settings.OPENAI_MODEL} não existe ou não está "
             "liberado para esta chave. Corrija o OPENAI_MODEL do ambiente e "
             "reinicie o serviço.")
+    # Nem todo modelo raciocina, e os que não raciocinam recusam o parâmetro
+    # em vez de o ignorar. É o erro que aparece ao trocar o OPENAI_MODEL por um
+    # modelo de conversa — e a mensagem crua não diz qual dos dois ceder.
+    if _campo_do_erro(e, "param") == "reasoning_effort":
+        return "modelo", (
+            f"O modelo {settings.OPENAI_MODEL} não aceita o esforço de "
+            f"raciocínio '{ESFORCO}' que este projeto pede. Ou configure em "
+            "OPENAI_MODEL um modelo de raciocínio, ou ajuste o ESFORCO em "
+            "relatorios/redator_ia.py.")
     # Sem `openai` importado aqui não dá para usar `isinstance`; o nome da
     # classe é o que a SDK garante em todas as versões da linha 1.x.
     if classe in ("APITimeoutError", "APIConnectionError"):
@@ -487,6 +505,7 @@ def _chamar(mensagens):
             model=settings.OPENAI_MODEL,
             messages=mensagens,
             max_completion_tokens=MAX_TOKENS,
+            reasoning_effort=ESFORCO,
         )
     except Exception as e:
         motivo, mensagem = _classificar(e)

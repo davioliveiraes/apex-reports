@@ -233,6 +233,8 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   relatório NÃO tem. O que volta é escapado antes de virar HTML (o template do
   PDF renderiza com `|safe`), o `*asterisco*` vira `<b>`, a linha de período
   repetida sai, e o texto longo vira aviso de 2ª página em vez de corte.
+  A requisição fixa o esforço de raciocínio em `high` (constante `ESFORCO`)
+  em vez de aceitar o padrão da OpenAI, que é dela para mudar quando quiser.
   Sem `OPENAI_API_KEY` o botão não aparece e nada é chamado; a suíte roda
   offline trocando `redator_ia._chamar`, a única função que fala com a rede.
 - A tela **02 Revisar e gerar** não tem mais o bloco *Contexto do período*

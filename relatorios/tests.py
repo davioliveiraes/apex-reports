@@ -16,7 +16,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import fitz  # PyMuPDF — extração de texto e contagem de páginas
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -875,12 +875,14 @@ class AnalisePorIATest(TestCase):
         self.assertIn('name="analise_ia"', html)
 
     # ---- de que a SDK falhou para o que a tela diz ----
-    def _erro_da_sdk(self, status=None, code=None, classe="APIStatusError"):
-        """Imita o erro que a SDK levanta: status HTTP e `code` no corpo."""
+    def _erro_da_sdk(self, status=None, code=None, classe="APIStatusError",
+                     param=None):
+        """Imita o erro da SDK: status HTTP, `code` e `param` no corpo."""
         e = type(classe, (Exception,), {})("Error code: %s" % status)
         e.status_code = status
-        if code:
-            e.body = {"error": {"code": code, "type": "insufficient_quota"}}
+        if code or param:
+            e.body = {"error": {"code": code, "type": "insufficient_quota",
+                                "param": param}}
         return e
 
     def test_credito_e_excesso_de_chamadas_nao_se_confundem(self):
@@ -899,6 +901,10 @@ class AnalisePorIATest(TestCase):
         casos = [
             (self._erro_da_sdk(401, "invalid_api_key"), "chave", "OPENAI_API_KEY"),
             (self._erro_da_sdk(404, "model_not_found"), "modelo", "modelo-de-teste"),
+            # Modelo que não raciocina recusa o parâmetro em vez de o ignorar.
+            (self._erro_da_sdk(400, "unsupported_value",
+                               param="reasoning_effort"),
+             "modelo", "esforço de raciocínio"),
             (self._erro_da_sdk(500), "servico", "instabilidade"),
             (self._erro_da_sdk(classe="APITimeoutError"), "rede", "90 segundos"),
             (ValueError("coisa nunca vista"), "desconhecido", "coisa nunca vista"),
@@ -914,6 +920,36 @@ class AnalisePorIATest(TestCase):
         e = self._erro_da_sdk(429)
         e.code = "insufficient_quota"
         self.assertEqual(redator_ia._classificar(e)[0], "credito")
+
+    def test_a_requisicao_leva_modelo_teto_e_esforco_de_raciocinio(self):
+        """O que sai na chamada — a parte que nenhum outro teste enxerga.
+
+        Os demais trocam `_chamar` inteiro por uma resposta fixa, então o
+        `reasoning_effort` poderia sumir da requisição sem quebrar nada: sem
+        ele a OpenAI aplica o padrão dela, e o relatório muda de tom no dia em
+        que esse padrão mudar.
+        """
+        resposta = SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason="stop",
+            message=SimpleNamespace(content="texto do modelo", refusal=None))])
+        criar = MagicMock(return_value=resposta)
+        cliente = SimpleNamespace(chat=SimpleNamespace(
+            completions=SimpleNamespace(create=criar)))
+
+        with patch("openai.OpenAI", return_value=cliente):
+            texto = redator_ia._chamar([{"role": "user", "content": "x"}])
+
+        self.assertEqual(texto, "texto do modelo")
+        kwargs = criar.call_args.kwargs
+        self.assertEqual(kwargs["model"], "modelo-de-teste")
+        self.assertEqual(kwargs["max_completion_tokens"], redator_ia.MAX_TOKENS)
+        self.assertEqual(kwargs["reasoning_effort"], redator_ia.ESFORCO)
+
+    def test_o_esforco_configurado_e_um_dos_que_a_api_aceita(self):
+        """`chat.completions` recusa `max` com 400 — só o `/v1/responses` o
+        aceita, e não é por ele que este projeto fala."""
+        self.assertIn(redator_ia.ESFORCO,
+                      ("none", "low", "medium", "high", "xhigh"))
 
     # ---- HTTP 200 sem texto dentro ----
     def _escolha_vazia(self, finish_reason, refusal=None):
