@@ -15,6 +15,7 @@ import sys
 import tempfile
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import fitz  # PyMuPDF — extração de texto e contagem de páginas
@@ -913,6 +914,40 @@ class AnalisePorIATest(TestCase):
         e = self._erro_da_sdk(429)
         e.code = "insufficient_quota"
         self.assertEqual(redator_ia._classificar(e)[0], "credito")
+
+    # ---- HTTP 200 sem texto dentro ----
+    def _escolha_vazia(self, finish_reason, refusal=None):
+        """Imita `resposta.choices[0]` quando o modelo não escreveu nada."""
+        return SimpleNamespace(
+            finish_reason=finish_reason,
+            message=SimpleNamespace(content="", refusal=refusal))
+
+    def test_teto_estourado_nao_convida_a_clicar_de_novo(self):
+        """`length` sem texto é o raciocínio tendo comido o MAX_TOKENS inteiro.
+
+        Repetir gasta de novo para receber o mesmo nada — daí ser definitivo —,
+        e a mensagem precisa apontar o teto, porque a conta do operador está
+        boa e mandá-lo conferir chave ou saldo é despistá-lo.
+        """
+        motivo, msg = redator_ia._diagnosticar_vazio(
+            self._escolha_vazia("length"))
+        self.assertEqual(motivo, "teto")
+        self.assertIn(motivo, redator_ia.DEFINITIVOS)
+        self.assertIn(str(redator_ia.MAX_TOKENS), msg)
+
+    def test_recusa_do_modelo_chega_inteira_na_tela(self):
+        motivo, msg = redator_ia._diagnosticar_vazio(
+            self._escolha_vazia("stop", refusal="não escrevo sobre isso"))
+        self.assertEqual(motivo, "vazio")
+        self.assertIn("não escrevo sobre isso", msg)
+
+    def test_vazio_inexplicado_guarda_o_finish_reason_e_mantem_o_botao(self):
+        """Sem o `finish_reason` na mensagem não sobra pista nenhuma."""
+        motivo, msg = redator_ia._diagnosticar_vazio(
+            self._escolha_vazia("content_filter"))
+        self.assertEqual(motivo, "vazio")
+        self.assertNotIn(motivo, redator_ia.DEFINITIVOS)
+        self.assertIn("content_filter", msg)
 
     # ---- consolidado ----
     def test_consolidado_manda_as_unidades_e_aceita_o_texto(self):

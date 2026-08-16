@@ -107,7 +107,7 @@ if FORCE_SCRIPT_NAME:
 # DJANGO_ porque não são ajuste do Django — é credencial de terceiro, e o
 # deploy PRESERVA o valor entre publicações em vez de reescrevê-lo.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "").strip() or "gpt-5"
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "").strip() or "gpt-5.6-sol"
 
 
 # Application definition

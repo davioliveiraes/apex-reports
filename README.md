@@ -264,7 +264,7 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   desenvolvimento é o `manage.py` — produção sobe por `gunicorn
   apex_reports.wsgi`, que não passa por ele —, então `python manage.py
   runserver` continua não precisando de variável nenhuma.
-- **`OPENAI_API_KEY` e `OPENAI_MODEL`** (esta com padrão `gpt-5`) ligam a
+- **`OPENAI_API_KEY` e `OPENAI_MODEL`** (esta com padrão `gpt-5.6-sol`) ligam a
   análise por IA e são as únicas variáveis sem o prefixo `DJANGO_`: são
   credencial de terceiro, não ajuste do Django. Ausentes, a aplicação sobe
   igual e o botão não aparece. A chave é digitada à mão em

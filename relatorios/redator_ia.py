@@ -32,10 +32,14 @@ from .analysis import templates as _templates
 # erro e deixá-lo clicar de novo do que segurar o gunicorn.
 TIMEOUT = 90
 
-# Teto de tokens da resposta. A análise pedida tem 300 palavras; a folga existe
-# porque modelos de raciocínio consomem tokens antes de escrever a primeira
-# letra, e um teto curto devolve resposta vazia em vez de resposta cortada.
-MAX_TOKENS = 4000
+# Teto de tokens da resposta. A análise pedida tem 300 palavras — cabem em 700
+# tokens —, mas este teto NÃO é só do texto: nos modelos de raciocínio ele
+# cobre também os tokens gastos antes da primeira letra, e estourá-lo devolve
+# resposta VAZIA, não resposta cortada. Medido num consolidado de 13 unidades:
+# o `gpt-5` queimou 2880 tokens de raciocínio para escrever 378 de texto — 81%
+# de um teto de 4000, margem que um relatório maior consome sozinho. A folga
+# aqui não é gasto: token não usado não é cobrado.
+MAX_TOKENS = 12000
 
 
 class ErroDeIA(RuntimeError):
@@ -51,9 +55,10 @@ class ErroDeIA(RuntimeError):
 
 
 # Motivos em que clicar de novo dá exatamente o mesmo erro: não é a rede nem o
-# momento, é a conta. A tela pinta o aviso de vermelho e esconde o botão, em
-# vez de convidar o operador a repetir uma chamada que já se sabe perdida.
-DEFINITIVOS = ("credito", "chave", "modelo")
+# momento, é a conta (`credito`, `chave`, `modelo`) ou a configuração deste
+# arquivo (`teto`). A tela pinta o aviso de vermelho e esconde o botão, em vez
+# de convidar o operador a repetir uma chamada que já se sabe perdida.
+DEFINITIVOS = ("credito", "chave", "modelo", "teto")
 
 
 # ----------------------------------------------------------------------
@@ -431,6 +436,38 @@ def _classificar(e):
         f"A chamada ao modelo {settings.OPENAI_MODEL} falhou: {e}")
 
 
+def _diagnosticar_vazio(escolha):
+    """`(motivo, mensagem)` para uma resposta HTTP 200 sem texto dentro.
+
+    Chegar aqui já prova uma coisa que a mensagem antiga punha em dúvida: o
+    modelo existe e a chave o alcança — nome errado teria virado 404 lá em
+    cima, em `_classificar`. O que sobra é o `finish_reason`, e ele separa dois
+    casos que pedem ações opostas do operador:
+
+    - `length` num modelo de raciocínio quase nunca é texto cortado no meio. É
+      o raciocínio tendo consumido `MAX_TOKENS` inteiro antes de escrever a
+      primeira letra. Clicar de novo repete o gasto, então é definitivo.
+    - o resto é a resposta estranha e rara, em que repetir costuma resolver.
+    """
+    razao = getattr(escolha, "finish_reason", None)
+    if razao == "length":
+        return "teto", (
+            f"O modelo {settings.OPENAI_MODEL} gastou os {MAX_TOKENS} tokens "
+            "da resposta raciocinando e não sobrou nada escrito. Isso é ajuste "
+            "do sistema, não da sua conta: aumente o MAX_TOKENS em "
+            "relatorios/redator_ia.py ou configure um OPENAI_MODEL que "
+            "raciocine menos.")
+    recusa = (getattr(escolha.message, "refusal", None) or "").strip()
+    if recusa:
+        return "vazio", (
+            f"O modelo {settings.OPENAI_MODEL} se recusou a escrever esta "
+            f"análise: {recusa}")
+    return "vazio", (
+        f"O modelo {settings.OPENAI_MODEL} respondeu sem texto "
+        f"(finish_reason={razao!r}). Tente de novo — se repetir, o modelo "
+        "configurado em OPENAI_MODEL pode não servir para esta tarefa.")
+
+
 def _chamar(mensagens):
     """A única função deste projeto que faz I/O de rede.
 
@@ -455,12 +492,11 @@ def _chamar(mensagens):
         motivo, mensagem = _classificar(e)
         raise ErroDeIA(mensagem, motivo) from e
 
-    texto = (resposta.choices[0].message.content or "").strip()
+    escolha = resposta.choices[0]
+    texto = (escolha.message.content or "").strip()
     if not texto:
-        raise ErroDeIA(
-            f"O modelo {settings.OPENAI_MODEL} respondeu vazio. Tente de novo; "
-            "persistindo, confira se o modelo configurado em OPENAI_MODEL "
-            "existe na sua conta.", "vazio")
+        motivo, mensagem = _diagnosticar_vazio(escolha)
+        raise ErroDeIA(mensagem, motivo)
     return texto
 
 
