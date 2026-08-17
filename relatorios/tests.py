@@ -921,6 +921,33 @@ class AnalisePorIATest(TestCase):
         e.code = "insufficient_quota"
         self.assertEqual(redator_ia._classificar(e)[0], "credito")
 
+    def test_o_prompt_leva_o_limite_da_pagina_e_ele_muda_com_o_modo(self):
+        """No consolidado sobra menos folha: a tabela de unidades come o resto.
+
+        Fosse um número fixo escrito no prompt, um dos dois modos escreveria
+        para o limite do outro — e no consolidado errar para cima é o cliente
+        recebendo um PDF de duas folhas.
+        """
+        def sistema_de(modo):
+            with patch("relatorios.redator_ia._chamar", return_value="x") as c:
+                redator_ia.gerar({"modo": modo})
+            return c.call_args[0][0][0]["content"]
+
+        reserva = redator_ia.RESERVA_DO_CABECALHO
+        self.assertIn(f"máximo {templates.LIMITE_PDF_GRUPO - reserva} "
+                      "caracteres", sistema_de("grupo"))
+        self.assertIn(f"máximo {templates.LIMITE_PDF - reserva} caracteres",
+                      sistema_de("individual"))
+
+    def test_o_tamanho_pedido_e_faixa_e_nao_so_teto(self):
+        """Só o teto fez o modelo tratá-lo como alvo a evitar: ele escrevia
+        70% do que cabia e a análise saía curta à toa."""
+        regra = redator_ia._regra_de_tamanho(templates.LIMITE_PDF_GRUPO)
+        cabe = templates.LIMITE_PDF_GRUPO - redator_ia.RESERVA_DO_CABECALHO
+        teto = int(cabe / redator_ia.CHARS_POR_PALAVRA)
+        self.assertIn(f"entre {int(teto * redator_ia.PISO)} e", regra)
+        self.assertLess(int(teto * redator_ia.PISO), teto)
+
     def test_a_requisicao_leva_modelo_teto_e_esforco_de_raciocinio(self):
         """O que sai na chamada — a parte que nenhum outro teste enxerga.
 

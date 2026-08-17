@@ -235,6 +235,12 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   repetida sai, e o texto longo vira aviso de 2ª página em vez de corte.
   A requisição fixa o esforço de raciocínio em `high` (constante `ESFORCO`)
   em vez de aceitar o padrão da OpenAI, que é dela para mudar quando quiser.
+  O tamanho pedido ao modelo é calculado, não escrito no prompt: o bloco
+  `_regra_de_tamanho` fecha uma **faixa** de palavras a partir do limite da
+  página do modo (1125 caracteres no consolidado, 1674 no individual), porque
+  o consolidado tem menos folha e um número fixo serviria a só um dos dois.
+  Faixa e não teto — pedindo só o máximo, o modelo o trata como alvo a evitar
+  e devolve análise curta à toa.
   Sem `OPENAI_API_KEY` o botão não aparece e nada é chamado; a suíte roda
   offline trocando `redator_ia._chamar`, a única função que fala com a rede.
 - A tela **02 Revisar e gerar** não tem mais o bloco *Contexto do período*

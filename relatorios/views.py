@@ -9,7 +9,6 @@ from django.http import FileResponse
 from django.shortcuts import redirect, render
 
 from . import redator_ia
-from .analysis import templates as templates_analise
 from .forms import (RevisaoForm, RevisaoGrupoForm, RevisaoIndicadorForm,
                     RevisaoListagemForm, UploadForm)
 from .gerador_indicador import gerar_indicador, montar_tabela
@@ -296,9 +295,10 @@ def _analisar_com_ia(request, dados, form):
                       "erro_ia_definitivo": definitivo,
                       "ia_disponivel": redator_ia.disponivel() and not definitivo}
 
-    limite = (templates_analise.LIMITE_PDF_GRUPO if dados.get("modo") == "grupo"
-              else templates_analise.LIMITE_PDF)
-    texto, avisos = redator_ia.para_pdf(bruto, limite=limite)
+    # O mesmo limite que o prompt pediu ao modelo: fossem dois números, a IA
+    # escreveria para um e o operador seria avisado pelo outro.
+    texto, avisos = redator_ia.para_pdf(
+        bruto, limite=redator_ia.limite_do_texto(dados))
 
     # O bruto fica guardado com os asteriscos: é ele que serve para o WhatsApp,
     # e regerar a mesma análise só para mudar de destino custaria outra chamada.

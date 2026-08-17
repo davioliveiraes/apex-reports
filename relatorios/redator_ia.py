@@ -142,7 +142,7 @@ A resposta deve ter:
 
 Cada parágrafo deve ter aproximadamente 3 a 4 linhas em uma mensagem de WhatsApp.
 
-A resposta completa deve ter aproximadamente 220 a 300 palavras no máximo.
+A resposta completa deve caber no limite informado em TAMANHO MÁXIMO, mais abaixo. Esse limite manda sobre qualquer estimativa de palavras.
 
 ## FORMATO DA RESPOSTA
 
@@ -234,6 +234,61 @@ Texto puro, em português do Brasil. O único destaque permitido é o *asterisco
 simples*, e só nas duas linhas de cabeçalho. Nada de markdown, títulos,
 listas, emoji ou HTML. Sem preâmbulo e sem despedida: a primeira linha da
 resposta é a linha do período analisado."""
+
+
+# Quanto do limite da página NÃO é análise. O `para_pdf` joga fora a linha do
+# período mas conta a da classificação, já com as tags `<b></b>` que ele
+# acrescenta, mais os `\n\n` entre os quatro blocos: 40 caracteres no pior
+# caso ("ATENÇÃO"). Os 20 restantes são a margem entre "encostou no limite" e
+# "virou segunda página" — o modelo acerta o comprimento por aproximação, não
+# contando letras.
+RESERVA_DO_CABECALHO = 60
+
+# Caracteres por palavra em português, espaço incluído, medido nas respostas
+# reais deste prompt (~6,3). Palavras são o que o modelo consegue controlar;
+# caracteres são o que a página cobra. A conversão mora aqui para o prompt
+# poder pedir as duas coisas sem que uma desminta a outra.
+CHARS_POR_PALAVRA = 6.5
+
+# Onde começa a faixa aceitável, como fração do teto. Só o teto, medido, fez o
+# modelo tratá-lo como alvo a evitar: no consolidado ele escrevia 750 dos 1065
+# caracteres disponíveis, jogando fora 30% da análise que cabia na página. O
+# piso existe para o espaço da folha ser usado, não só respeitado.
+PISO = 0.8
+
+
+def limite_do_texto(dados):
+    """Quantos caracteres de análise cabem na página deste relatório.
+
+    Consolidado sobra menos: a tabela de unidades come a folha. O número é o
+    mesmo que o `para_pdf` usa para avisar — se as duas contas discordassem, o
+    modelo escreveria para um limite e o operador seria avisado por outro.
+    """
+    return (_templates.LIMITE_PDF_GRUPO if dados.get("modo") == "grupo"
+            else _templates.LIMITE_PDF)
+
+
+def _regra_de_tamanho(limite):
+    """O teto de tamanho, que o prompt do operador não tem como saber.
+
+    Ele fala em 3 parágrafos de 3 a 4 linhas de WhatsApp — medida de tela de
+    celular, não de folha A4 com tabela em cima. Quem conhece o espaço que
+    sobra é a aplicação, e é ela que fecha o número aqui.
+    """
+    cabe = limite - RESERVA_DO_CABECALHO
+    teto = int(cabe / CHARS_POR_PALAVRA)
+    return f"""
+
+## TAMANHO MÁXIMO
+
+Os 3 parágrafos de análise, somados, devem ter entre {int(teto * PISO)} e
+{teto} palavras — no máximo {cabe} caracteres.
+
+O teto não é meta, é o que cabe na folha: passar dele empurra a análise para
+uma segunda página do PDF. Mas ficar bem abaixo também é erro — o espaço é do
+cliente, e análise curta demais entrega menos leitura do que o relatório
+comporta. Escreva perto do limite sem ultrapassá-lo, distribuindo o espaço
+entre os 3 parágrafos."""
 
 
 # ----------------------------------------------------------------------
@@ -528,8 +583,10 @@ def gerar(dados):
         raise ErroDeIA("Nenhuma chave de API configurada: defina OPENAI_API_KEY "
                        "no ambiente (em produção, /etc/apex-reports/env).",
                        "chave")
+    sistema = (PROMPT_OPERADOR + REGRAS_DE_ENTRADA
+               + _regra_de_tamanho(limite_do_texto(dados)))
     return _chamar([
-        {"role": "system", "content": PROMPT_OPERADOR + REGRAS_DE_ENTRADA},
+        {"role": "system", "content": sistema},
         {"role": "user", "content": json.dumps(montar_payload(dados),
                                                ensure_ascii=False, indent=1)},
     ])
