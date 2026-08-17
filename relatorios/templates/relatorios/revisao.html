@@ -24,6 +24,20 @@
 {% if dados.aviso_indicador %}<div class="aviso">{{ dados.aviso_indicador }}</div>{% endif %}
 
 {# ------------------------------------------------------------------ #}
+{# Resultado da última seleção de campanhas                            #}
+{# ------------------------------------------------------------------ #}
+{% if erro_campanhas %}
+<div class="erro"><div>{{ erro_campanhas }}</div></div>
+{% elif campanhas_aplicadas %}
+<div class="aviso"><div><b>Relatório refeito com as campanhas selecionadas.</b>
+  Todos os números foram recalculados{% if not modo_listagem %}, inclusive a
+  Análise do Período — texto escrito à mão ou pela IA foi substituído pelo do
+  motor de regras{% endif %}.
+  {% if unidades_fora %}<br>{{ unidades_fora }} anexo{{ unidades_fora|pluralize }}
+  fora do relatório, por não ter campanha dos grupos marcados.{% endif %}</div></div>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
 {# Resultado da última chamada à IA                                    #}
 {# ------------------------------------------------------------------ #}
 {% if erro_ia %}
@@ -40,10 +54,45 @@
 {% endif %}
 
 {# ------------------------------------------------------------------ #}
-{# 01 — o que foi lido dos anexos                                      #}
+{# 01 — quais campanhas entram (só quando há mais de um grupo)          #}
 {# ------------------------------------------------------------------ #}
+{% comment %}
+Os grupos saem dos dois primeiros colchetes do nome da campanha — o produto
+anunciado. As campanhas de cada grupo ficam à vista para o agrupamento poder
+ser conferido: se ele errar, é aqui que se percebe.
+{% endcomment %}
+{% if pares_campanhas %}
 <div class="bloco">
   <span class="bloco-idx">01</span>
+  <span class="bloco-nome">Campanhas incluídas</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">{{ pares_campanhas|length }} grupos</span>
+</div>
+<div class="grupos">
+  {% for caixa, grupo in pares_campanhas %}
+  <label class="grupo-row" for="{{ caixa.id_for_label }}">
+    {{ caixa.tag }}
+    <span class="grupo-corpo">
+      <span class="grupo-nome">{{ grupo.chave }}</span>
+      <span class="grupo-meta">{{ grupo.campanhas|length }} campanha{{ grupo.campanhas|pluralize }}
+        em {{ grupo.anexos }} anexo{{ grupo.anexos|pluralize }}
+        {% if grupo.campanhas %}· {{ grupo.campanhas|join:" · " }}{% endif %}</span>
+    </span>
+  </label>
+  {% endfor %}
+</div>
+{{ form.campanhas.errors }}
+<button class="botao botao-sec botao-inline" type="submit"
+        name="aplicar_campanhas" value="1">Aplicar seleção</button>
+<p class="legenda">Refaz a leitura dos anexos só com o que estiver marcado, sem
+  reenviar arquivo. Anexo que ficar sem nenhuma campanha sai do relatório.</p>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+{# 02 — o que foi lido dos anexos                                      #}
+{# ------------------------------------------------------------------ #}
+<div class="bloco">
+  <span class="bloco-idx">{% if pares_campanhas %}02{% else %}01{% endif %}</span>
   <span class="bloco-nome">{% if modo_listagem or modo_indicador %}Prévia{% else %}Números lidos{% endif %}</span>
   <span class="bloco-rule"></span>
 </div>
@@ -142,10 +191,10 @@
 {% endif %}
 
 {# ------------------------------------------------------------------ #}
-{# 02 — o que o operador edita antes de gerar                          #}
+{# 03 — o que o operador edita antes de gerar                          #}
 {# ------------------------------------------------------------------ #}
 <div class="bloco">
-  <span class="bloco-idx">02</span>
+  <span class="bloco-idx">{% if pares_campanhas %}03{% else %}02{% endif %}</span>
   <span class="bloco-nome">{% if modo_listagem or modo_indicador %}Identificação{% else %}Textos do PDF{% endif %}</span>
   <span class="bloco-rule"></span>
 </div>
@@ -210,11 +259,11 @@
 </div>
 
 {# ------------------------------------------------------------------ #}
-{# 03 — nomes das contas, com os KPIs de cada uma à vista              #}
+{# 04 — nomes das contas, com os KPIs de cada uma à vista              #}
 {# ------------------------------------------------------------------ #}
 {% if pares_unidades %}
 <div class="bloco">
-  <span class="bloco-idx">03</span>
+  <span class="bloco-idx">{% if pares_campanhas %}04{% else %}03{% endif %}</span>
   <span class="bloco-nome">Nomes no relatório</span>
   <span class="bloco-rule"></span>
   <span class="bloco-meta">{{ pares_unidades|length }}</span>
@@ -310,6 +359,13 @@
     document.cookie.split('; ').find(c => c.startsWith(nome + '='))?.split('=')[1];
 
   form.addEventListener('submit', (ev) => {
+    // "Aplicar seleção" também recarrega a tela em vez de baixar arquivo — e é
+    // rápido, porque nenhuma planilha é reaberta.
+    if (ev.submitter && ev.submitter.name === 'aplicar_campanhas') {
+      statusEixo.classList.add('ativo');
+      statusTxt.textContent = 'Refazendo a leitura…';
+      return;
+    }
     // "Escrever com IA" recarrega a própria tela — não há download para
     // esperar. Prender o botão de PDF em "Gerando…" deixaria a página travada,
     // então quem marca a espera é o próprio botão da IA, que demora segundos.

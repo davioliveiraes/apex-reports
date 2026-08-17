@@ -155,7 +155,30 @@ class _ComUnidades(forms.Form):
                 for i, atual in enumerate(atuais)]
 
 
-class RevisaoGrupoForm(_ComUnidades):
+class _ComCampanhas(forms.Form):
+    """Seleção dos grupos de campanha que entram no relatório.
+
+    O campo só nasce quando há mais de um grupo nos anexos: com um só não há
+    escolha a fazer, e uma caixa marcada sozinha seria ruído na tela.
+
+    `required=False` de propósito. Quem consome a seleção é o botão *Aplicar
+    seleção*; o *Gerar PDF* trabalha sobre o que já está na sessão, e travá-lo
+    por causa das caixas prenderia o relatório numa escolha que ele nem lê. A
+    recusa de uma seleção vazia é da view, junto do clique que a usa.
+    """
+
+    def __init__(self, *args, grupos_campanha=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.grupos_campanha = list(grupos_campanha)
+        if len(self.grupos_campanha) > 1:
+            self.fields["campanhas"] = forms.MultipleChoiceField(
+                label="Campanhas incluídas", required=False,
+                choices=[(g, g) for g in self.grupos_campanha],
+                widget=forms.CheckboxSelectMultiple,
+            )
+
+
+class RevisaoGrupoForm(_ComCampanhas, _ComUnidades):
     """Etapa 2 no modo consolidado (2+ anexos): nomes das unidades + análise geral."""
 
     cliente = forms.CharField(label="Nome do grupo / cliente", max_length=120)
@@ -168,7 +191,7 @@ class RevisaoGrupoForm(_ComUnidades):
     )
 
 
-class RevisaoListagemForm(_ComUnidades):
+class RevisaoListagemForm(_ComCampanhas, _ComUnidades):
     """Etapa 2 do modo Listagem: título do PDF, período e nomes das contas."""
     titulo = forms.CharField(
         label="Título do relatório", max_length=120, required=False,

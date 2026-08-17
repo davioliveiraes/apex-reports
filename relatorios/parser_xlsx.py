@@ -7,6 +7,7 @@ consolida os KPIs do período, monta o funil de vendas e os dados dos gráficos
 (funil visual e share de resultados por campanha/unidade).
 """
 
+import re
 import unicodedata
 from dataclasses import asdict
 from datetime import date, datetime
@@ -151,6 +152,62 @@ def filtrar_veiculacao(registros, veiculacao):
     return [r for r in registros if campanha_ativa(r.get("veiculacao")) is ativa]
 
 
+# ----------------------------------------------------------------------
+# Grupos de campanha (o produto anunciado, lido do nome da campanha)
+# ----------------------------------------------------------------------
+# Rótulo do grupo das linhas cujo nome de campanha veio em branco. Elas não
+# somem no filtro: aparecem como um grupo à parte, para o operador decidir —
+# descartar em silêncio verba que não dá para atribuir seria pior.
+GRUPO_SEM_NOME = "(campanha sem nome)"
+
+_TOKENS_DO_NOME = re.compile(r"\[([^\]]*)\]")
+
+
+def chave_grupo_campanha(nome):
+    """Grupo a que a campanha pertence — na prática, o produto anunciado.
+
+    O padrão de nome em uso é `[OBJETIVO][PRODUTO][REGIÃO][ESTRUTURA][DATA]`, e
+    são os dois primeiros colchetes que se repetem entre as unidades:
+    `[LEADS][CELULAR-BOLETO][SALTO][ABO][13JUL26]` e
+    `[LEADS][CELULAR-BOLETO][ITU][ABO][01SET25]` caem os dois em
+    "LEADS · CELULAR-BOLETO", enquanto `[LEADS][ULTRA][ABO][24JUL26]` fica à
+    parte. Região e data ficam de fora de propósito: são justamente o que varia
+    entre anexos do mesmo produto, e é por produto que se quer recortar.
+
+    Nome fora do padrão vira grupo dele mesmo — aí o operador escolhe campanha
+    por campanha, que é o pior caso aceitável, não um erro.
+    """
+    tokens = [t.strip() for t in _TOKENS_DO_NOME.findall(str(nome or "")) if t.strip()]
+    if len(tokens) >= 2:
+        return " · ".join(tokens[:2])
+    return str(nome or "").strip() or GRUPO_SEM_NOME
+
+
+def grupos_de_campanha(registros):
+    """Grupos presentes nestes registros, na ordem em que aparecem:
+    `[{"chave": ..., "campanhas": [nomes]}]`."""
+    grupos = {}
+    for r in registros:
+        nome = str(r.get("campanha") or "").strip()
+        campanhas = grupos.setdefault(chave_grupo_campanha(nome), [])
+        if nome and nome not in campanhas:
+            campanhas.append(nome)
+    return [{"chave": k, "campanhas": v} for k, v in grupos.items()]
+
+
+def filtrar_campanhas(registros, chaves):
+    """Linhas dos grupos de campanha escolhidos.
+
+    `chaves` vazio ou None não filtra nada — mesma convenção de
+    VEICULACAO_TODAS, e o que faz o fluxo sem seleção seguir como sempre foi.
+    """
+    if not chaves:
+        return list(registros)
+    escolhidos = set(chaves)
+    return [r for r in registros
+            if chave_grupo_campanha(r.get("campanha")) in escolhidos]
+
+
 def _mapear_colunas(header):
     """Retorna {chave: índice}. Prioriza match exato; depois 'contém', respeitando exclusões."""
     normalizados = [_norm(h) for h in header]
@@ -229,7 +286,15 @@ def ler_registros(arquivo):
             continue
         reg = {}
         for chave, idx in mapa.items():
-            reg[chave] = linha[idx] if idx < len(linha) else None
+            valor = linha[idx] if idx < len(linha) else None
+            # As colunas de período vêm ora como texto ISO, ora como data
+            # tipada, conforme o arquivo que o Meta gerou. Normaliza aqui
+            # porque os registros vão para a sessão, que serializa em JSON e
+            # não sabe gravar `date` — `_fmt_data` e `_dias_periodo` já leem o
+            # texto ISO, então nada além disto muda.
+            if isinstance(valor, date):
+                valor = valor.strftime("%Y-%m-%d")
+            reg[chave] = valor
         # Ignora linhas de total do próprio export
         nome_ref = _norm(reg.get("anuncio") or reg.get("conjunto") or reg.get("campanha"))
         if nome_ref.startswith(("total", "resultados de")):

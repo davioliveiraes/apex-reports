@@ -15,8 +15,9 @@ from .gerador_indicador import gerar_indicador, montar_tabela
 from .gerador_listagem import gerar_listagem, montar_linhas
 from .gerador_pdf import gerar_relatorio
 from .parser_xlsx import (VEICULACAO_TODAS, VEICULACOES, consolidar,
-                          consolidar_grupo, filtrar_veiculacao, ler_export_meta,
-                          ler_registros, montar_composicao)
+                          consolidar_grupo, filtrar_campanhas,
+                          filtrar_veiculacao, grupos_de_campanha,
+                          ler_export_meta, ler_registros, montar_composicao)
 
 SESSION_KEY = "relatorio_apex"
 
@@ -40,7 +41,7 @@ def index(request):
                 variantes=modo == UploadForm.MODO_INDICADOR)
             if not erro:
                 if modo in (UploadForm.MODO_LISTAGEM, UploadForm.MODO_INDICADOR):
-                    request.session[SESSION_KEY] = {
+                    sessao = {
                         "modo": modo,
                         "titulo": form.cleaned_data["titulo"],
                         "cliente": form.cleaned_data["cliente"],
@@ -51,6 +52,9 @@ def index(request):
                                     "tem_veiculacao": c.get("tem_veiculacao", False)}
                                    for c in lidos],
                     }
+                    if modo == UploadForm.MODO_LISTAGEM:
+                        sessao.update(_fonte_reconsolidacao(lidos))
+                    request.session[SESSION_KEY] = sessao
                     return redirect("revisao")
                 if modo == UploadForm.MODO_UNICO:
                     # `_num` fica na sessão (o consolidado sempre precisou
@@ -59,6 +63,7 @@ def index(request):
                     dados = lidos[0]["dados"]
                 else:
                     dados = consolidar_grupo(lidos)
+                    dados.update(_fonte_reconsolidacao(lidos))
                 dados["cliente"] = form.cleaned_data["cliente"]
                 request.session[SESSION_KEY] = dados
                 return redirect("revisao")
@@ -156,7 +161,8 @@ def _ler_arquivos(arquivos, nomes=None, variantes=False):
             )
         digitado = (nomes[i] if i < len(nomes) else "").strip()
         nome = digitado or _nome_unidade(f.name)
-        conta = {"nome": nome, "dados": consolidar(registros, mapa, nome)}
+        conta = {"nome": nome, "registros": registros, "mapa": mapa,
+                 "dados": consolidar(registros, mapa, nome)}
         if variantes:
             # Filtro sem nenhuma campanha → None: a conta entra no PDF como
             # "—", fora do total, em vez de virar uma linha de zeros.
@@ -189,6 +195,114 @@ def _contas_veiculacao(contas, veiculacao):
             "filtro_ignorado": ignorado,
         })
     return saida
+
+
+# ----------------------------------------------------------------------
+# Seleção de campanhas (consolidado e listagem)
+# ----------------------------------------------------------------------
+# Nome do botão que refaz a leitura com outra seleção. A escolha mora na
+# revisão, não no painel, por um motivo que não é de gosto: os grupos de
+# campanha só existem depois de ler os anexos — no painel não haveria o que
+# marcar. O filtro de veiculação do modo Indicador é o precedente da mesma
+# ideia; o que não dá para copiar dele é pré-calcular as variantes, porque
+# aqui são 2^N combinações em vez de três.
+CAMPO_CAMPANHAS = "aplicar_campanhas"
+
+
+def _pediu_campanhas(request):
+    return CAMPO_CAMPANHAS in request.POST
+
+
+def _fonte_reconsolidacao(lidos):
+    """O que a sessão guarda para refazer a leitura sem pedir os anexos de novo.
+
+    `_indices` diz a que anexo cada unidade do relatório corresponde: com um
+    filtro aplicado a lista de unidades encolhe, e sem isso os campos de nome
+    da tela apontariam para o anexo errado na segunda seleção.
+
+    Custo medido nos 13 exports TIM: 10 KB de registros, contra os 35 KB que a
+    sessão do consolidado já ocupava.
+    """
+    return {
+        "_anexos": [{"nome": c["nome"], "registros": c["registros"],
+                     "mapa": c["mapa"]} for c in lidos],
+        "_indices": list(range(len(lidos))),
+    }
+
+
+def _grupos_disponiveis(anexos):
+    """Grupos de campanha somados de todos os anexos, do mais presente ao menos.
+
+    Leva junto o que a tela mostra para o operador conferir o agrupamento: em
+    quantos anexos o grupo aparece e quais são as campanhas dentro dele.
+    """
+    grupos = {}
+    for anexo in anexos:
+        for g in grupos_de_campanha(anexo["registros"]):
+            acc = grupos.setdefault(g["chave"],
+                                    {"chave": g["chave"], "campanhas": [], "anexos": 0})
+            acc["anexos"] += 1
+            for nome in g["campanhas"]:
+                if nome not in acc["campanhas"]:
+                    acc["campanhas"].append(nome)
+    return sorted(grupos.values(), key=lambda g: (-g["anexos"], g["chave"]))
+
+
+def _chaves(grupos):
+    return [g["chave"] for g in grupos]
+
+
+def _selecao_atual(dados, grupos):
+    """Seleção a marcar na tela: a última aplicada, ou tudo na primeira visita."""
+    return dados.get("_selecao_campanhas") or _chaves(grupos)
+
+
+def _reconsolidar(anexos, selecao):
+    """`(unidades, índices dos anexos que sobraram)` para a seleção dada.
+
+    Anexo sem nenhuma campanha do filtro sai do relatório: uma linha de zeros e
+    uma fatia de 0% na composição dizem menos do que a unidade não aparecer.
+    Nenhuma planilha é reaberta — só o laço Python sobre os registros.
+    """
+    unidades, indices = [], []
+    for i, anexo in enumerate(anexos):
+        linhas = filtrar_campanhas(anexo["registros"], selecao)
+        if not linhas:
+            continue
+        unidades.append({"nome": anexo["nome"],
+                         "dados": consolidar(linhas, anexo["mapa"], anexo["nome"])})
+        indices.append(i)
+    return unidades, indices
+
+
+def _aplicar_selecao(dados, form, minimo, erro_minimo):
+    """`(unidades, índices, seleção, erro)` — refaz a leitura pela seleção do form.
+
+    O nome que o operador acabou de digitar volta para o anexo antes do filtro:
+    os campos da tela seguem os anexos que sobraram da seleção anterior, e sem
+    esse passo o texto digitado se perderia a cada clique.
+    """
+    anexos = dados["_anexos"]
+    vivos = dados.get("_indices") or list(range(len(anexos)))
+    for i, nome in zip(vivos, form.nomes_finais([anexos[i]["nome"] for i in vivos])):
+        anexos[i]["nome"] = nome
+
+    selecao = form.cleaned_data.get("campanhas") or None
+    if "campanhas" in form.fields and not selecao:
+        # Desmarcar tudo não é "todas as campanhas" — é um relatório vazio.
+        return None, None, None, "Marque pelo menos um grupo de campanhas."
+    unidades, indices = _reconsolidar(anexos, selecao)
+    if len(unidades) < minimo:
+        return None, None, None, erro_minimo
+    return unidades, indices, selecao, None
+
+
+def _pares_campanhas(form, grupos):
+    """(caixa de seleção, grupo) para a tela — os contadores e a lista de
+    campanhas vêm do grupo, não do widget. None quando não há o que escolher."""
+    if "campanhas" not in form.fields:
+        return None
+    return list(zip(form["campanhas"], grupos))
 
 
 def _paragrafos(texto):
@@ -323,21 +437,43 @@ def _com_texto(form, texto):
     if hasattr(form, "n_unidades"):
         kwargs["nomes_unidades"] = [form.cleaned_data.get(f"unidade_{i}") or ""
                                     for i in range(form.n_unidades)]
+    if hasattr(form, "grupos_campanha"):
+        # Sem isto o campo de campanhas não renasceria e a seleção sumiria da
+        # tela depois de um clique na IA.
+        kwargs["grupos_campanha"] = form.grupos_campanha
     return type(form)(initial=inicial, **kwargs)
+
+
+_ERRO_MINIMO_GRUPO = (
+    "A seleção deixaria menos de 2 unidades no consolidado — não há anexo "
+    "suficiente com campanha dos grupos marcados. A seleção anterior continua "
+    "valendo."
+)
 
 
 def _revisao_grupo(request, dados):
     """Etapa 2 do modo consolidado — nomes das unidades e análise geral editáveis."""
     unidades = dados["unidades"]
     nomes = [u["nome"] for u in unidades]
+    grupos = _grupos_disponiveis(dados.get("_anexos") or [])
 
     if request.method == "POST":
-        form = RevisaoGrupoForm(request.POST, nomes_unidades=nomes)
+        form = RevisaoGrupoForm(request.POST, nomes_unidades=nomes,
+                                grupos_campanha=_chaves(grupos))
+        # `grupos` vazio = sessão sem os registros (aberta antes de a seleção
+        # existir): não há o que refazer, e o POST forjado não deve estourar.
+        if form.is_valid() and grupos and _pediu_campanhas(request):
+            dados, form, extra = _refazer_grupo(request, dados, form, grupos)
+            return render(request, "relatorios/revisao.html", dict(
+                extra, form=form, dados=dados, modo_grupo=True,
+                pares_unidades=list(zip(dados["unidades"], form.campos_unidades())),
+                pares_campanhas=_pares_campanhas(form, grupos)))
         if form.is_valid() and _pediu_ia(request):
             form, extra = _analisar_com_ia(request, dados, form)
             return render(request, "relatorios/revisao.html", dict(
                 extra, form=form, dados=dados, modo_grupo=True,
-                pares_unidades=list(zip(unidades, form.campos_unidades()))))
+                pares_unidades=list(zip(unidades, form.campos_unidades())),
+                pares_campanhas=_pares_campanhas(form, grupos)))
         if form.is_valid():
             cd = form.cleaned_data
             nomes_finais = form.nomes_finais(nomes)
@@ -366,11 +502,7 @@ def _revisao_grupo(request, dados):
             return _sinalizar_download(
                 request, FileResponse(buffer, as_attachment=True, filename=nome))
     else:
-        form = RevisaoGrupoForm(nomes_unidades=nomes, initial={
-            "cliente": dados.get("cliente", ""),
-            "periodo": dados.get("periodo", ""),
-            "analise": _texto_da_analise(dados),
-        })
+        form = _form_grupo(dados, grupos)
 
     contexto = {
         "form": form,
@@ -378,33 +510,135 @@ def _revisao_grupo(request, dados):
         "modo_grupo": True,
         "ia_disponivel": redator_ia.disponivel(),
         "pares_unidades": list(zip(unidades, form.campos_unidades())),
+        "pares_campanhas": _pares_campanhas(form, grupos),
     }
     return render(request, "relatorios/revisao.html", contexto)
+
+
+def _form_grupo(dados, grupos, cliente=None, periodo=None):
+    """Formulário do consolidado montado a partir da sessão."""
+    return RevisaoGrupoForm(
+        nomes_unidades=[u["nome"] for u in dados["unidades"]],
+        grupos_campanha=_chaves(grupos),
+        initial={
+            "cliente": dados.get("cliente", "") if cliente is None else cliente,
+            "periodo": dados.get("periodo", "") if periodo is None else periodo,
+            "analise": _texto_da_analise(dados),
+            "campanhas": _selecao_atual(dados, grupos),
+        })
+
+
+def _refazer_grupo(request, dados, form, grupos):
+    """Refaz o consolidado com a seleção de campanhas do form.
+
+    Reconstrói tudo — KPIs, funil, composição, gráficos e a análise do motor —,
+    porque com outro conjunto de campanhas todos esses números mudam. Pelo
+    mesmo motivo o texto da IA é descartado: ele foi escrito sobre os números
+    anteriores, e mantê-lo na tela seria oferecer uma leitura de outro
+    relatório. Cliente e período digitados sobrevivem: são do operador, não da
+    planilha.
+    """
+    cd = form.cleaned_data
+    unidades, indices, selecao, erro = _aplicar_selecao(
+        dados, form, minimo=2, erro_minimo=_ERRO_MINIMO_GRUPO)
+    if erro:
+        return dados, form, {"erro_campanhas": erro,
+                             "ia_disponivel": redator_ia.disponivel()}
+
+    novo = consolidar_grupo(unidades)
+    novo["cliente"] = cd["cliente"]
+    novo["periodo"] = cd.get("periodo") or novo.get("periodo", "")
+    novo["_anexos"] = dados["_anexos"]
+    novo["_indices"] = indices
+    novo["_selecao_campanhas"] = selecao
+    request.session[SESSION_KEY] = novo
+    request.session.modified = True
+
+    return novo, _form_grupo(novo, grupos), {
+        "campanhas_aplicadas": True,
+        "unidades_fora": len(dados["_anexos"]) - len(unidades),
+        "ia_disponivel": redator_ia.disponivel(),
+    }
+
+
+_ERRO_MINIMO_LISTAGEM = (
+    "Nenhum anexo tem campanha dos grupos marcados — a listagem sairia vazia. "
+    "A seleção anterior continua valendo."
+)
 
 
 def _revisao_listagem(request, dados):
     """Etapa 2 do modo Listagem — título e nomes das contas antes do PDF."""
     contas = dados["contas"]
     nomes = [c["nome"] for c in contas]
+    grupos = _grupos_disponiveis(dados.get("_anexos") or [])
+    extra = {}
 
     if request.method == "POST":
-        form = RevisaoListagemForm(request.POST, nomes_unidades=nomes)
-        if form.is_valid():
+        form = RevisaoListagemForm(request.POST, nomes_unidades=nomes,
+                                   grupos_campanha=_chaves(grupos))
+        if form.is_valid() and grupos and _pediu_campanhas(request):
+            dados, form, extra = _refazer_listagem(request, dados, form, grupos)
+            contas = dados["contas"]
+        elif form.is_valid():
             for conta, nome in zip(contas, form.nomes_finais(nomes)):
                 conta["nome"] = nome
             request.session[SESSION_KEY] = dados      # nomes revisados persistem
             return _sinalizar_download(request, _pdf_listagem(
                 form.cleaned_data["titulo"], contas, form.periodo()))
     else:
-        inicio, fim = _periodo_detectado(contas)
-        form = RevisaoListagemForm(nomes_unidades=nomes, initial={
-            "titulo": dados.get("titulo", ""), "inicio": inicio, "fim": fim})
+        form = _form_listagem(dados, grupos)
 
-    return render(request, "relatorios/revisao.html", {
-        "form": form, "dados": dados, "modo_listagem": True,
-        "pares_unidades": list(zip(contas, form.campos_unidades())),
-        "previa": montar_linhas(contas),
-    })
+    return render(request, "relatorios/revisao.html", dict(
+        extra,
+        form=form, dados=dados, modo_listagem=True,
+        pares_unidades=list(zip(contas, form.campos_unidades())),
+        pares_campanhas=_pares_campanhas(form, grupos),
+        previa=montar_linhas(contas)))
+
+
+def _form_listagem(dados, grupos, periodo=None):
+    """Formulário da listagem montado a partir da sessão.
+
+    `periodo` None manda detectar as datas dos anexos (primeira visita); uma
+    tupla vale como está, inclusive vazia — datas que o operador apagou não
+    voltam sozinhas ao aplicar uma seleção.
+    """
+    inicio, fim = periodo if periodo is not None \
+        else _periodo_detectado(dados["contas"])
+    return RevisaoListagemForm(
+        nomes_unidades=[c["nome"] for c in dados["contas"]],
+        grupos_campanha=_chaves(grupos),
+        initial={"titulo": dados.get("titulo", ""), "inicio": inicio, "fim": fim,
+                 "campanhas": _selecao_atual(dados, grupos)})
+
+
+def _refazer_listagem(request, dados, form, grupos):
+    """Refaz a listagem com a seleção de campanhas do form.
+
+    Cada conta é reconsolidada só com as campanhas escolhidas, e o ranking sai
+    de novo dos números novos — a ordem das linhas pode mudar, que é justamente
+    o ponto de comparar só um produto.
+    """
+    cd = form.cleaned_data
+    unidades, indices, selecao, erro = _aplicar_selecao(
+        dados, form, minimo=1, erro_minimo=_ERRO_MINIMO_LISTAGEM)
+    if erro:
+        return dados, form, {"erro_campanhas": erro}
+
+    novo = dict(dados,
+                titulo=cd["titulo"],
+                contas=[{"nome": u["nome"], "dados": _enxuto(u["dados"])}
+                        for u in unidades],
+                _indices=indices,
+                _selecao_campanhas=selecao)
+    request.session[SESSION_KEY] = novo
+    request.session.modified = True
+
+    return novo, _form_listagem(novo, grupos, (cd.get("inicio"), cd.get("fim"))), {
+        "campanhas_aplicadas": True,
+        "unidades_fora": len(dados["_anexos"]) - len(unidades),
+    }
 
 
 def _revisao_indicador(request, dados):

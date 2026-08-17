@@ -2287,6 +2287,226 @@ class VeiculacaoTest(TestCase):
         self.assertIn("R$ 80,00", texto)    # centro inteira: 60 + 20
 
 
+class SelecaoDeCampanhasTest(TestCase):
+    """Seleção dos grupos de campanha na revisão do consolidado e da listagem.
+
+    Os anexos de um mesmo cliente trazem produtos diferentes (celular, ultra) e
+    o operador quer o relatório de um deles. A escolha mora na revisão porque é
+    só depois de ler os anexos que os grupos existem; aplicar refaz a leitura
+    dos registros guardados na sessão, sem reenviar arquivo.
+    """
+
+    CELULAR, ULTRA = "LEADS · CELULAR", "LEADS · ULTRA"
+
+    # centro e norte têm os dois produtos; sul só tem celular.
+    # Celular: 65 resultados / R$ 130,00 · Ultra: 15 / R$ 50,00
+    CONTAS = [
+        ("centro.xlsx", [
+            {"nome": "[LEADS][CELULAR][CENTRO][ABO][01JUN26]", "res": 30,
+             "inv": 60.0, "imp": 3000, "alc": 2000, "cliques": 200},
+            {"nome": "[LEADS][ULTRA][ABO][24JUL26]", "res": 10, "inv": 40.0,
+             "imp": 1000, "alc": 800, "cliques": 90},
+        ]),
+        ("norte.xlsx", [
+            {"nome": "[LEADS][CELULAR][NORTE][ABO][01JUN26]", "res": 20,
+             "inv": 40.0, "imp": 2000, "alc": 1500, "cliques": 150},
+            {"nome": "[LEADS][ULTRA][ABO][28JUL26]", "res": 5, "inv": 10.0,
+             "imp": 500, "alc": 400, "cliques": 40},
+        ]),
+        ("sul.xlsx", [
+            {"nome": "[LEADS][CELULAR][SUL][ABO][01JUN26]", "res": 15,
+             "inv": 30.0, "imp": 1500, "alc": 1000, "cliques": 120},
+        ]),
+    ]
+
+    def _upload(self, modo="consolidado", contas=None, **extra):
+        arquivos = [_arquivo(nome, campanhas)
+                    for nome, campanhas in (contas or self.CONTAS)]
+        post = {"modo": modo, "cliente": "TIM Brasil", "arquivos": arquivos}
+        post.update(extra)
+        return self.client.post("/", post)
+
+    def _aplicar(self, chaves, **extra):
+        post = {"cliente": "TIM Brasil", "aplicar_campanhas": "1",
+                "campanhas": chaves}
+        post.update(extra)
+        return self.client.post("/revisao/", post)
+
+    def _sessao(self):
+        return self.client.session["relatorio_apex"]
+
+    def _linhas_funil(self, dados):
+        return {m: v for etapa in dados["funil"]["etapas"]
+                for m, v, _ in etapa["linhas"]}
+
+    # ---- a regra de agrupamento -------------------------------------
+    def test_grupo_sai_dos_dois_primeiros_colchetes(self):
+        # Região e data variam entre unidades do mesmo produto e ficam de fora
+        self.assertEqual(
+            parser_xlsx.chave_grupo_campanha("[LEADS][CELULAR-BOLETO][SALTO][ABO][13JUL26]"),
+            parser_xlsx.chave_grupo_campanha("[LEADS][CELULAR-BOLETO][ITU][ABO][01SET25]"))
+        self.assertNotEqual(
+            parser_xlsx.chave_grupo_campanha("[LEADS][CELULAR-BOLETO][ABO][01JUN26]"),
+            parser_xlsx.chave_grupo_campanha("[LEADS][ULTRA][ABO][24JUL26]"))
+        # O objetivo entra na chave: mesmo produto com outro objetivo é outro grupo
+        self.assertNotEqual(parser_xlsx.chave_grupo_campanha("[LEADS][ULTRA][ABO]"),
+                            parser_xlsx.chave_grupo_campanha("[VENDAS][ULTRA][ABO]"))
+
+    def test_nome_fora_do_padrao_vira_grupo_dele_mesmo(self):
+        self.assertEqual(parser_xlsx.chave_grupo_campanha("Campanha de julho"),
+                         "Campanha de julho")
+        self.assertEqual(parser_xlsx.chave_grupo_campanha("[SOZINHO]"), "[SOZINHO]")
+        self.assertEqual(parser_xlsx.chave_grupo_campanha(""),
+                         parser_xlsx.GRUPO_SEM_NOME)
+
+    def test_sem_chaves_nada_e_filtrado(self):
+        # Mesma convenção de VEICULACAO_TODAS: é o que mantém o fluxo sem
+        # seleção idêntico ao que sempre foi.
+        registros = [{"campanha": "[A][B][C]"}, {"campanha": "[A][D][C]"}]
+        self.assertEqual(parser_xlsx.filtrar_campanhas(registros, None), registros)
+        self.assertEqual(parser_xlsx.filtrar_campanhas(registros, []), registros)
+
+    def test_datas_do_export_vao_serializaveis_para_a_sessao(self):
+        # A sessão grava JSON e `date` não é serializável: as colunas de
+        # período são normalizadas para texto ISO na leitura.
+        self._upload()
+        json.dumps(self._sessao())      # levanta TypeError se algo escapar
+        registro = self._sessao()["_anexos"][0]["registros"][0]
+        self.assertEqual(registro["inicio"], "2026-07-01")
+
+    # ---- consolidado -------------------------------------------------
+    def test_a_tela_lista_os_grupos_com_as_campanhas_dentro(self):
+        self._upload()
+        html = self.client.get("/revisao/").content.decode()
+        self.assertIn("Campanhas incluídas", html)
+        self.assertIn(self.CELULAR, html)
+        self.assertIn(self.ULTRA, html)
+        # As campanhas ficam à vista para o agrupamento poder ser conferido
+        self.assertIn("[LEADS][CELULAR][CENTRO][ABO][01JUN26]", html)
+        self.assertIn("3 anexos", html)
+
+    def test_um_grupo_so_nao_abre_a_selecao(self):
+        # Sem escolha a fazer, a caixa marcada sozinha seria ruído
+        self._upload(contas=[(nome, [c for c in campanhas if "ULTRA" not in c["nome"]])
+                             for nome, campanhas in self.CONTAS])
+        html = self.client.get("/revisao/").content.decode()
+        self.assertNotIn("Campanhas incluídas", html)
+        self.assertNotIn('name="aplicar_campanhas"', html)
+
+    def test_selecionar_um_grupo_refaz_todos_os_numeros(self):
+        self._upload()
+        self.assertEqual(self._linhas_funil(self._sessao())["Investimento Total"],
+                         "R$ 180,00")
+
+        self._aplicar([self.CELULAR])
+        linhas = self._linhas_funil(self._sessao())
+        self.assertEqual(linhas["Investimento Total"], "R$ 130,00")
+        self.assertEqual(linhas["Conversas Iniciadas"], "65")
+        # CPA recalculado sobre os brutos do recorte: 130 / 65 = 2,00
+        self.assertEqual(linhas["Custo por Conversa (CPA)"], "R$ 2,00")
+        self.assertEqual(self._sessao()["_selecao_campanhas"], [self.CELULAR])
+
+    def test_anexo_sem_o_grupo_sai_do_relatorio(self):
+        self._upload()
+        r = self._aplicar([self.ULTRA])
+        dados = self._sessao()
+        self.assertEqual([u["nome"] for u in dados["unidades"]], ["centro", "norte"])
+        self.assertEqual(self._linhas_funil(dados)["Investimento Total"], "R$ 50,00")
+        self.assertIn("1 anexo", r.content.decode())
+        # O anexo continua guardado: remarcar o grupo o traz de volta
+        self.assertEqual(len(dados["_anexos"]), 3)
+        self._aplicar([self.CELULAR, self.ULTRA])
+        self.assertEqual(len(self._sessao()["unidades"]), 3)
+
+    def test_selecao_que_esvazia_o_consolidado_e_recusada(self):
+        # Só o centro tem ultra: o consolidado ficaria com uma unidade
+        contas = [self.CONTAS[0], self.CONTAS[2]]
+        self._upload(contas=contas)
+        r = self._aplicar([self.ULTRA])
+        self.assertIn("menos de 2 unidades", r.content.decode())
+        # A seleção anterior continua valendo — nada foi trocado na sessão
+        self.assertEqual(self._linhas_funil(self._sessao())["Investimento Total"],
+                         "R$ 130,00")
+
+    def test_desmarcar_tudo_e_recusado(self):
+        self._upload()
+        r = self._aplicar([])
+        self.assertIn("Marque pelo menos um grupo", r.content.decode())
+        self.assertEqual(len(self._sessao()["unidades"]), 3)
+
+    def test_nome_digitado_antes_de_aplicar_nao_se_perde(self):
+        self._upload()
+        self._aplicar([self.CELULAR, self.ULTRA], unidade_0="Loja Centro")
+        self.assertEqual(self._sessao()["unidades"][0]["nome"], "Loja Centro")
+        # E segue valendo depois de um filtro que reordena as unidades
+        self._aplicar([self.ULTRA])
+        self.assertEqual(self._sessao()["unidades"][0]["nome"], "Loja Centro")
+
+    def test_texto_da_ia_e_descartado_ao_trocar_a_selecao(self):
+        # Foi escrito sobre outros números: mantê-lo seria oferecer ao cliente
+        # a leitura de um relatório que não é mais este.
+        self._upload()
+        s = self.client.session
+        dados = s["relatorio_apex"]
+        dados["analise_ia"] = "TEXTO ESCRITO PELA IA"
+        s["relatorio_apex"] = dados
+        s.save()
+
+        r = self._aplicar([self.CELULAR])
+        self.assertNotIn("analise_ia", self._sessao())
+        self.assertNotIn("TEXTO ESCRITO PELA IA", r.content.decode())
+        self.assertIn("Relatório refeito com as campanhas selecionadas",
+                      r.content.decode())
+
+    def test_cliente_e_periodo_digitados_sobrevivem(self):
+        self._upload()
+        self._aplicar([self.CELULAR], cliente="TIM Interior",
+                      periodo="01/07/2026 a 15/07/2026")
+        dados = self._sessao()
+        self.assertEqual(dados["cliente"], "TIM Interior")
+        self.assertEqual(dados["periodo"], "01/07/2026 a 15/07/2026")
+
+    def test_o_pdf_sai_com_a_selecao_aplicada(self):
+        self._upload()
+        self._aplicar([self.ULTRA])
+        r = self.client.post("/revisao/", {"cliente": "TIM Brasil",
+                                           "periodo": "01/07/2026 a 15/07/2026",
+                                           "analise": "Texto."})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("R$ 50,00", texto)
+        self.assertIn("Consolidado de 2 unidades", texto)
+        self.assertIn("Unidades incluídas no consolidado: centro, norte.", texto)
+
+    # ---- listagem ----------------------------------------------------
+    def test_listagem_reordena_com_o_grupo_escolhido(self):
+        self._upload(modo="listagem")
+        # Com tudo: centro (40) → norte (25) → sul (15)
+        self.client.post("/revisao/", {"titulo": "", "aplicar_campanhas": "1",
+                                       "campanhas": [self.ULTRA]})
+        contas = self._sessao()["contas"]
+        self.assertEqual([c["nome"] for c in contas], ["centro", "norte"])
+        r = self.client.post("/revisao/", {"titulo": ""})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("R$ 40,00", texto)     # centro só com a ultra
+        self.assertIn("2 contas", texto)
+        self.assertNotIn("R$ 30,00", texto)  # a sul, sem ultra, ficou fora
+
+    def test_listagem_sem_nenhum_anexo_no_grupo_e_recusada(self):
+        self._upload(modo="listagem", contas=[self.CONTAS[2]])
+        # Um grupo só: a tela nem oferece a seleção, e um POST forjado com
+        # grupo inexistente não derruba nada
+        r = self.client.post("/revisao/", {"titulo": "", "aplicar_campanhas": "1",
+                                           "campanhas": ["INEXISTENTE"]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(self._sessao()["contas"]), 1)
+
+    def test_indicador_nao_guarda_registros_na_sessao(self):
+        # O indicador resolve o recorte pelas variantes pré-calculadas; guardar
+        # os registros dele seria sessão maior sem tela que a use.
+        self._upload(modo="indicador", metrica="conversas_iniciadas")
+        self.assertNotIn("_anexos", self._sessao())
+
+
 class AmbienteDeProducaoTest(SimpleTestCase):
     """
     O padrão do `settings` é PRODUÇÃO; quem liga o desenvolvimento é o

@@ -297,6 +297,25 @@
   tr.melhor td:first-child{color:var(--ok);font-weight:700}
   .legenda{font:12px/1.4 var(--sans);color:var(--silver-mute);margin:7px 0 18px}
   .secao-titulo{margin:22px 0 8px;font:600 12.5px/1 var(--sans);color:var(--white)}
+  /* Grupos de campanha — o que entra no relatório (revisão) */
+  .grupos{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+  .grupo-row{display:flex;align-items:flex-start;gap:11px;padding:11px 14px;
+    background:var(--surface);border:1px solid var(--line);cursor:pointer;
+    transition:border-color .12s,background .12s}
+  .grupo-row:hover{border-color:var(--silver-dim)}
+  .grupo-row:has(input:checked){border-color:var(--red);background:var(--red-tint)}
+  .grupo-row input{flex-shrink:0;width:15px;height:15px;margin-top:2px;
+    accent-color:var(--red);cursor:pointer}
+  .grupo-corpo{flex:1;min-width:0}
+  .grupo-nome{display:block;font:700 12.5px/1.3 var(--mono);color:var(--white)}
+  /* Nome de campanha é um bloco só, sem espaço para quebrar — sem isto a
+     lista estoura a coluna em vez de dobrar. */
+  .grupo-meta{display:block;margin-top:4px;font:12px/1.45 var(--sans);
+    color:var(--silver-dim);overflow-wrap:anywhere}
+  /* Ação dentro da coluna de trabalho: largura de conteúdo, não a barra
+     inteira — a barra é do aside, onde mora a ação primária. */
+  .botao-inline{width:auto;margin-top:0}
+
   .campo-lista{display:flex;flex-direction:column;gap:14px;margin-bottom:4px}
   .campo[aria-disabled=true]{opacity:.45;pointer-events:none}
 
