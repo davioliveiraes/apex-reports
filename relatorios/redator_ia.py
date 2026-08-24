@@ -509,7 +509,7 @@ def _classificar(e):
         f"A chamada ao modelo {settings.OPENAI_MODEL} falhou: {e}")
 
 
-def _diagnosticar_vazio(escolha):
+def _diagnosticar_vazio(escolha, max_tokens=MAX_TOKENS):
     """`(motivo, mensagem)` para uma resposta HTTP 200 sem texto dentro.
 
     Chegar aqui já prova uma coisa que a mensagem antiga punha em dúvida: o
@@ -518,18 +518,18 @@ def _diagnosticar_vazio(escolha):
     casos que pedem ações opostas do operador:
 
     - `length` num modelo de raciocínio quase nunca é texto cortado no meio. É
-      o raciocínio tendo consumido `MAX_TOKENS` inteiro antes de escrever a
+      o raciocínio tendo consumido `max_tokens` inteiro antes de escrever a
       primeira letra. Clicar de novo repete o gasto, então é definitivo.
     - o resto é a resposta estranha e rara, em que repetir costuma resolver.
     """
     razao = getattr(escolha, "finish_reason", None)
     if razao == "length":
         return "teto", (
-            f"O modelo {settings.OPENAI_MODEL} gastou os {MAX_TOKENS} tokens "
+            f"O modelo {settings.OPENAI_MODEL} gastou os {max_tokens} tokens "
             "da resposta raciocinando e não sobrou nada escrito. Isso é ajuste "
-            "do sistema, não da sua conta: aumente o MAX_TOKENS em "
-            "relatorios/redator_ia.py ou configure um OPENAI_MODEL que "
-            "raciocine menos.")
+            "do sistema, não da sua conta: aumente o teto de tokens desta "
+            "chamada em relatorios/redator_ia.py ou configure um OPENAI_MODEL "
+            "que raciocine menos.")
     recusa = (getattr(escolha.message, "refusal", None) or "").strip()
     if recusa:
         return "vazio", (
@@ -541,11 +541,13 @@ def _diagnosticar_vazio(escolha):
         "configurado em OPENAI_MODEL pode não servir para esta tarefa.")
 
 
-def _chamar(mensagens):
+def _chamar(mensagens, max_tokens=MAX_TOKENS, esforco=ESFORCO):
     """A única função deste projeto que faz I/O de rede.
 
     Isolada para os testes trocarem por uma resposta fixa: a suíte inteira
-    roda offline e nunca gasta crédito.
+    roda offline e nunca gasta crédito. `max_tokens`/`esforco` têm o teto e o
+    esforço da Análise do Período como default — a chamada mais barata das
+    leituras do funil (ver `gerar_leituras_funil`) passa os dela.
     """
     try:
         from openai import OpenAI
@@ -559,8 +561,8 @@ def _chamar(mensagens):
         resposta = cliente.chat.completions.create(
             model=settings.OPENAI_MODEL,
             messages=mensagens,
-            max_completion_tokens=MAX_TOKENS,
-            reasoning_effort=ESFORCO,
+            max_completion_tokens=max_tokens,
+            reasoning_effort=esforco,
         )
     except Exception as e:
         motivo, mensagem = _classificar(e)
@@ -569,7 +571,7 @@ def _chamar(mensagens):
     escolha = resposta.choices[0]
     texto = (escolha.message.content or "").strip()
     if not texto:
-        motivo, mensagem = _diagnosticar_vazio(escolha)
+        motivo, mensagem = _diagnosticar_vazio(escolha, max_tokens)
         raise ErroDeIA(mensagem, motivo)
     return texto
 
@@ -644,3 +646,148 @@ def para_pdf(texto, limite=None):
             f"O formato pede a linha de classificação e 3 parágrafos; vieram "
             f"{len(blocos)} blocos. Confira antes de gerar.")
     return final, avisos
+
+
+# ----------------------------------------------------------------------
+# Leituras do funil, escritas por IA
+# ----------------------------------------------------------------------
+# As 4 legendas curtas sob os cards do Funil de Vendas — só estas têm leitura
+# no PDF (ver `_METRICAS_LEITURA` em `gerador_pdf.py`; CPC é calculado mas
+# nunca aparece nesses cards). Sem IA elas vêm de um catálogo fixo em
+# `parser_xlsx._LEITURAS_CARD`, indexado só pela classificação de benchmark —
+# duas contas na mesma faixa recebem a MESMA frase, sem olhar a magnitude do
+# número. Esta chamada troca isso por uma frase por conta, escrita a partir
+# do número real, com o catálogo como piso: falhar aqui não troca nada, e o
+# relatório sai igual a antes desta funcionalidade existir.
+CHAVES_LEITURA_FUNIL = ("frequencia", "cpm", "ctr", "taxa_conversao")
+
+# Bem mais barata que a Análise do Período: são 4 frases curtas a partir de
+# números que já estão no payload, não uma leitura de conjunto do período
+# nem uma comparação entre unidades. `low` já é esforço de sobra pra isso.
+ESFORCO_LEITURAS_FUNIL = "low"
+
+# Ainda não medido como o teto da análise principal está (aquele comentário
+# vem de tokens de raciocínio reais, medidos num consolidado de 13 unidades).
+# A folga aqui é generosa de propósito: sobrar tokens não custa nada, faltar
+# devolve resposta vazia.
+MAX_TOKENS_LEITURAS_FUNIL = 1500
+
+# Teto de sanidade por legenda — não é medido por bisseção como `LIMITE_PDF`
+# porque o card do funil não tem altura fixa (o CSS deixa ele esticar).
+# Existe só pra barrar o modelo escrevendo um parágrafo em vez de uma
+# legenda; acima disso a legenda cai no catálogo estático.
+LIMITE_LEITURA_FUNIL = 220
+
+PROMPT_LEITURAS_FUNIL = """Atue como gestor de tráfego pago sênior, especialista em Meta Ads.
+
+Você vai escrever legendas curtas — uma frase cada — para os cards do funil de vendas de um relatório de Meta Ads. Cada legenda fica embaixo do número da métrica no card, com o nome da métrica já escrito em negrito ao lado (ex.: "Frequência: <sua frase>"). NÃO repita o nome da métrica nem o número dela na frase — os dois já aparecem no card, acima e ao lado.
+
+## MÉTRICAS
+
+Escreva uma legenda para cada uma destas, mas SOMENTE se ela aparecer em "totais" no JSON que vai chegar a seguir:
+
+- frequencia: quantas vezes, em média, a mesma pessoa viu os anúncios.
+- cpm: custo a cada mil vezes que os anúncios foram exibidos.
+- ctr: porcentagem de quem viu e clicou.
+- taxa_conversao: porcentagem de quem clicou e virou resultado.
+
+Se uma dessas não estiver em "totais", não escreva a chave dela — não invente o número.
+
+## REGRAS
+
+- Fale a consequência para o negócio, não a métrica em si. Nunca escreva a sigla crua (CPM, CTR, CPA, CPC) nem a palavra "performance".
+- Baseie a frase no número real recebido — dois relatórios com números diferentes precisam ler diferente. Não escreva a mesma frase pronta pra faixas inteiras de valor.
+- Tom sempre construtivo: mesmo quando o número pede atenção, descreva a ação em andamento ("estamos ajustando..."), nunca alarme o cliente.
+- Nunca prometa resultado futuro nem cite pausa, duplicação ou status de campanha.
+- Não invente causa que os dados não sustentam.
+- Uma frase por métrica, sem ponto de exclamação, sem emoji.
+
+## EXEMPLOS DE TOM E TAMANHO (não copie — escreva a partir dos números deste relatório)
+
+- frequencia: "Boa presença junto ao público — estamos ampliando as audiências para manter a entrega eficiente."
+- cpm: "Custo de entrega competitivo — bom momento para ganhar volume."
+- ctr: "Estamos renovando os criativos para elevar a taxa de cliques."
+- taxa_conversao: "Boa eficiência do fluxo de atendimento."
+
+## FORMATO DA RESPOSTA
+
+Responda SOMENTE com um objeto JSON, sem markdown, sem cerca de código, sem texto antes ou depois — só as chaves entre as 4 acima que tiverem número em "totais". Exemplo de resposta completa:
+
+{"frequencia": "...", "cpm": "...", "ctr": "...", "taxa_conversao": "..."}"""
+
+# Versão curta do que `REGRAS_DE_ENTRADA` explica pro prompt principal — só a
+# parte que importa aqui (o payload é o mesmo). Não reaproveita a constante
+# inteira porque a seção "FORMATO DA SAÍDA" dela é sobre texto com asterisco,
+# e aqui a saída é JSON.
+_REGRAS_DE_ENTRADA_LEITURAS_FUNIL = """
+
+## COMO O RELATÓRIO CHEGA
+
+Vem como JSON na próxima mensagem, já somado pela aplicação — é a única fonte
+de dados que existe. `totais` já está agregado no período inteiro; a chave
+"dados_ausentes" lista o que o relatório NÃO tem, e nada dessa lista pode ser
+mencionado, comparado ou suposto. Números em reais e percentuais chegam como
+número puro — escreva no padrão brasileiro (R$ 2.012,07 · 0,59%) só se
+precisar citar um número que NÃO seja o da própria métrica da legenda (o
+card acima dela já mostra esse)."""
+
+
+def gerar_leituras_funil(dados):
+    """As legendas do funil escritas a partir dos números do relatório.
+
+    Devolve um dict só com as chaves que o modelo escreveu e passaram pela
+    validação de `_parse_leituras_funil` — chave ausente no resultado
+    significa "mantenha o texto do catálogo estático pra essa métrica",
+    decidido por quem aplica (`parser_xlsx.substituir_leituras`).
+
+    Levanta `ErroDeIA` nos mesmos casos de `gerar()` (rede, crédito, chave —
+    tratados por `_classificar`, chamado dentro de `_chamar`) mais o motivo
+    "formato" quando a resposta não é o JSON esperado.
+    """
+    if not disponivel():
+        raise ErroDeIA("Nenhuma chave de API configurada: defina OPENAI_API_KEY "
+                       "no ambiente (em produção, /etc/apex-reports/env).",
+                       "chave")
+    sistema = PROMPT_LEITURAS_FUNIL + _REGRAS_DE_ENTRADA_LEITURAS_FUNIL
+    bruto = _chamar([
+        {"role": "system", "content": sistema},
+        {"role": "user", "content": json.dumps(montar_payload(dados),
+                                               ensure_ascii=False, indent=1)},
+    ], max_tokens=MAX_TOKENS_LEITURAS_FUNIL, esforco=ESFORCO_LEITURAS_FUNIL)
+    return _parse_leituras_funil(bruto)
+
+
+# Alguns modelos cercam o JSON com ```json apesar da instrução de não usar
+# markdown; tolerado aqui em vez de reforçado no prompt, porque um `strip`
+# errado é mais barato que confiar que a instrução sempre é obedecida.
+_CERCA_JSON = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+
+
+def _parse_leituras_funil(texto):
+    """`{"frequencia": "...", ...}` a partir da resposta crua do modelo.
+
+    Chave fora de `CHAVES_LEITURA_FUNIL`, valor vazio ou maior que
+    `LIMITE_LEITURA_FUNIL` é descartada em silêncio — quem chama trata a
+    ausência de uma chave como "sem leitura nova pra essa métrica", não como
+    erro. JSON que não dá pra interpretar levanta `ErroDeIA`: aí nenhuma
+    leitura muda, não só as que vieram malformadas.
+    """
+    limpo = _CERCA_JSON.sub("", texto.strip())
+    try:
+        bruto = json.loads(limpo)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise ErroDeIA(
+            f"O modelo {settings.OPENAI_MODEL} não respondeu em JSON ao pedido "
+            "das legendas do funil. A Análise do Período já está salva; só as "
+            "legendas do funil continuam com o texto padrão.", "formato") from e
+    if not isinstance(bruto, dict):
+        raise ErroDeIA(
+            f"O modelo {settings.OPENAI_MODEL} respondeu algo que não é um "
+            "objeto JSON para as legendas do funil.", "formato")
+
+    saida = {}
+    for chave in CHAVES_LEITURA_FUNIL:
+        valor = bruto.get(chave)
+        if isinstance(valor, str) and 0 < len(valor.strip()) <= LIMITE_LEITURA_FUNIL:
+            saida[chave] = valor.strip()
+    return saida

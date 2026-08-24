@@ -771,6 +771,37 @@ def _leitura_metrica(metrica, avaliacao):
     return _LEITURAS_CARD[metrica].get(classe, "") if classe else ""
 
 
+# Rótulo da linha do funil (como `_montar_funil` escreve) → chave que
+# `redator_ia.gerar_leituras_funil` usa no JSON. Só as 4 métricas que têm
+# leitura no PDF (`gerador_pdf._METRICAS_LEITURA`) — CPC fica de fora dos
+# dois lados.
+_ROTULO_METRICA_FUNIL = {
+    "Frequência": "frequencia",
+    "CPM (custo por mil)": "cpm",
+    "CTR (taxa de cliques)": "ctr",
+    "Taxa de Conversão (clique → conversa)": "taxa_conversao",
+}
+
+
+def substituir_leituras(funil, leituras):
+    """Troca, nas linhas do funil, a leitura estática pela da IA.
+
+    `leituras`: dict como o de `redator_ia.gerar_leituras_funil` — chave
+    ausente ou não reconhecida simplesmente não mexe naquela linha, que fica
+    com o texto do catálogo que `_montar_funil` já tinha posto. Sem retorno:
+    `funil` é mutado no lugar, mesmo dict que já está em `dados["funil"]`.
+    """
+    if not funil or not leituras:
+        return
+    for etapa in funil.get("etapas", []):
+        linhas = etapa.get("linhas", [])
+        for i, linha in enumerate(linhas):
+            chave = _ROTULO_METRICA_FUNIL.get(linha[0])
+            nova = leituras.get(chave) if chave else None
+            if nova:
+                linhas[i] = [linha[0], linha[1], nova]
+
+
 # A Análise do Período — de conta e de grupo — saiu daqui para `analysis/`:
 # motor de regras em vez de paráfrase dos números. Saíram junto as funções que
 # montavam aquele texto por composição (_frases_mencoes, _frase_resumo,

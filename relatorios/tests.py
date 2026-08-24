@@ -648,6 +648,13 @@ conversa. Em contrapartida, Jaguariúna ficou em R$ 21,96.
 No geral, os números mostram uma operação equilibrada, com diferenças \
 relevantes entre as praças."""
 
+RESPOSTA_LEITURAS_FUNIL = json.dumps({
+    "frequencia": "Alcance renovado periodicamente para o público não saturar.",
+    "cpm": "Leilão competitivo agora, ótimo momento para ganhar escala.",
+    "ctr": "Criativos com apelo forte, gerando cliques acima da média do setor.",
+    "taxa_conversao": "Atendimento respondendo bem ao volume de cliques recebido.",
+}, ensure_ascii=False)
+
 
 @override_settings(OPENAI_API_KEY="chave-de-teste", OPENAI_MODEL="modelo-de-teste")
 class AnalisePorIATest(TestCase):
@@ -795,7 +802,10 @@ class AnalisePorIATest(TestCase):
     def test_o_prompt_do_operador_vai_inteiro_no_system(self):
         self._importar()
         _r, _dados, chamada = self._pedir()
-        mensagens = chamada.call_args.args[0]
+        # A primeira chamada é a Análise do Período; a segunda (não coberta
+        # por este teste) é a das legendas do funil — call_args_list[0], não
+        # call_args, que pegaria a mais recente.
+        mensagens = chamada.call_args_list[0].args[0]
         self.assertEqual(mensagens[0]["role"], "system")
         self.assertIn("Atue como gestor de tráfego pago sênior",
                       mensagens[0]["content"])
@@ -1055,6 +1065,133 @@ class AnalisePorIATest(TestCase):
                 "analise": "x", "analise_ia": "1",
                 "unidade_0": "A", "unidade_1": "B"})
         self.assertIn(str(templates.LIMITE_PDF_GRUPO), r.content.decode())
+
+
+@override_settings(OPENAI_API_KEY="chave-de-teste", OPENAI_MODEL="modelo-de-teste")
+class LeiturasDoFunilIATest(TestCase):
+    """A segunda chamada do botão "Escrever com IA": as legendas do funil.
+
+    Mesma regra de `AnalisePorIATest` — `_chamar` nunca fala com a rede de
+    verdade. Aqui o `side_effect` é uma lista de duas respostas: a primeira
+    chamada é sempre a Análise do Período (`RESPOSTA_IA`), a segunda são as
+    legendas do funil — é essa que cada teste varia.
+    """
+
+    # Mesma campanha de `AnalisePorIATest.ELIX[0]` (Hortolândia): frequência
+    # 2,0 (dentro), CPM 43,91 (dentro), CTR 1,03% (abaixo), taxa de conversão
+    # 32,5% (acima) — dá pra prever o texto estático de cada uma.
+    CAMPANHAS = [{"nome": "[VAGAS][TIM][ABO][HORTOLANDIA][30JUL26]", "res": 13,
+                  "inv": 171.24, "imp": 3900, "alc": 1950, "cliques": 40}]
+
+    def _importar(self):
+        f = _arquivo("e.xlsx", self.CAMPANHAS)
+        self.client.post("/", {"cliente": "Elix", "arquivos": [f]})
+        return self.client.session["relatorio_apex"]
+
+    def _pedir(self, resposta_funil):
+        base = {"cliente": "Elix", "periodo": "01/07/2026 a 15/07/2026",
+                "analise": "texto do motor", "analise_ia": "1"}
+        alvo = "relatorios.redator_ia._chamar"
+        with patch(alvo, side_effect=[RESPOSTA_IA, resposta_funil]) as chamada:
+            r = self.client.post("/revisao/", base)
+        self.assertEqual(r.status_code, 200)
+        return r, self.client.session["relatorio_apex"], chamada
+
+    @staticmethod
+    def _linha(funil, rotulo):
+        for etapa in funil["etapas"]:
+            for linha in etapa["linhas"]:
+                if linha[0] == rotulo:
+                    return linha
+        raise AssertionError(f"linha {rotulo!r} não está no funil")
+
+    def test_json_valido_substitui_as_4_leituras(self):
+        self._importar()
+        _r, dados, chamada = self._pedir(RESPOSTA_LEITURAS_FUNIL)
+
+        self.assertEqual(chamada.call_count, 2)
+        funil = dados["funil"]
+        self.assertEqual(self._linha(funil, "Frequência")[2],
+                         "Alcance renovado periodicamente para o público não "
+                         "saturar.")
+        self.assertEqual(self._linha(funil, "CPM (custo por mil)")[2],
+                         "Leilão competitivo agora, ótimo momento para ganhar "
+                         "escala.")
+        self.assertEqual(self._linha(funil, "CTR (taxa de cliques)")[2],
+                         "Criativos com apelo forte, gerando cliques acima da "
+                         "média do setor.")
+        self.assertEqual(
+            self._linha(funil, "Taxa de Conversão (clique → conversa)")[2],
+            "Atendimento respondendo bem ao volume de cliques recebido.")
+
+    def test_a_segunda_chamada_usa_esforco_e_teto_proprios(self):
+        """A chamada das legendas é bem mais barata que a da análise — se ela
+        silenciosamente voltasse a usar o teto/esforço padrão, o custo por
+        clique no botão dobraria sem ninguém perceber."""
+        self._importar()
+        _r, _dados, chamada = self._pedir(RESPOSTA_LEITURAS_FUNIL)
+        kwargs = chamada.call_args_list[1].kwargs
+        self.assertEqual(kwargs["max_tokens"],
+                         redator_ia.MAX_TOKENS_LEITURAS_FUNIL)
+        self.assertEqual(kwargs["esforco"], redator_ia.ESFORCO_LEITURAS_FUNIL)
+
+    def test_chave_ausente_no_json_mantem_o_texto_estatico_so_naquela_linha(self):
+        parcial = json.dumps({"cpm": "Leilão competitivo agora."})
+        self._importar()
+        _r, dados, _ = self._pedir(parcial)
+        funil = dados["funil"]
+        self.assertEqual(self._linha(funil, "CPM (custo por mil)")[2],
+                         "Leilão competitivo agora.")
+        # Frequência não veio no JSON: continua com o texto do catálogo.
+        self.assertEqual(self._linha(funil, "Frequência")[2],
+                         "Frequência saudável — público longe da saturação.")
+
+    def test_valor_acima_do_limite_de_sanidade_e_descartado(self):
+        longo = json.dumps({"cpm": "x " * redator_ia.LIMITE_LEITURA_FUNIL})
+        self._importar()
+        _r, dados, _ = self._pedir(longo)
+        # Estourou o teto: cai no catálogo, não no texto gigante do modelo.
+        self.assertEqual(self._linha(dados["funil"], "CPM (custo por mil)")[2],
+                         "Custo de entrega competitivo.")
+
+    def test_chave_desconhecida_no_json_e_ignorada(self):
+        com_lixo = json.dumps({"cpm": "Leilão competitivo agora.",
+                               "algo_que_nao_pedimos": "x"})
+        self._importar()
+        _r, dados, _ = self._pedir(com_lixo)
+        self.assertEqual(self._linha(dados["funil"], "CPM (custo por mil)")[2],
+                         "Leilão competitivo agora.")
+
+    def test_json_malformado_nao_afeta_a_analise_principal_e_vira_aviso(self):
+        self._importar()
+        r, dados, _ = self._pedir("isso não é json")
+        self.assertIn("Hortolândia", dados["analise_ia"])
+        self.assertIn("Legendas do funil", r.content.decode())
+        # Sem chave nenhuma vinda do modelo, tudo fica no texto estático.
+        self.assertEqual(self._linha(dados["funil"], "CPM (custo por mil)")[2],
+                         "Custo de entrega competitivo.")
+
+    def test_cerca_de_bloco_de_codigo_e_tolerada(self):
+        cercado = "```json\n" + RESPOSTA_LEITURAS_FUNIL + "\n```"
+        self._importar()
+        _r, dados, _ = self._pedir(cercado)
+        self.assertEqual(self._linha(dados["funil"], "CPM (custo por mil)")[2],
+                         "Leilão competitivo agora, ótimo momento para ganhar "
+                         "escala.")
+
+    def test_falha_de_rede_na_segunda_chamada_nao_bloqueia_a_tela(self):
+        self._importar()
+        alvo = "relatorios.redator_ia._chamar"
+        with patch(alvo, side_effect=[
+                RESPOSTA_IA, redator_ia.ErroDeIA("instabilidade", "servico")]):
+            r = self.client.post("/revisao/", {
+                "cliente": "Elix", "periodo": "01/07/2026 a 15/07/2026",
+                "analise": "texto do motor", "analise_ia": "1"})
+        self.assertEqual(r.status_code, 200)
+        html = r.content.decode()
+        self.assertIn("Hortolândia", html)  # a análise principal segue lá
+        self.assertIn("instabilidade", html)
+        self.assertNotIn("A análise por IA não foi gerada", html)
 
 
 class TextoLongoNoPdfTest(TestCase):

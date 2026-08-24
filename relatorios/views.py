@@ -17,7 +17,8 @@ from .gerador_pdf import gerar_relatorio
 from .parser_xlsx import (VEICULACAO_TODAS, VEICULACOES, consolidar,
                           consolidar_grupo, filtrar_campanhas,
                           filtrar_veiculacao, grupos_de_campanha,
-                          ler_export_meta, ler_registros, montar_composicao)
+                          ler_export_meta, ler_registros, montar_composicao,
+                          substituir_leituras)
 
 SESSION_KEY = "relatorio_apex"
 
@@ -418,6 +419,17 @@ def _analisar_com_ia(request, dados, form):
     # e regerar a mesma análise só para mudar de destino custaria outra chamada.
     dados["analise_ia_bruta"] = bruto
     dados["analise_ia"] = texto
+
+    # Segunda chamada, à parte da análise: reescreve as legendas do funil
+    # (Frequência, CPM, CTR, Taxa de Conversão) a partir dos mesmos números.
+    # Falhar aqui não desfaz o que já foi salvo acima — vira só mais um aviso
+    # não bloqueante, e as legendas ficam com o texto estático de sempre.
+    try:
+        leituras = redator_ia.gerar_leituras_funil(dados)
+        substituir_leituras(dados.get("funil"), leituras)
+    except redator_ia.ErroDeIA as e:
+        avisos.append(f"Legendas do funil: {e}")
+
     request.session[SESSION_KEY] = dados
     request.session.modified = True
 
