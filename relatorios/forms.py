@@ -2,7 +2,6 @@
 from django import forms
 
 from . import metricas
-from .parser_xlsx import VEICULACAO_TODAS, VEICULACOES
 
 
 class MultipleFileInput(forms.ClearableFileInput):
@@ -32,36 +31,24 @@ class UploadForm(forms.Form):
         (MODO_LISTAGEM, "Listagem"),
         (MODO_INDICADOR, "Indicador Único"),
     ]
-    TITULO_LISTAGEM_PADRAO = "Relatório de Listagem"
-
     # required=False: sem seleção explícita (fluxo antigo), o modo é inferido
     # pelo nº de anexos em clean() — preserva os modos 1 e 2 como eram.
     modo = forms.ChoiceField(
         label="Modo do relatório", choices=MODOS, required=False,
         initial=MODO_UNICO, widget=forms.RadioSelect,
     )
+    # Um nome só para os quatro modos: vai ao cabeçalho do PDF e batiza o
+    # arquivo. Até 24/08/2026 a listagem tinha um "título do relatório" à
+    # parte, e era o único modo que não mostrava cliente nenhum.
     cliente = forms.CharField(
         label="Cliente / Grupo", max_length=120, required=False,
         widget=forms.TextInput(attrs={"placeholder": "Ex.: TIM Brasil"}),
-    )
-    titulo = forms.CharField(
-        label="Título do relatório", max_length=120, required=False,
-        widget=forms.TextInput(attrs={"placeholder": TITULO_LISTAGEM_PADRAO}),
-        help_text="Opcional — aparece no topo do PDF de listagem.",
     )
     # Choices vêm do registro central de métricas (callable: reavaliado a cada
     # instância) — acrescentar uma métrica lá aparece aqui sem tocar no form.
     metrica = forms.ChoiceField(
         label="Métrica", choices=metricas.opcoes_agrupadas, required=False,
         help_text="A métrica comparada entre as contas no PDF.",
-    )
-    # Filtra as linhas pela coluna "Veiculação da campanha" do export
-    # (valores "active"/"inactive", mesmo com o cabeçalho em português).
-    veiculacao = forms.ChoiceField(
-        label="Campanhas", choices=VEICULACOES, required=False,
-        initial=VEICULACAO_TODAS,
-        help_text="Quais campanhas entram na comparação, pelo status de "
-                  "veiculação no export.",
     )
     arquivos = MultipleFileField(
         label="Exports do Meta Ads Manager (.xlsx)",
@@ -110,11 +97,8 @@ class UploadForm(forms.Form):
                                "menos 2 arquivos.")
             if not cd.get("metrica"):
                 self.add_error("metrica", "Escolha a métrica a comparar.")
-            cd["veiculacao"] = cd.get("veiculacao") or VEICULACAO_TODAS
 
-        if modo == self.MODO_LISTAGEM:
-            cd["titulo"] = (cd.get("titulo") or "").strip() or self.TITULO_LISTAGEM_PADRAO
-        elif not (cd.get("cliente") or "").strip():
+        if not (cd.get("cliente") or "").strip():
             self.add_error("cliente", "Informe o cliente/grupo do relatório.")
         return cd
 
@@ -197,14 +181,8 @@ class RevisaoGrupoForm(_ComCampanhas, _ComUnidades):
 
 
 class RevisaoListagemForm(_ComCampanhas, _ComUnidades):
-    """Etapa 2 do modo Listagem: título do PDF, período e nomes das contas."""
-    titulo = forms.CharField(
-        label="Título do relatório", max_length=120, required=False,
-        widget=forms.TextInput(
-            attrs={"placeholder": UploadForm.TITULO_LISTAGEM_PADRAO}),
-        help_text="Em branco, usa "
-                  f'"{UploadForm.TITULO_LISTAGEM_PADRAO}".',
-    )
+    """Etapa 2 do modo Listagem: cliente, período e nomes das contas."""
+    cliente = forms.CharField(label="Cliente / grupo", max_length=120)
     # `format` explícito: o input nativo de data só entende ISO, e a locale
     # pt-BR faria o widget renderizar o valor inicial como dd/mm/aaaa —
     # o campo apareceria vazio. Na entrada, o pt-BR aceita as duas formas.
@@ -216,10 +194,6 @@ class RevisaoListagemForm(_ComCampanhas, _ComUnidades):
         label="Fim do período", required=False,
         widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
     )
-
-    def clean_titulo(self):
-        return (self.cleaned_data["titulo"] or "").strip() \
-            or UploadForm.TITULO_LISTAGEM_PADRAO
 
     def clean(self):
         cd = super().clean()
@@ -238,22 +212,15 @@ class RevisaoListagemForm(_ComCampanhas, _ComUnidades):
         return f"{inicio:%d/%m/%Y} — {fim:%d/%m/%Y}" if inicio and fim else ""
 
 
-class RevisaoIndicadorForm(_ComUnidades):
+class RevisaoIndicadorForm(_ComCampanhas, _ComUnidades):
     """Etapa 2 do modo Indicador Único: cliente, métrica e nomes das contas.
 
     A métrica é reeditável aqui — trocar de indicador na revisão não exige
-    reenviar os anexos, já que o parser rodou inteiro em cada um."""
+    reenviar os anexos, já que o parser rodou inteiro em cada um. E, como nos
+    demais modos, a seleção de grupos de campanha recorta o que entra na
+    comparação."""
     cliente = forms.CharField(label="Cliente / grupo", max_length=120)
     metrica = forms.ChoiceField(
         label="Métrica comparada", choices=metricas.opcoes_agrupadas,
         help_text="Trocar a métrica aqui regera o PDF sem reenviar os anexos.",
     )
-    veiculacao = forms.ChoiceField(
-        label="Campanhas", choices=VEICULACOES, required=False,
-        initial=VEICULACAO_TODAS,
-        help_text="Filtro pelo status de veiculação no export — também "
-                  "reeditável sem reenviar os anexos.",
-    )
-
-    def clean_veiculacao(self):
-        return self.cleaned_data["veiculacao"] or VEICULACAO_TODAS

@@ -96,60 +96,17 @@ _COLUNAS = {
     "alcance":     ([["alcance"], ["reach"]], ["custo", "cost"]),
     "frequencia":  ([["frequencia"], ["frequency"]], []),
     "cpm":         ([["cpm"]], []),
-    # Status de veiculação DA CAMPANHA — os termos proibidos afastam as colunas
-    # equivalentes de conjunto e de anúncio, que o export também traz.
-    "veiculacao":  ([["veiculacao"], ["delivery"]],
-                    ["conjunto", "ad set", "anuncio", "ad delivery"]),
     "inicio":      ([["inicio dos relatorios"], ["reporting starts"]], []),
     "termino":     ([["termino dos relatorios"], ["encerramento dos relatorios"], ["reporting ends"]], []),
     "orcamento":   ([["orcamento"], ["budget"]], []),
 }
 
 
-# ----------------------------------------------------------------------
-# Veiculação da campanha (coluna "Veiculação da campanha" / "Campaign Delivery")
-# ----------------------------------------------------------------------
-VEICULACAO_TODAS = "todas"
-VEICULACAO_ATIVAS = "ativas"
-VEICULACAO_INATIVAS = "inativas"
-
-VEICULACOES = [
-    (VEICULACAO_TODAS, "Todas as campanhas"),
-    (VEICULACAO_ATIVAS, "Somente campanhas ativas"),
-    (VEICULACAO_INATIVAS, "Somente campanhas inativas"),
-]
-
-# O export usa os valores do Meta mesmo com o cabeçalho em português
-# ("active"/"inactive"); as variantes traduzidas aparecem em exports antigos.
-# ATENÇÃO à ordem: "inactive" contém "active", então o desligado é testado
-# primeiro — inverter a ordem classificaria toda campanha inativa como ativa.
-_TERMOS_INATIVA = ("inactive", "inativ", "paus", "desativ", "archiv", "arquiv",
-                   "delet", "exclu", "conclu", "complet", "encerr", "rejeit",
-                   "reject", "not delivering", "nao veiculando")
-_TERMOS_ATIVA = ("active", "ativ", "delivering", "veiculando", "learning",
-                 "aprendiz")
-
-
-def campanha_ativa(valor):
-    """True (veiculando), False (parada) ou None quando não dá para afirmar —
-    célula vazia ou status que não casa com nenhum termo conhecido."""
-    v = _norm(valor).replace("_", " ")
-    if not v:
-        return None
-    if any(t in v for t in _TERMOS_INATIVA):
-        return False
-    if any(t in v for t in _TERMOS_ATIVA):
-        return True
-    return None
-
-
-def filtrar_veiculacao(registros, veiculacao):
-    """Linhas que atendem ao filtro. Status desconhecido fica de fora dos
-    filtros específicos — só entra em "todas", onde nada é descartado."""
-    if veiculacao == VEICULACAO_TODAS:
-        return list(registros)
-    ativa = veiculacao == VEICULACAO_ATIVAS
-    return [r for r in registros if campanha_ativa(r.get("veiculacao")) is ativa]
+# O recorte por status de veiculação (todas / ativas / inativas) saiu daqui em
+# 24/08/2026, junto com a coluna que ele lia. Ele recortava pelo que a agência
+# fez com a campanha; a seleção por grupo, logo abaixo, recorta pelo produto
+# anunciado — que é o que o cliente reconhece e o que se quer comparar. Manter
+# os dois obrigava a combinar dois filtros para chegar onde um só chega.
 
 
 # ----------------------------------------------------------------------
@@ -198,8 +155,8 @@ def grupos_de_campanha(registros):
 def filtrar_campanhas(registros, chaves):
     """Linhas dos grupos de campanha escolhidos.
 
-    `chaves` vazio ou None não filtra nada — mesma convenção de
-    VEICULACAO_TODAS, e o que faz o fluxo sem seleção seguir como sempre foi.
+    `chaves` vazio ou None não filtra nada — é o que faz o fluxo sem seleção
+    (um grupo só nos anexos, ou sessão antiga) seguir como sempre foi.
     """
     if not chaves:
         return list(registros)
@@ -235,20 +192,17 @@ def _mapear_colunas(header):
 # ----------------------------------------------------------------------
 # Leitura principal
 # ----------------------------------------------------------------------
-def ler_export_meta(arquivo, veiculacao=VEICULACAO_TODAS, conta=None,
-                    perfil=None, meta_cpa=None):
+def ler_export_meta(arquivo, conta=None, perfil=None, meta_cpa=None):
     """
     Lê o .xlsx exportado do Meta Ads Manager e devolve um dicionário com:
     kpis, metricas_extra, funil, gráficos (funil visual e share por campanha),
     detalhes_campanha, período detectado e a análise sugerida.
     Levanta ValueError com mensagem amigável se o arquivo não for reconhecido.
 
-    `veiculacao` restringe as linhas ao status da campanha (ver VEICULACOES).
     `perfil` e `meta_cpa` alimentam a análise do período (ver consolidar).
     """
     registros, mapa = ler_registros(arquivo)
-    return consolidar(filtrar_veiculacao(registros, veiculacao), mapa, conta,
-                      perfil, meta_cpa)
+    return consolidar(registros, mapa, conta, perfil, meta_cpa)
 
 
 def ler_registros(arquivo):
@@ -256,8 +210,8 @@ def ler_registros(arquivo):
     Linhas de dados do export + mapa de colunas reconhecidas, sem consolidar.
 
     Separado de `ler_export_meta` para que um mesmo arquivo possa ser
-    consolidado mais de uma vez — é o que permite trocar o filtro de veiculação
-    na revisão sem pedir o anexo de novo.
+    consolidado mais de uma vez — é o que permite refazer a leitura com outra
+    seleção de campanhas na revisão, sem pedir o anexo de novo.
     """
     wb = load_workbook(arquivo, data_only=True, read_only=True)
     ws = wb.active
@@ -386,9 +340,8 @@ def consolidar(registros, mapa, conta=None, perfil=None, meta_cpa=None):
         c["imp"] += _to_float(r.get("impressoes")) or 0
         c["alc"] += _to_float(r.get("alcance")) or 0
     if campanhas:
-        # Sem coluna de Status: a veiculação serve para FILTRAR as linhas
-        # (ver filtrar_veiculacao), mas é decisão interna da agência e não
-        # aparece no relatório do cliente.
+        # Sem coluna de Status: se a campanha estava ativa ou parada é decisão
+        # interna da agência, e não aparece no relatório do cliente.
         dados["detalhes_campanha"] = {
             "titulo": "Desempenho por Campanha",
             "header": ["Campanha", "Resultados", "Investimento", "Custo/Resultado"],

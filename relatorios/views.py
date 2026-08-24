@@ -14,11 +14,9 @@ from .forms import (RevisaoForm, RevisaoGrupoForm, RevisaoIndicadorForm,
 from .gerador_indicador import gerar_indicador, montar_tabela
 from .gerador_listagem import gerar_listagem, montar_linhas
 from .gerador_pdf import gerar_relatorio
-from .parser_xlsx import (VEICULACAO_TODAS, VEICULACOES, consolidar,
-                          consolidar_grupo, filtrar_campanhas,
-                          filtrar_veiculacao, grupos_de_campanha,
-                          ler_export_meta, ler_registros, montar_composicao,
-                          substituir_leituras)
+from .parser_xlsx import (consolidar, consolidar_grupo, filtrar_campanhas,
+                          grupos_de_campanha, ler_registros,
+                          montar_composicao, substituir_leituras)
 
 SESSION_KEY = "relatorio_apex"
 
@@ -36,25 +34,17 @@ def index(request):
         if form.is_valid():
             modo = form.cleaned_data["modo"]
             lidos, erro = _ler_arquivos(
-                form.cleaned_data["arquivos"], request.POST.getlist("nome_conta"),
-                # Só o indicador único reoferece o filtro de veiculação na
-                # revisão, então só ele paga o custo das três consolidações.
-                variantes=modo == UploadForm.MODO_INDICADOR)
+                form.cleaned_data["arquivos"], request.POST.getlist("nome_conta"))
             if not erro:
                 if modo in (UploadForm.MODO_LISTAGEM, UploadForm.MODO_INDICADOR):
                     sessao = {
                         "modo": modo,
-                        "titulo": form.cleaned_data["titulo"],
                         "cliente": form.cleaned_data["cliente"],
                         "metrica": form.cleaned_data["metrica"],
-                        "veiculacao": form.cleaned_data["veiculacao"],
-                        "contas": [{"nome": c["nome"], "dados": _enxuto(c["dados"]),
-                                    "variantes": c.get("variantes"),
-                                    "tem_veiculacao": c.get("tem_veiculacao", False)}
+                        "contas": [{"nome": c["nome"], "dados": _enxuto(c["dados"])}
                                    for c in lidos],
                     }
-                    if modo == UploadForm.MODO_LISTAGEM:
-                        sessao.update(_fonte_reconsolidacao(lidos))
+                    sessao.update(_fonte_reconsolidacao(lidos))
                     request.session[SESSION_KEY] = sessao
                     return redirect("revisao")
                 if modo == UploadForm.MODO_UNICO:
@@ -115,38 +105,35 @@ def _periodo_detectado(contas):
     return (min(inicios), max(fins)) if inicios else (None, None)
 
 
-def _pdf_listagem(titulo, contas, periodo=""):
+def _pdf_listagem(cliente, contas, periodo=""):
     """Modo 3 — PDF de listagem. As linhas saem ranqueadas por número de
     resultados; `contas` chega aqui na ordem de envio dos anexos."""
     buffer = io.BytesIO()
-    gerar_listagem(titulo, contas, buffer, periodo=periodo)
+    gerar_listagem(cliente, contas, buffer, periodo=periodo)
     buffer.seek(0)
-    nome = _nome_arquivo(titulo or "Relatorio de Listagem",
-                         UploadForm.MODO_LISTAGEM, *_datas_periodo(periodo))
+    nome = _nome_arquivo(cliente, UploadForm.MODO_LISTAGEM,
+                         *_datas_periodo(periodo))
     return FileResponse(buffer, as_attachment=True, filename=nome)
 
 
-def _pdf_indicador(cliente, chave_metrica, contas, veiculacao=VEICULACAO_TODAS):
+def _pdf_indicador(cliente, chave_metrica, contas):
     """Modo 4 — PDF de uma métrica comparada entre contas. `contas` mantém a
     ordem de envio; a ordenação das linhas segue a direção de `melhor` no
     registro de métricas."""
     buffer = io.BytesIO()
-    gerar_indicador(cliente, chave_metrica, contas, buffer, veiculacao)
+    gerar_indicador(cliente, chave_metrica, contas, buffer)
     buffer.seek(0)
     nome = _nome_arquivo(cliente, UploadForm.MODO_INDICADOR,
                          *_periodo_detectado(contas))
     return FileResponse(buffer, as_attachment=True, filename=nome)
 
 
-def _ler_arquivos(arquivos, nomes=None, variantes=False):
+def _ler_arquivos(arquivos, nomes=None):
     """Lê cada anexo; ao falhar, devolve erro apontando QUAL arquivo falhou.
 
     `nomes` são os nomes de conta digitados no painel, na mesma ordem dos
     anexos. Quando em branco (ou ausentes), cai no nome derivado do arquivo —
     assim o modo de anexo único, que não expõe o campo, segue funcionando.
-
-    `variantes` consolida o mesmo anexo nos três filtros de veiculação, para
-    a revisão poder trocar de filtro sem pedir o arquivo de novo.
     """
     nomes = nomes or []
     lidos = []
@@ -162,51 +149,19 @@ def _ler_arquivos(arquivos, nomes=None, variantes=False):
             )
         digitado = (nomes[i] if i < len(nomes) else "").strip()
         nome = digitado or _nome_unidade(f.name)
-        conta = {"nome": nome, "registros": registros, "mapa": mapa,
-                 "dados": consolidar(registros, mapa, nome)}
-        if variantes:
-            # Filtro sem nenhuma campanha → None: a conta entra no PDF como
-            # "—", fora do total, em vez de virar uma linha de zeros.
-            conta["variantes"] = {
-                chave: (_enxuto(consolidar(linhas, mapa, nome)) if linhas else None)
-                for chave, _ in VEICULACOES
-                for linhas in [filtrar_veiculacao(registros, chave)]
-            }
-            conta["tem_veiculacao"] = "veiculacao" in mapa
-        lidos.append(conta)
+        lidos.append({"nome": nome, "registros": registros, "mapa": mapa,
+                      "dados": consolidar(registros, mapa, nome)})
     return lidos, None
 
 
-def _contas_veiculacao(contas, veiculacao):
-    """Contas prontas para o gerador, no filtro de veiculação escolhido.
-
-    Export sem a coluna de veiculação não tem como ser filtrado: entra com
-    todas as campanhas e é sinalizado, em vez de sumir da comparação.
-    """
-    saida = []
-    for c in contas:
-        variantes = c.get("variantes") or {}
-        ignorado = veiculacao != VEICULACAO_TODAS and not c.get("tem_veiculacao")
-        dados = variantes.get(VEICULACAO_TODAS if ignorado else veiculacao,
-                              c.get("dados"))
-        saida.append({
-            "nome": c["nome"],
-            "dados": dados or {"_num": {}, "_colunas": []},
-            "sem_campanhas": dados is None,
-            "filtro_ignorado": ignorado,
-        })
-    return saida
-
-
 # ----------------------------------------------------------------------
-# Seleção de campanhas (anexo único, consolidado e listagem)
+# Seleção de campanhas (os quatro modos)
 # ----------------------------------------------------------------------
 # Nome do botão que refaz a leitura com outra seleção. A escolha mora na
 # revisão, não no painel, por um motivo que não é de gosto: os grupos de
 # campanha só existem depois de ler os anexos — no painel não haveria o que
-# marcar. O filtro de veiculação do modo Indicador é o precedente da mesma
-# ideia; o que não dá para copiar dele é pré-calcular as variantes, porque
-# aqui são 2^N combinações em vez de três.
+# marcar. Também não dá para pré-calcular as combinações na leitura, como o
+# antigo filtro de veiculação fazia: aqui são 2^N, não três.
 CAMPO_CAMPANHAS = "aplicar_campanhas"
 
 
@@ -647,7 +602,7 @@ _ERRO_MINIMO_LISTAGEM = (
 
 
 def _revisao_listagem(request, dados):
-    """Etapa 2 do modo Listagem — título e nomes das contas antes do PDF."""
+    """Etapa 2 do modo Listagem — cliente e nomes das contas antes do PDF."""
     contas = dados["contas"]
     nomes = [c["nome"] for c in contas]
     grupos = _grupos_disponiveis(dados.get("_anexos") or [])
@@ -664,7 +619,7 @@ def _revisao_listagem(request, dados):
                 conta["nome"] = nome
             request.session[SESSION_KEY] = dados      # nomes revisados persistem
             return _sinalizar_download(request, _pdf_listagem(
-                form.cleaned_data["titulo"], contas, form.periodo()))
+                form.cleaned_data["cliente"], contas, form.periodo()))
     else:
         form = _form_listagem(dados, grupos)
 
@@ -688,7 +643,7 @@ def _form_listagem(dados, grupos, periodo=None):
     return RevisaoListagemForm(
         nomes_unidades=[c["nome"] for c in dados["contas"]],
         grupos_campanha=_chaves(grupos),
-        initial={"titulo": dados.get("titulo", ""), "inicio": inicio, "fim": fim,
+        initial={"cliente": dados.get("cliente", ""), "inicio": inicio, "fim": fim,
                  "campanhas": _selecao_atual(dados, grupos)})
 
 
@@ -706,7 +661,7 @@ def _refazer_listagem(request, dados, form, grupos):
         return dados, form, {"erro_campanhas": erro}
 
     novo = dict(dados,
-                titulo=cd["titulo"],
+                cliente=cd["cliente"],
                 contas=[{"nome": u["nome"], "dados": _enxuto(u["dados"])}
                         for u in unidades],
                 _indices=indices,
@@ -720,6 +675,12 @@ def _refazer_listagem(request, dados, form, grupos):
     }
 
 
+_ERRO_MINIMO_INDICADOR = (
+    "Nenhum anexo tem campanha dos grupos marcados — não sobraria conta para "
+    "comparar. A seleção anterior continua valendo."
+)
+
+
 def _revisao_indicador(request, dados):
     """Etapa 2 do modo Indicador Único — cliente, métrica e nomes das contas.
 
@@ -728,36 +689,74 @@ def _revisao_indicador(request, dados):
     acontecer antes de gerar o arquivo."""
     contas = dados["contas"]
     nomes = [c["nome"] for c in contas]
+    grupos = _grupos_disponiveis(dados.get("_anexos") or [])
+    extra = {}
 
     if request.method == "POST":
-        form = RevisaoIndicadorForm(request.POST, nomes_unidades=nomes)
-        if form.is_valid():
+        form = RevisaoIndicadorForm(request.POST, nomes_unidades=nomes,
+                                    grupos_campanha=_chaves(grupos))
+        if form.is_valid() and grupos and _pediu_campanhas(request):
+            dados, form, extra = _refazer_indicador(request, dados, form, grupos)
+            contas = dados["contas"]
+        elif form.is_valid():
             for conta, nome in zip(contas, form.nomes_finais(nomes)):
                 conta["nome"] = nome
             dados["metrica"] = form.cleaned_data["metrica"]
             dados["cliente"] = form.cleaned_data["cliente"]
-            dados["veiculacao"] = form.cleaned_data["veiculacao"]
             request.session[SESSION_KEY] = dados
             return _sinalizar_download(request, _pdf_indicador(
-                dados["cliente"], dados["metrica"],
-                _contas_veiculacao(contas, dados["veiculacao"]),
-                dados["veiculacao"]))
+                dados["cliente"], dados["metrica"], contas))
     else:
-        form = RevisaoIndicadorForm(nomes_unidades=nomes, initial={
-            "cliente": dados.get("cliente", ""),
-            "metrica": dados.get("metrica", ""),
-            "veiculacao": dados.get("veiculacao") or VEICULACAO_TODAS,
-        })
+        form = _form_indicador(dados, grupos)
 
     chave = dados.get("metrica")
-    filtro = dados.get("veiculacao") or VEICULACAO_TODAS
-    return render(request, "relatorios/revisao.html", {
-        "form": form, "dados": dados, "modo_indicador": True,
-        "pares_unidades": list(zip(contas, form.campos_unidades())),
-        "previa_indicador": (
-            montar_tabela(chave, _contas_veiculacao(contas, filtro), filtro)
-            if chave else None),
-    })
+    return render(request, "relatorios/revisao.html", dict(
+        extra,
+        form=form, dados=dados, modo_indicador=True,
+        pares_unidades=list(zip(contas, form.campos_unidades())),
+        pares_campanhas=_pares_campanhas(form, grupos),
+        previa_indicador=montar_tabela(chave, contas) if chave else None))
+
+
+def _form_indicador(dados, grupos, cliente=None, metrica=None):
+    """Formulário do indicador montado a partir da sessão."""
+    return RevisaoIndicadorForm(
+        nomes_unidades=[c["nome"] for c in dados["contas"]],
+        grupos_campanha=_chaves(grupos),
+        initial={
+            "cliente": dados.get("cliente", "") if cliente is None else cliente,
+            "metrica": dados.get("metrica", "") if metrica is None else metrica,
+            "campanhas": _selecao_atual(dados, grupos),
+        })
+
+
+def _refazer_indicador(request, dados, form, grupos):
+    """Refaz o indicador com a seleção de campanhas do form.
+
+    Cada conta é reconsolidada só com as campanhas escolhidas; o valor da
+    métrica e o ranking saem dos números novos. Cliente e métrica digitados
+    sobrevivem — são a escolha do operador, não da planilha.
+    """
+    cd = form.cleaned_data
+    unidades, indices, selecao, erro = _aplicar_selecao(
+        dados, form, minimo=1, erro_minimo=_ERRO_MINIMO_INDICADOR)
+    if erro:
+        return dados, form, {"erro_campanhas": erro}
+
+    novo = dict(dados,
+                cliente=cd["cliente"],
+                metrica=cd["metrica"],
+                contas=[{"nome": u["nome"], "dados": _enxuto(u["dados"])}
+                        for u in unidades],
+                _indices=indices,
+                _selecao_campanhas=selecao)
+    request.session[SESSION_KEY] = novo
+    request.session.modified = True
+
+    return novo, _form_indicador(novo, grupos), {
+        "campanhas_aplicadas": True,
+        "unidades_fora": len(dados["_anexos"]) - len(unidades),
+    }
 
 
 _MESES_PT = ["jan", "fev", "mar", "abr", "mai", "jun",

@@ -7,7 +7,7 @@
 {% if modo_listagem %}
 <h1>Revisar listagem</h1>
 <p class="sub">{{ dados.contas|length }} contas ranqueadas por número de resultados.
-  Ajuste o título, o período e os nomes das contas e gere o PDF final.</p>
+  Ajuste o cliente, o período e os nomes das contas e gere o PDF final.</p>
 {% elif modo_indicador %}
 <h1>Revisar indicador — {{ dados.cliente }}</h1>
 <p class="sub">Confira os valores, ajuste os nomes das contas e gere o PDF final.
@@ -30,7 +30,7 @@
 <div class="erro"><div>{{ erro_campanhas }}</div></div>
 {% elif campanhas_aplicadas %}
 <div class="aviso"><div><b>Relatório refeito com as campanhas selecionadas.</b>
-  Todos os números foram recalculados{% if not modo_listagem %}, inclusive a
+  Todos os números foram recalculados{% if not modo_listagem and not modo_indicador %}, inclusive a
   Análise do Período — texto escrito à mão ou pela IA foi substituído pelo do
   motor de regras{% endif %}.
   {% if unidades_fora %}<br>{{ unidades_fora }} anexo{{ unidades_fora|pluralize }}
@@ -85,10 +85,12 @@ ser conferido: se ele errar, é aqui que se percebe.
 {{ form.campanhas.errors }}
 <button class="botao botao-sec botao-inline" type="submit"
         name="aplicar_campanhas" value="1">Aplicar seleção</button>
-<p class="legenda">Refaz a leitura {% if modo_grupo or modo_listagem %}dos anexos{% else %}do anexo{% endif %}
+{# O anexo único é o único modo sem flag — nele não há anexo que possa sair. #}
+<p class="legenda">Refaz a leitura
+  {% if modo_grupo or modo_listagem or modo_indicador %}dos anexos{% else %}do anexo{% endif %}
   só com o que estiver marcado, sem reenviar arquivo.
-  {% if modo_grupo or modo_listagem %}Anexo que ficar sem nenhuma campanha sai do
-  relatório.{% endif %}</p>
+  {% if modo_grupo or modo_listagem or modo_indicador %}Anexo que ficar sem
+  nenhuma campanha sai do relatório.{% endif %}</p>
 {% endif %}
 
 {# ------------------------------------------------------------------ #}
@@ -205,10 +207,8 @@ ser conferido: se ele errar, é aqui que se percebe.
 <div class="campos">
   {% if modo_listagem %}
   <div class="campo campo-largo">
-    <label for="{{ form.titulo.id_for_label }}">{{ form.titulo.label }}</label>
-    {{ form.titulo }}
-    <span class="ajuda">{{ form.titulo.help_text }}</span>
-    {{ form.titulo.errors }}
+    <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
+    {{ form.cliente }} {{ form.cliente.errors }}
   </div>
   <div class="campo campo-largo">
     <div class="par-datas">
@@ -230,17 +230,11 @@ ser conferido: se ele errar, é aqui que se percebe.
     <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
     {{ form.cliente }} {{ form.cliente.errors }}
   </div>
-  <div class="campo">
+  <div class="campo campo-largo">
     <label for="{{ form.metrica.id_for_label }}">{{ form.metrica.label }}</label>
     {{ form.metrica }}
     <span class="ajuda">{{ form.metrica.help_text }}</span>
     {{ form.metrica.errors }}
-  </div>
-  <div class="campo">
-    <label for="{{ form.veiculacao.id_for_label }}">{{ form.veiculacao.label }}</label>
-    {{ form.veiculacao }}
-    <span class="ajuda">{{ form.veiculacao.help_text }}</span>
-    {{ form.veiculacao.errors }}
   </div>
 
   {% else %}

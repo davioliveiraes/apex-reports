@@ -45,6 +45,7 @@
   .topo .logo { width: 15mm; height: 15mm; border-radius: 2.5mm; border: 1px solid #2A2D33; }
   .topo h1 { font-size: 17pt; color: #E8EAEE; font-weight: 800; line-height: 1.1; }
   .topo .sub { margin-top: 1.2mm; font-size: 8.5pt; color: #8A8F98; }
+  .topo .sub .cliente { color: #D8232A; font-weight: 800; text-transform: uppercase; }
 
   /* Período no canto superior direito. z-index tira o bloco de baixo da
      faixa diagonal, que é o ::after e por isso pinta depois. */
@@ -83,7 +84,10 @@
     {% if logo_b64 %}<img class="logo" src="data:image/png;base64,{{ logo_b64 }}" alt="Apex">{% endif %}
     <div>
       <h1>{{ titulo }}</h1>
-      <div class="sub">{{ subtitulo }}</div>
+      <div class="sub">
+        <span class="cliente">{{ cliente }}</span>
+        &nbsp;•&nbsp; {{ subtitulo }}
+      </div>
     </div>
     {% if periodo %}
     <div class="periodo">

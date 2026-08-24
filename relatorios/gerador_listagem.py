@@ -60,9 +60,18 @@ def montar_linhas(contas):
             for i, c in enumerate(sorted(contas, key=_chave_ranking), start=1)]
 
 
-def gerar_listagem(titulo, contas, arquivo_saida, periodo=""):
+# O título é do modo, não do relatório: quem identifica este PDF é o nome do
+# cliente, no subtítulo, como nos outros três modos. Até 24/08/2026 o operador
+# digitava um título livre aqui e a listagem era a única que não mostrava
+# cliente nenhum — dois campos no painel para um dado só.
+TITULO = "Relatório de Listagem"
+
+
+def gerar_listagem(cliente, contas, arquivo_saida, periodo=""):
     """
     Gera o PDF de listagem em `arquivo_saida` (caminho ou file-like).
+
+    `cliente`: nome que aparece no subtítulo e batiza o arquivo.
 
     `contas`: lista de {"nome": str, "dados": dict de ler_export_meta}. A
     ordem das linhas é o ranking por número de resultados, não a de envio.
@@ -71,7 +80,8 @@ def gerar_listagem(titulo, contas, arquivo_saida, periodo=""):
     superior direito. Em branco, o bloco não aparece.
     """
     contexto = {
-        "titulo": titulo,
+        "titulo": TITULO,
+        "cliente": cliente,
         "periodo": periodo,
         "logo_b64": _logo_b64(),
         "linhas": montar_linhas(contas),

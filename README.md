@@ -17,31 +17,39 @@ O painel inicial oferece quatro modos:
    recalcula as taxas sobre os totais e gera o funil do grupo + composição
    por unidade + análise geral, com revisão antes do PDF.
 3. **Listagem** — até 20 `.xlsx` → PDF em paisagem com uma tabela, uma
-   linha por conta, na ordem de envio dos anexos. Sem consolidação, sem
-   análise e sem ranking; título configurável (default "Relatório de
-   Listagem").
+   linha por conta, ranqueada por número de resultados. Sem consolidação e
+   sem análise.
 4. **Indicador Único** — 2 a 20 `.xlsx` + **uma métrica escolhida** → PDF
    comparando só essa métrica entre as contas: tabela ordenada pela direção
    de "melhor" da métrica (melhor unidade em verde), gráfico de barras e
    total do grupo. Atende o pedido "me manda só os números de X de todas as
-   unidades" sem gerar o relatório completo. Aceita ainda um **recorte de
-   campanhas** (todas / somente ativas / somente inativas) lido da coluna
-   "Veiculação da campanha" do export. Métrica e recorte são reeditáveis na
+   unidades" sem gerar o relatório completo. A métrica é reeditável na
    revisão, sem reenviar os anexos.
 
 Os quatro modos seguem o mesmo fluxo de duas etapas — **01 Importar dados**
 → **02 Revisar e gerar** — e o nome de cada conta pode ser digitado já no
 painel, por anexo (em branco, cai no nome do arquivo).
 
-Nos modos **anexo único**, **consolidado** e **listagem**, a tela 02 abre com
-a **seleção de grupos de campanha** quando os anexos trazem mais de um — o
-grupo sai dos dois primeiros colchetes do nome (`[LEADS][CELULAR][ITU][…]` e
-`[LEADS][CELULAR][SALTO][…]` caem no mesmo "LEADS · CELULAR"), que na prática
-é o produto anunciado. *Aplicar seleção* refaz a leitura só com o que estiver
-marcado, sem reenviar arquivo: todo número do relatório é recalculado, e a
-análise volta a ser a do motor de regras — a que a IA escreveu falava de
-outros números. No consolidado e na listagem, anexo que ficar sem nenhuma
-campanha sai do relatório.
+O painel pede **um nome só**: *Cliente / grupo* vai ao cabeçalho do PDF e
+batiza o arquivo, nos quatro modos. A listagem, que até 24/08/2026 tinha um
+"título do relatório" à parte e não mostrava cliente nenhum, agora traz
+"Relatório de Listagem" como título fixo — igual aos outros modos, onde o
+título é do modo e o nome é do cliente.
+
+**Nos quatro modos**, a tela 02 abre com a **seleção de grupos de campanha**
+quando os anexos trazem mais de um — o grupo sai dos dois primeiros colchetes
+do nome (`[LEADS][CELULAR][ITU][…]` e `[LEADS][CELULAR][SALTO][…]` caem no
+mesmo "LEADS · CELULAR"), que na prática é o produto anunciado. *Aplicar
+seleção* refaz a leitura só com o que estiver marcado, sem reenviar arquivo:
+todo número do relatório é recalculado, e a análise volta a ser a do motor de
+regras — a que a IA escreveu falava de outros números. Nos modos multi-anexo,
+anexo que ficar sem nenhuma campanha sai do relatório.
+
+Esse recorte por produto substituiu, em 24/08/2026, o filtro por **status de
+veiculação** (todas / ativas / inativas) que só o Indicador Único oferecia.
+Os dois recortavam a mesma planilha por critérios diferentes; o status é
+decisão interna da agência e o operador já o enxerga na tabela, enquanto o
+produto é o que o cliente reconhece.
 
 ## Rodando
 ```bash
@@ -187,10 +195,10 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   único o total é recalculado sobre os brutos somados de todas as contas.
 - No indicador único, conta cujo export não traz a coluna necessária entra
   como "—", fica fora do total e é listada no rodapé do PDF.
-- O recorte de veiculação filtra as LINHAS do export antes de qualquer soma,
-  então todo número do PDF (inclusive os recalculados) sai do recorte. Conta
-  sem campanhas no recorte fica fora do total; export sem a coluna entra com
-  todas as campanhas e é sinalizado no rodapé.
+- A seleção de campanhas filtra as LINHAS do export antes de qualquer soma,
+  então todo número do PDF (inclusive os recalculados) sai do recorte. Anexo
+  sem campanha do grupo marcado sai do relatório, e a tela diz quantos
+  saíram.
 - A Análise do Período é decidida antes de ser escrita: o **CPA sozinho**
   define ÓTIMO/BOM/ATENÇÃO, e CPM, frequência, CTR e estrutura de campanhas só
   justificam o veredito e escolhem o próximo passo. O que muda de um relatório

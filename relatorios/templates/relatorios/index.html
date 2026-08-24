@@ -68,34 +68,26 @@
   <span class="bloco-rule"></span>
 </div>
 {% comment %}
-Os quatro campos ficam sempre no mesmo lugar; o que não se aplica ao modo fica
+Os dois campos ficam sempre no mesmo lugar; o que não se aplica ao modo fica
 desabilitado com o motivo escrito na ajuda. Campo `disabled` não é enviado no
 POST, e a obrigatoriedade real vem do `UploadForm.clean()` por modo.
+
+O cliente é um só para os quatro modos — ele nomeia o cabeçalho do PDF e o
+arquivo. Quais campanhas entram não se decide aqui: os grupos só existem
+depois de ler os anexos, então a escolha mora na tela 02.
 {% endcomment %}
 <div class="campos">
   <div class="campo" id="campo-cliente">
     <label for="{{ form.cliente.id_for_label }}">Cliente / grupo</label>
     {{ form.cliente }}
-    <span class="ajuda" id="ajuda-cliente">Vai para o cabeçalho do PDF.</span>
+    <span class="ajuda" id="ajuda-cliente">Vai para o cabeçalho do PDF e para o nome do arquivo.</span>
     {{ form.cliente.errors }}
-  </div>
-  <div class="campo" id="campo-titulo">
-    <label for="{{ form.titulo.id_for_label }}">Título do relatório</label>
-    {{ form.titulo }}
-    <span class="ajuda" id="ajuda-titulo">Em branco, usa "Relatório de Listagem".</span>
-    {{ form.titulo.errors }}
   </div>
   <div class="campo" id="campo-metrica">
     <label for="{{ form.metrica.id_for_label }}">Métrica comparada</label>
     {{ form.metrica }}
     <span class="ajuda" id="ajuda-metrica">Reeditável na revisão, sem reenviar os anexos.</span>
     {{ form.metrica.errors }}
-  </div>
-  <div class="campo" id="campo-veiculacao">
-    <label for="{{ form.veiculacao.id_for_label }}">Campanhas consideradas</label>
-    {{ form.veiculacao }}
-    <span class="ajuda" id="ajuda-veiculacao">Recorte pelo status de veiculação no export.</span>
-    {{ form.veiculacao.errors }}
   </div>
 </div>
 
@@ -172,19 +164,13 @@ POST, e a obrigatoriedade real vem do `UploadForm.clean()` por modo.
 
   const modos = document.getElementById('modos');
   const campos = {
-    cliente:    document.getElementById('campo-cliente'),
-    titulo:     document.getElementById('campo-titulo'),
-    metrica:    document.getElementById('campo-metrica'),
-    veiculacao: document.getElementById('campo-veiculacao'),
+    metrica: document.getElementById('campo-metrica'),
   };
   const AJUDAS = {
-    cliente:    ['Vai para o cabeçalho do PDF.', 'A listagem usa o título, não o cliente.'],
-    titulo:     ['Em branco, usa "Relatório de Listagem".', 'Só no modo Listagem.'],
-    metrica:    ['Reeditável na revisão, sem reenviar os anexos.', 'Só no modo Indicador único.'],
-    veiculacao: ['Recorte pelo status de veiculação no export.', 'Só no modo Indicador único.'],
+    metrica: ['Reeditável na revisão, sem reenviar os anexos.', 'Só no modo Indicador único.'],
   };
   const controle = chave => campos[chave].querySelector('input,select');
-  const inputCliente = controle('cliente');
+  const inputCliente = document.querySelector('#campo-cliente input');
 
   const dz = document.getElementById('dropzone');
   const input = dz.querySelector('input[type=file]');
@@ -222,7 +208,7 @@ POST, e a obrigatoriedade real vem do `UploadForm.clean()` por modo.
     const M = MODOS[modo];
     const n = arquivos.length;
     const okAnexos = n >= M.min && n <= M.max;
-    const okNome = modo === 'listagem' || inputCliente.value.trim() !== '';
+    const okNome = inputCliente.value.trim() !== '';
 
     rs.modo.textContent = M.nome;
     rs.anexos.textContent = `${pad(n)} de ${MAX}`;
@@ -234,8 +220,7 @@ POST, e a obrigatoriedade real vem do `UploadForm.clean()` por modo.
       : n > M.max ? `Anexos acima do limite — remova ${n - M.max}`
       : `Faltam anexos — este modo exige ${M.limite}`);
     marcar(checks.ident, okNome,
-      modo === 'listagem' ? 'Título do relatório opcional'
-      : okNome ? 'Cliente / grupo preenchido' : 'Informe o cliente / grupo');
+      okNome ? 'Cliente / grupo preenchido' : 'Informe o cliente / grupo');
 
     contador.textContent = `${pad(n)} / ${MAX}`;
     contador.classList.toggle('excedido', n > M.max);
@@ -251,10 +236,7 @@ POST, e a obrigatoriedade real vem do `UploadForm.clean()` por modo.
   function atualizarModo() {
     const modo = modoAtual();
     const desabilitado = {
-      cliente:    modo === 'listagem',
-      titulo:     modo !== 'listagem',
-      metrica:    modo !== 'indicador',
-      veiculacao: modo !== 'indicador',
+      metrica: modo !== 'indicador',
     };
     for (const chave in desabilitado) {
       const off = desabilitado[chave];

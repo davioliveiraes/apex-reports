@@ -1701,9 +1701,9 @@ class NomeDoArquivoTest(TestCase):
                          "TIM-BRASIL-consolidado-1-jul-26-31-jul-26.pdf")
 
     def test_listagem(self):
-        self.client.post("/", {"modo": "listagem", "titulo": "TIM BRASIL",
+        self.client.post("/", {"modo": "listagem", "cliente": "TIM BRASIL",
                                "arquivos": self._anexos(3)})
-        r = self.client.post("/revisao/", {"titulo": "TIM BRASIL",
+        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL",
                                            "inicio": "2026-07-01",
                                            "fim": "2026-07-31"})
         self.assertEqual(self._nome(r),
@@ -1721,9 +1721,9 @@ class NomeDoArquivoTest(TestCase):
 
     def test_sem_periodo_marca_a_data_de_geracao(self):
         """Uma data só, sem rótulo, seria lida como início de intervalo."""
-        self.client.post("/", {"modo": "listagem", "titulo": "TIM BRASIL",
+        self.client.post("/", {"modo": "listagem", "cliente": "TIM BRASIL",
                                "arquivos": self._anexos(2)})
-        r = self.client.post("/revisao/", {"titulo": "TIM BRASIL"})
+        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL"})
         hoje = date.today()
         self.assertEqual(
             self._nome(r),
@@ -1839,21 +1839,21 @@ class FluxoListagemTest(TestCase):
         ("unidade_sul.xlsx", 25, 100.0, 5000, 3000, 250),
     ]
 
-    def _upload(self, titulo="", nomes=None):
+    def _upload(self, cliente="TIM Brasil", nomes=None):
         arquivos = [
             _arquivo(nome, [{"nome": "C", "res": res, "inv": inv,
                              "imp": imp, "alc": alc, "cliques": cli}])
             for nome, res, inv, imp, alc, cli in self.CONTAS
         ]
-        post = {"modo": "listagem", "titulo": titulo, "arquivos": arquivos}
+        post = {"modo": "listagem", "cliente": cliente, "arquivos": arquivos}
         if nomes:
             post["nome_conta"] = nomes
         return self.client.post("/", post)
 
-    def _post_listagem(self, titulo="", nomes=None):
+    def _post_listagem(self, cliente="TIM Brasil", nomes=None):
         """Fluxo completo: painel → revisão → PDF."""
-        self._upload(titulo, nomes)
-        return self.client.post("/revisao/", {"titulo": titulo})
+        self._upload(cliente, nomes)
+        return self.client.post("/revisao/", {"cliente": cliente})
 
     def test_upload_leva_a_revisao_antes_do_pdf(self):
         r = self._upload()
@@ -1867,25 +1867,35 @@ class FluxoListagemTest(TestCase):
         r = self._post_listagem()
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
-        self.assertIn("Relatorio-de-Listagem", r["Content-Disposition"])
+        # O nome do arquivo sai do cliente, como nos outros três modos.
+        self.assertIn("TIM-Brasil-listagem", r["Content-Disposition"])
 
     def test_nomes_editados_na_revisao_vao_para_o_pdf(self):
         self._upload()
         r = self.client.post("/revisao/", {
-            "titulo": "", "unidade_0": "Loja Centro",
+            "cliente": "TIM Brasil", "unidade_0": "Loja Centro",
             "unidade_1": "Loja Norte", "unidade_2": "Loja Sul"})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("Loja Centro", texto)
         self.assertNotIn("unidade centro", texto)
 
-    def test_titulo_padrao_e_customizado(self):
-        texto = _texto_pdf(_bytes_pdf(self._post_listagem()))
-        self.assertIn("Relatório de Listagem", texto)
-
-        r = self._post_listagem(titulo="Visão Geral — Franquias")
+    def test_cabecalho_traz_o_titulo_do_modo_e_o_cliente(self):
+        """O título é do modo, o nome é do cliente — mesmo cabeçalho dos
+        outros três modos. Até 24/08/2026 a listagem tinha título livre e não
+        mostrava cliente nenhum."""
+        r = self._post_listagem(cliente="Visão Geral — Franquias")
         texto = _texto_pdf(_bytes_pdf(r))
-        self.assertIn("Visão Geral — Franquias", texto)
+        self.assertIn("Relatório de Listagem", texto)
+        # Caixa alta é do CSS (.sub .cliente), igual ao cabeçalho dos outros modos
+        self.assertIn("VISÃO GERAL — FRANQUIAS", texto)
         self.assertIn("Visao-Geral-Franquias", r["Content-Disposition"])
+
+    def test_painel_recusa_listagem_sem_cliente(self):
+        """Antes o cliente era opcional na listagem — era o único modo sem
+        nome nenhum no PDF."""
+        r = self._upload(cliente="")
+        self.assertEqual(r.status_code, 200)      # não redirecionou
+        self.assertIn("Informe o cliente/grupo", r.content.decode())
 
     def test_linhas_ranqueadas_por_resultados(self):
         texto = _texto_pdf(_bytes_pdf(self._post_listagem()))
@@ -1904,8 +1914,10 @@ class FluxoListagemTest(TestCase):
             _arquivo("gorda.xlsx", [{"nome": "C", "res": 30, "inv": 90.0,
                                      "imp": 3000, "alc": 2000}]),
         ]
-        self.client.post("/", {"modo": "listagem", "arquivos": arquivos})
-        texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
+        self.client.post("/", {"modo": "listagem", "cliente": "TIM Brasil",
+                               "arquivos": arquivos})
+        texto = _texto_pdf(_bytes_pdf(
+            self.client.post("/revisao/", {"cliente": "TIM Brasil"})))
         self.assertLess(texto.index("gorda"), texto.index("magra"))
 
     def test_valores_por_conta_em_pt_br_sem_consolidar(self):
@@ -1951,8 +1963,10 @@ class FluxoListagemTest(TestCase):
                              [{"nome": "C", "res": 0, "inv": 12.0}]),
                     _arquivo("com_dados.xlsx",
                              [{"nome": "C", "res": 4, "inv": 20.0, "imp": 1000}])]
-        self.client.post("/", {"modo": "listagem", "arquivos": arquivos})
-        texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
+        self.client.post("/", {"modo": "listagem", "cliente": "TIM Brasil",
+                               "arquivos": arquivos})
+        texto = _texto_pdf(_bytes_pdf(
+            self.client.post("/revisao/", {"cliente": "TIM Brasil"})))
         self.assertIn("R$ 20,00", texto)   # CPM da conta com impressões
         self.assertIn("—", texto)          # CPM e custo/resultado da outra
 
@@ -1967,7 +1981,8 @@ class FluxoListagemTest(TestCase):
             _arquivo("sul.xlsx", [{"nome": "C", "res": 25, "inv": 100.0}],
                      inicio="2026-07-10", fim="2026-07-31"),
         ]
-        return self.client.post("/", {"modo": "listagem", "arquivos": arquivos})
+        return self.client.post("/", {"modo": "listagem", "cliente": "TIM Brasil",
+                                      "arquivos": arquivos})
 
     def test_periodo_sugerido_a_partir_dos_anexos(self):
         self._upload_periodos()
@@ -1978,13 +1993,15 @@ class FluxoListagemTest(TestCase):
 
     def test_periodo_editado_vai_para_o_cabecalho_do_pdf(self):
         self._upload_periodos()
-        r = self.client.post("/revisao/", {"titulo": "", "inicio": "2026-07-01",
+        r = self.client.post("/revisao/", {"cliente": "TIM Brasil",
+                                           "inicio": "2026-07-01",
                                            "fim": "2026-07-31"})
         self.assertIn("01/07/2026 — 31/07/2026", _texto_pdf(_bytes_pdf(r)))
 
     def test_periodo_em_branco_omite_o_bloco(self):
         self._upload_periodos()
-        texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
+        texto = _texto_pdf(_bytes_pdf(
+            self.client.post("/revisao/", {"cliente": "TIM Brasil"})))
         self.assertNotRegex(texto, r"\d{2}/\d{2}/\d{4} — \d{2}/\d{2}/\d{4}")
 
     def test_meia_data_e_periodo_invertido_sao_recusados(self):
@@ -1992,7 +2009,7 @@ class FluxoListagemTest(TestCase):
                      {"fim": "2026-07-31"},                          # sem início
                      {"inicio": "2026-07-31", "fim": "2026-07-01"}):  # invertido
             self._upload_periodos()
-            r = self.client.post("/revisao/", post)
+            r = self.client.post("/revisao/", dict(post, cliente="TIM Brasil"))
             self.assertEqual(r.status_code, 200)
             self.assertNotEqual(r["Content-Type"], "application/pdf")
 
@@ -2187,8 +2204,10 @@ class FluxoIndicadorTest(TestCase):
                              "imp": imp, "alc": alc, "cliques": cli}])
             for nome, res, inv, imp, alc, cli in CONTAS_INDICADOR
         ]
-        self.client.post("/", {"modo": "listagem", "arquivos": arquivos})
-        listagem = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
+        self.client.post("/", {"modo": "listagem", "cliente": "TIM Brasil",
+                               "arquivos": arquivos})
+        listagem = _texto_pdf(_bytes_pdf(
+            self.client.post("/revisao/", {"cliente": "TIM Brasil"})))
         for nome in ("unidade centro", "unidade norte", "unidade sul"):
             self.assertIn(nome, indicador)
             self.assertIn(nome, listagem)
@@ -2304,124 +2323,6 @@ class RegistroMetricasTest(TestCase):
             self.assertIn("Custo por Mil Alcançados", texto)
             self.assertIn("R$ 36,80", texto)
 
-
-
-class VeiculacaoTest(TestCase):
-    """Filtro pela coluna "Veiculação da campanha" do export (active/inactive)
-    no modo Indicador Único: recorta as linhas ANTES de qualquer soma, então
-    todos os números do PDF — inclusive os recalculados — saem do recorte."""
-
-    # Por conta: uma campanha ativa + uma inativa, com resultados distintos
-    CONTAS = [
-        ("centro.xlsx", [
-            {"nome": "Ativa", "status": "active", "res": 30, "inv": 60.0,
-             "imp": 3000, "alc": 2000, "cliques": 200},
-            {"nome": "Parada", "status": "inactive", "res": 10, "inv": 20.0,
-             "imp": 1000, "alc": 500, "cliques": 100},
-        ]),
-        ("norte.xlsx", [
-            {"nome": "Ativa", "status": "active", "res": 20, "inv": 40.0,
-             "imp": 2000, "alc": 1500, "cliques": 150},
-            {"nome": "Parada", "status": "inactive", "res": 5, "inv": 15.5,
-             "imp": 500, "alc": 300, "cliques": 50},
-        ]),
-    ]
-
-    def _pdf(self, veiculacao, metrica="conversas_iniciadas", contas=None):
-        arquivos = [_arquivo(nome, campanhas)
-                    for nome, campanhas in (contas or self.CONTAS)]
-        self.client.post("/", {"modo": "indicador", "cliente": "TIM",
-                               "metrica": metrica, "veiculacao": veiculacao,
-                               "arquivos": arquivos})
-        r = self.client.post("/revisao/", {"cliente": "TIM", "metrica": metrica,
-                                           "veiculacao": veiculacao})
-        return _texto_pdf(_bytes_pdf(r))
-
-    # ---- classificação do status ------------------------------------
-    def test_inactive_nao_e_confundido_com_active(self):
-        # "inactive" contém "active": a ordem de teste no parser importa
-        self.assertIs(parser_xlsx.campanha_ativa("active"), True)
-        self.assertIs(parser_xlsx.campanha_ativa("inactive"), False)
-        self.assertIs(parser_xlsx.campanha_ativa("Inactive"), False)
-        self.assertIs(parser_xlsx.campanha_ativa("campaign_paused"), False)
-        self.assertIs(parser_xlsx.campanha_ativa("Ativa"), True)
-        self.assertIs(parser_xlsx.campanha_ativa("Inativa"), False)
-        # Sem status ou status desconhecido: não afirma nada
-        self.assertIsNone(parser_xlsx.campanha_ativa(""))
-        self.assertIsNone(parser_xlsx.campanha_ativa(None))
-        self.assertIsNone(parser_xlsx.campanha_ativa("em analise"))
-
-    # ---- o recorte muda os totais -----------------------------------
-    def test_todas_soma_ativas_e_inativas(self):
-        texto = self._pdf("todas")
-        self.assertIn("65", texto)          # 30 + 10 + 20 + 5
-
-    def test_somente_ativas(self):
-        texto = self._pdf("ativas")
-        self.assertIn("50", texto)          # 30 + 20
-        self.assertIn("somente campanhas ativas", texto)
-
-    def test_somente_inativas(self):
-        texto = self._pdf("inativas")
-        self.assertIn("15", texto)          # 10 + 5
-        self.assertIn("somente campanhas inativas", texto)
-
-    def test_metrica_de_razao_recalculada_dentro_do_recorte(self):
-        # CPA das ativas = (60 + 40) / (30 + 20) = 2,00 — e não os 2,08 do total
-        texto = self._pdf("ativas", metrica="cpa")
-        self.assertIn("R$ 2,00", texto)
-        self.assertNotIn("R$ 2,08", texto)
-
-    def test_recorte_declarado_no_pdf(self):
-        texto = self._pdf("ativas")
-        self.assertIn("Campanhas fora do recorte não entram", texto)
-        # No recorte padrão não há nota nenhuma sobre veiculação
-        self.assertNotIn("Campanhas fora do recorte", self._pdf("todas"))
-
-    # ---- casos de borda ---------------------------------------------
-    def test_conta_sem_campanhas_no_recorte_fica_fora_do_total(self):
-        contas = list(self.CONTAS) + [
-            ("sul.xlsx", [{"nome": "Parada", "status": "inactive", "res": 99,
-                           "inv": 500.0, "imp": 9000, "alc": 8000,
-                           "cliques": 900}]),
-        ]
-        texto = self._pdf("ativas", contas=contas)
-        self.assertIn("Sem campanhas no recorte em: sul", texto)
-        self.assertIn("50", texto)          # total segue 30 + 20
-        self.assertNotIn("149", texto)      # a conta sem ativas não entrou
-
-    def test_export_sem_a_coluna_entra_com_tudo_e_e_sinalizado(self):
-        sem_coluna = SimpleUploadedFile(
-            "legado.xlsx",
-            _planilha_sem_veiculacao([{"nome": "C", "res": 7, "inv": 14.0,
-                                       "imp": 700, "alc": 600, "cliques": 70}]),
-            content_type=XLSX_MIME)
-        arquivos = [_arquivo(n, c) for n, c in self.CONTAS] + [sem_coluna]
-        self.client.post("/", {"modo": "indicador", "cliente": "TIM",
-                               "metrica": "conversas_iniciadas",
-                               "veiculacao": "ativas", "arquivos": arquivos})
-        r = self.client.post("/revisao/", {"cliente": "TIM", "veiculacao": "ativas",
-                                           "metrica": "conversas_iniciadas"})
-        texto = _texto_pdf(_bytes_pdf(r))
-        self.assertIn("não traz a coluna de veiculação", texto)
-        self.assertIn("57", texto)          # 30 + 20 + 7 (a legado entra inteira)
-
-    def test_trocar_o_recorte_na_revisao_nao_exige_reenviar_anexos(self):
-        arquivos = [_arquivo(n, c) for n, c in self.CONTAS]
-        self.client.post("/", {"modo": "indicador", "cliente": "TIM",
-                               "metrica": "conversas_iniciadas",
-                               "veiculacao": "todas", "arquivos": arquivos})
-        r = self.client.post("/revisao/", {"cliente": "TIM", "veiculacao": "inativas",
-                                           "metrica": "conversas_iniciadas"})
-        self.assertIn("15", _texto_pdf(_bytes_pdf(r)))
-
-    def test_outros_modos_ignoram_o_filtro(self):
-        # Listagem não expõe o campo: segue com todas as campanhas
-        arquivos = [_arquivo(n, c) for n, c in self.CONTAS]
-        self.client.post("/", {"modo": "listagem", "veiculacao": "ativas",
-                               "arquivos": arquivos})
-        texto = _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {})))
-        self.assertIn("R$ 80,00", texto)    # centro inteira: 60 + 20
 
 
 class SelecaoDeCampanhasTest(TestCase):
@@ -2618,11 +2519,10 @@ class SelecaoDeCampanhasTest(TestCase):
     def test_listagem_reordena_com_o_grupo_escolhido(self):
         self._upload(modo="listagem")
         # Com tudo: centro (40) → norte (25) → sul (15)
-        self.client.post("/revisao/", {"titulo": "", "aplicar_campanhas": "1",
-                                       "campanhas": [self.ULTRA]})
+        self._aplicar([self.ULTRA])
         contas = self._sessao()["contas"]
         self.assertEqual([c["nome"] for c in contas], ["centro", "norte"])
-        r = self.client.post("/revisao/", {"titulo": ""})
+        r = self.client.post("/revisao/", {"cliente": "TIM Brasil"})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("R$ 40,00", texto)     # centro só com a ultra
         self.assertIn("2 contas", texto)
@@ -2632,16 +2532,61 @@ class SelecaoDeCampanhasTest(TestCase):
         self._upload(modo="listagem", contas=[self.CONTAS[2]])
         # Um grupo só: a tela nem oferece a seleção, e um POST forjado com
         # grupo inexistente não derruba nada
-        r = self.client.post("/revisao/", {"titulo": "", "aplicar_campanhas": "1",
-                                           "campanhas": ["INEXISTENTE"]})
+        r = self._aplicar(["INEXISTENTE"])
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(self._sessao()["contas"]), 1)
 
-    def test_indicador_nao_guarda_registros_na_sessao(self):
-        # O indicador resolve o recorte pelas variantes pré-calculadas; guardar
-        # os registros dele seria sessão maior sem tela que a use.
-        self._upload(modo="indicador", metrica="conversas_iniciadas")
-        self.assertNotIn("_anexos", self._sessao())
+    # ---- indicador único ---------------------------------------------
+    # O indicador foi o último modo a ganhar a seleção (24/08/2026), no lugar
+    # do filtro por status de veiculação: recortar por produto é o que o
+    # cliente reconhece, e o status a tabela já mostra.
+    def _upload_indicador(self, contas=None, metrica="conversas_iniciadas"):
+        return self._upload(modo="indicador", contas=contas, metrica=metrica)
+
+    def test_indicador_guarda_os_registros_na_sessao(self):
+        # Precisa deles para refazer a leitura com outra seleção, como os
+        # demais modos — antes o indicador era o único que não guardava.
+        self._upload_indicador()
+        self.assertIn("_anexos", self._sessao())
+
+    def test_indicador_lista_os_grupos_e_oferece_o_botao(self):
+        self._upload_indicador()
+        html = self.client.get("/revisao/").content.decode()
+        self.assertIn("Campanhas incluídas", html)
+        self.assertIn(self.CELULAR, html)
+        self.assertIn(self.ULTRA, html)
+        self.assertIn('name="aplicar_campanhas"', html)
+
+    def test_indicador_refaz_os_numeros_com_o_grupo_escolhido(self):
+        self._upload_indicador(metrica="investimento_total")
+        self._aplicar([self.CELULAR], metrica="investimento_total")
+        contas = self._sessao()["contas"]
+        # centro 60 + norte 40 + sul 30 = 130 (sem os 50 da ultra)
+        self.assertEqual(
+            sum(c["dados"]["_num"]["investimento"] for c in contas), 130.0)
+        self.assertEqual(self._sessao()["_selecao_campanhas"], [self.CELULAR])
+
+    def test_indicador_conta_sem_o_grupo_sai_da_comparacao(self):
+        self._upload_indicador(metrica="investimento_total")
+        r = self._aplicar([self.ULTRA], metrica="investimento_total")
+        self.assertEqual([c["nome"] for c in self._sessao()["contas"]],
+                         ["centro", "norte"])
+        self.assertIn("1 anexo", r.content.decode())
+
+    def test_indicador_a_metrica_sobrevive_ao_aplicar(self):
+        self._upload_indicador(metrica="investimento_total")
+        self._aplicar([self.CELULAR], metrica="cpa")
+        self.assertEqual(self._sessao()["metrica"], "cpa")
+
+    def test_indicador_o_pdf_sai_com_a_selecao_aplicada(self):
+        self._upload_indicador(metrica="investimento_total")
+        self._aplicar([self.ULTRA], metrica="investimento_total")
+        r = self.client.post("/revisao/", {"cliente": "TIM Brasil",
+                                           "metrica": "investimento_total"})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("R$ 50,00", texto)     # só a ultra: 40 + 10
+        # A sul não anunciou ultra: saiu da comparação, e com ela os R$ 30,00
+        self.assertNotIn("R$ 30,00", texto)
 
     # ---- anexo único -------------------------------------------------
     # Uma planilha só também traz produtos diferentes: o recorte por grupo é o
