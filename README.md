@@ -33,6 +33,16 @@ Os quatro modos seguem o mesmo fluxo de duas etapas — **01 Importar dados**
 → **02 Revisar e gerar** — e o nome de cada conta pode ser digitado já no
 painel, por anexo (em branco, cai no nome do arquivo).
 
+Nos modos **anexo único**, **consolidado** e **listagem**, a tela 02 abre com
+a **seleção de grupos de campanha** quando os anexos trazem mais de um — o
+grupo sai dos dois primeiros colchetes do nome (`[LEADS][CELULAR][ITU][…]` e
+`[LEADS][CELULAR][SALTO][…]` caem no mesmo "LEADS · CELULAR"), que na prática
+é o produto anunciado. *Aplicar seleção* refaz a leitura só com o que estiver
+marcado, sem reenviar arquivo: todo número do relatório é recalculado, e a
+análise volta a ser a do motor de regras — a que a IA escreveu falava de
+outros números. No consolidado e na listagem, anexo que ficar sem nenhuma
+campanha sai do relatório.
+
 ## Rodando
 ```bash
 pip install -r requirements.txt

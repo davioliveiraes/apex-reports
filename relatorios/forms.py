@@ -119,8 +119,36 @@ class UploadForm(forms.Form):
         return cd
 
 
-class RevisaoForm(forms.Form):
-    """Etapa 2 — revisar/editar os textos antes de gerar o PDF."""
+class _ComCampanhas(forms.Form):
+    """Seleção dos grupos de campanha que entram no relatório.
+
+    O campo só nasce quando há mais de um grupo nos anexos: com um só não há
+    escolha a fazer, e uma caixa marcada sozinha seria ruído na tela.
+
+    `required=False` de propósito. Quem consome a seleção é o botão *Aplicar
+    seleção*; o *Gerar PDF* trabalha sobre o que já está na sessão, e travá-lo
+    por causa das caixas prenderia o relatório numa escolha que ele nem lê. A
+    recusa de uma seleção vazia é da view, junto do clique que a usa.
+    """
+
+    def __init__(self, *args, grupos_campanha=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.grupos_campanha = list(grupos_campanha)
+        if len(self.grupos_campanha) > 1:
+            self.fields["campanhas"] = forms.MultipleChoiceField(
+                label="Campanhas incluídas", required=False,
+                choices=[(g, g) for g in self.grupos_campanha],
+                widget=forms.CheckboxSelectMultiple,
+            )
+
+
+class RevisaoForm(_ComCampanhas):
+    """Etapa 2 — revisar/editar os textos antes de gerar o PDF.
+
+    Herda a seleção de campanhas pelo mesmo motivo do consolidado e da
+    listagem: um anexo só também costuma trazer produtos diferentes na mesma
+    planilha, e o relatório de um deles é o que o cliente pediu.
+    """
     cliente = forms.CharField(label="Cliente", max_length=120)
     periodo = forms.CharField(label="Período", max_length=80, required=False)
     analise = forms.CharField(
@@ -153,29 +181,6 @@ class _ComUnidades(forms.Form):
         """Nomes revisados; campo em branco preserva o nome que já vinha."""
         return [(self.cleaned_data.get(f"unidade_{i}") or "").strip() or atual
                 for i, atual in enumerate(atuais)]
-
-
-class _ComCampanhas(forms.Form):
-    """Seleção dos grupos de campanha que entram no relatório.
-
-    O campo só nasce quando há mais de um grupo nos anexos: com um só não há
-    escolha a fazer, e uma caixa marcada sozinha seria ruído na tela.
-
-    `required=False` de propósito. Quem consome a seleção é o botão *Aplicar
-    seleção*; o *Gerar PDF* trabalha sobre o que já está na sessão, e travá-lo
-    por causa das caixas prenderia o relatório numa escolha que ele nem lê. A
-    recusa de uma seleção vazia é da view, junto do clique que a usa.
-    """
-
-    def __init__(self, *args, grupos_campanha=(), **kwargs):
-        super().__init__(*args, **kwargs)
-        self.grupos_campanha = list(grupos_campanha)
-        if len(self.grupos_campanha) > 1:
-            self.fields["campanhas"] = forms.MultipleChoiceField(
-                label="Campanhas incluídas", required=False,
-                choices=[(g, g) for g in self.grupos_campanha],
-                widget=forms.CheckboxSelectMultiple,
-            )
 
 
 class RevisaoGrupoForm(_ComCampanhas, _ComUnidades):

@@ -64,7 +64,7 @@ def index(request):
                     dados = lidos[0]["dados"]
                 else:
                     dados = consolidar_grupo(lidos)
-                    dados.update(_fonte_reconsolidacao(lidos))
+                dados.update(_fonte_reconsolidacao(lidos))
                 dados["cliente"] = form.cleaned_data["cliente"]
                 request.session[SESSION_KEY] = dados
                 return redirect("revisao")
@@ -199,7 +199,7 @@ def _contas_veiculacao(contas, veiculacao):
 
 
 # ----------------------------------------------------------------------
-# Seleção de campanhas (consolidado e listagem)
+# Seleção de campanhas (anexo único, consolidado e listagem)
 # ----------------------------------------------------------------------
 # Nome do botão que refaz a leitura com outra seleção. A escolha mora na
 # revisão, não no painel, por um motivo que não é de gosto: os grupos de
@@ -281,12 +281,16 @@ def _aplicar_selecao(dados, form, minimo, erro_minimo):
 
     O nome que o operador acabou de digitar volta para o anexo antes do filtro:
     os campos da tela seguem os anexos que sobraram da seleção anterior, e sem
-    esse passo o texto digitado se perderia a cada clique.
+    esse passo o texto digitado se perderia a cada clique. O anexo único não
+    tem esse campo — o nome da conta não vai ao PDF dele —, e aí não há o que
+    devolver.
     """
     anexos = dados["_anexos"]
-    vivos = dados.get("_indices") or list(range(len(anexos)))
-    for i, nome in zip(vivos, form.nomes_finais([anexos[i]["nome"] for i in vivos])):
-        anexos[i]["nome"] = nome
+    if hasattr(form, "nomes_finais"):
+        vivos = dados.get("_indices") or list(range(len(anexos)))
+        for i, nome in zip(vivos,
+                           form.nomes_finais([anexos[i]["nome"] for i in vivos])):
+            anexos[i]["nome"] = nome
 
     selecao = form.cleaned_data.get("campanhas") or None
     if "campanhas" in form.fields and not selecao:
@@ -338,12 +342,22 @@ def revisao(request):
     if modo == UploadForm.MODO_INDICADOR:
         return _revisao_indicador(request, dados)
 
+    grupos = _grupos_disponiveis(dados.get("_anexos") or [])
+
     if request.method == "POST":
-        form = RevisaoForm(request.POST)
+        form = RevisaoForm(request.POST, grupos_campanha=_chaves(grupos))
+        # `grupos` vazio = sessão sem os registros (aberta antes de a seleção
+        # existir): não há o que refazer, e o POST forjado não deve estourar.
+        if form.is_valid() and grupos and _pediu_campanhas(request):
+            dados, form, extra = _refazer_unico(request, dados, form, grupos)
+            return render(request, "relatorios/revisao.html", dict(
+                extra, form=form, dados=dados,
+                pares_campanhas=_pares_campanhas(form, grupos)))
         if form.is_valid() and _pediu_ia(request):
             form, extra = _analisar_com_ia(request, dados, form)
-            return render(request, "relatorios/revisao.html",
-                          dict(extra, form=form, dados=dados))
+            return render(request, "relatorios/revisao.html", dict(
+                extra, form=form, dados=dados,
+                pares_campanhas=_pares_campanhas(form, grupos)))
         if form.is_valid():
             cd = form.cleaned_data
             relatorio = {
@@ -366,14 +380,14 @@ def revisao(request):
             return _sinalizar_download(
                 request, FileResponse(buffer, as_attachment=True, filename=nome))
     else:
-        form = RevisaoForm(initial={
-            "cliente": dados.get("cliente", ""),
-            "periodo": dados.get("periodo", ""),
-            "analise": _texto_da_analise(dados),
-        })
+        form = _form_unico(dados, grupos)
 
-    return render(request, "relatorios/revisao.html",
-                  {"form": form, "dados": dados, "ia_disponivel": redator_ia.disponivel()})
+    return render(request, "relatorios/revisao.html", {
+        "form": form,
+        "dados": dados,
+        "ia_disponivel": redator_ia.disponivel(),
+        "pares_campanhas": _pares_campanhas(form, grupos),
+    })
 
 
 # ----------------------------------------------------------------------
@@ -454,6 +468,59 @@ def _com_texto(form, texto):
         # tela depois de um clique na IA.
         kwargs["grupos_campanha"] = form.grupos_campanha
     return type(form)(initial=inicial, **kwargs)
+
+
+# Guarda, não caminho de tela: os grupos oferecidos saem das próprias linhas do
+# anexo, então grupo marcado sempre casa com pelo menos uma. Fica porque
+# `_aplicar_selecao` é compartilhada com os modos onde o caso acontece de
+# verdade — lá um anexo inteiro pode não ter o produto escolhido.
+_ERRO_MINIMO_UNICO = (
+    "Nenhuma campanha do anexo está nos grupos marcados — o relatório sairia "
+    "sem número nenhum. A seleção anterior continua valendo."
+)
+
+
+def _form_unico(dados, grupos, cliente=None, periodo=None):
+    """Formulário do anexo único montado a partir da sessão."""
+    return RevisaoForm(
+        grupos_campanha=_chaves(grupos),
+        initial={
+            "cliente": dados.get("cliente", "") if cliente is None else cliente,
+            "periodo": dados.get("periodo", "") if periodo is None else periodo,
+            "analise": _texto_da_analise(dados),
+            "campanhas": _selecao_atual(dados, grupos),
+        })
+
+
+def _refazer_unico(request, dados, form, grupos):
+    """Refaz o relatório de anexo único com a seleção de campanhas do form.
+
+    Mesma regra do consolidado: com outro conjunto de campanhas todo número
+    muda, então a leitura é refeita inteira — KPIs, funil, tabela por campanha,
+    gráficos e a análise do motor. O texto da IA é descartado junto, porque foi
+    escrito sobre os números anteriores. Cliente e período digitados sobrevivem:
+    são do operador, não da planilha.
+    """
+    cd = form.cleaned_data
+    unidades, indices, selecao, erro = _aplicar_selecao(
+        dados, form, minimo=1, erro_minimo=_ERRO_MINIMO_UNICO)
+    if erro:
+        return dados, form, {"erro_campanhas": erro,
+                             "ia_disponivel": redator_ia.disponivel()}
+
+    novo = unidades[0]["dados"]
+    novo["cliente"] = cd["cliente"]
+    novo["periodo"] = cd.get("periodo") or novo.get("periodo", "")
+    novo["_anexos"] = dados["_anexos"]
+    novo["_indices"] = indices
+    novo["_selecao_campanhas"] = selecao
+    request.session[SESSION_KEY] = novo
+    request.session.modified = True
+
+    return novo, _form_unico(novo, grupos), {
+        "campanhas_aplicadas": True,
+        "ia_disponivel": redator_ia.disponivel(),
+    }
 
 
 _ERRO_MINIMO_GRUPO = (

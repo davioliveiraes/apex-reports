@@ -2643,6 +2643,99 @@ class SelecaoDeCampanhasTest(TestCase):
         self._upload(modo="indicador", metrica="conversas_iniciadas")
         self.assertNotIn("_anexos", self._sessao())
 
+    # ---- anexo único -------------------------------------------------
+    # Uma planilha só também traz produtos diferentes: o recorte por grupo é o
+    # mesmo dos outros modos, sobre um anexo em vez de vários.
+    def _upload_unico(self, campanhas=None):
+        arquivo = _arquivo("centro.xlsx", campanhas or self.CONTAS[0][1])
+        return self.client.post("/", {"modo": "unico", "cliente": "TIM Brasil",
+                                      "arquivos": [arquivo]})
+
+    def test_unico_lista_os_grupos_do_anexo(self):
+        self._upload_unico()
+        html = self.client.get("/revisao/").content.decode()
+        self.assertIn("Campanhas incluídas", html)
+        self.assertIn(self.CELULAR, html)
+        self.assertIn(self.ULTRA, html)
+        self.assertIn("[LEADS][CELULAR][CENTRO][ABO][01JUN26]", html)
+        # "em 1 anexo" seria ruído: não há anexo nenhum com que comparar.
+        self.assertNotIn("em 1 anexo", html)
+
+    def test_unico_com_um_grupo_so_nao_abre_a_selecao(self):
+        self._upload_unico([c for c in self.CONTAS[0][1] if "ULTRA" not in c["nome"]])
+        html = self.client.get("/revisao/").content.decode()
+        self.assertNotIn("Campanhas incluídas", html)
+        self.assertNotIn('name="aplicar_campanhas"', html)
+
+    def test_unico_selecionar_um_grupo_refaz_os_numeros(self):
+        self._upload_unico()
+        self.assertEqual(self._linhas_funil(self._sessao())["Investimento Total"],
+                         "R$ 100,00")
+
+        self._aplicar([self.CELULAR])
+        linhas = self._linhas_funil(self._sessao())
+        self.assertEqual(linhas["Investimento Total"], "R$ 60,00")
+        self.assertEqual(linhas["Conversas Iniciadas"], "30")
+        # CPA recalculado sobre os brutos do recorte: 60 / 30 = 2,00
+        self.assertEqual(linhas["Custo por Conversa (CPA)"], "R$ 2,00")
+        self.assertEqual(self._sessao()["_selecao_campanhas"], [self.CELULAR])
+
+    def test_unico_a_tabela_por_campanha_perde_a_campanha_filtrada(self):
+        # No anexo único a tabela de campanhas vai ao PDF: deixar nela uma
+        # campanha que saiu dos totais é a contradição que o cliente enxerga.
+        self._upload_unico()
+        self._aplicar([self.CELULAR])
+        nomes = [l[0] for l in self._sessao()["detalhes_campanha"]["linhas"]]
+        self.assertEqual(nomes, ["[LEADS][CELULAR][CENTRO][ABO][01JUN26]"])
+
+    def test_unico_grupo_inexistente_no_post_nao_derruba_nada(self):
+        # Grupo que não está entre as opções não passa da validação do form —
+        # o POST forjado volta a tela, sem tocar na sessão.
+        self._upload_unico()
+        r = self._aplicar(["INEXISTENTE"])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self._linhas_funil(self._sessao())["Investimento Total"],
+                         "R$ 100,00")
+
+    def test_unico_desmarcar_tudo_e_recusado(self):
+        self._upload_unico()
+        r = self._aplicar([])
+        self.assertIn("Marque pelo menos um grupo", r.content.decode())
+        self.assertEqual(self._linhas_funil(self._sessao())["Investimento Total"],
+                         "R$ 100,00")
+
+    def test_unico_cliente_e_periodo_digitados_sobrevivem(self):
+        self._upload_unico()
+        self._aplicar([self.CELULAR], cliente="TIM Interior",
+                      periodo="01/07/2026 a 15/07/2026")
+        dados = self._sessao()
+        self.assertEqual(dados["cliente"], "TIM Interior")
+        self.assertEqual(dados["periodo"], "01/07/2026 a 15/07/2026")
+
+    def test_unico_texto_da_ia_e_descartado_ao_trocar_a_selecao(self):
+        self._upload_unico()
+        s = self.client.session
+        dados = s["relatorio_apex"]
+        dados["analise_ia"] = "TEXTO ESCRITO PELA IA"
+        s["relatorio_apex"] = dados
+        s.save()
+
+        r = self._aplicar([self.CELULAR])
+        self.assertNotIn("analise_ia", self._sessao())
+        self.assertNotIn("TEXTO ESCRITO PELA IA", r.content.decode())
+        self.assertIn("Relatório refeito com as campanhas selecionadas",
+                      r.content.decode())
+
+    def test_unico_o_pdf_sai_com_a_selecao_aplicada(self):
+        self._upload_unico()
+        self._aplicar([self.ULTRA])
+        r = self.client.post("/revisao/", {"cliente": "TIM Brasil",
+                                           "periodo": "01/07/2026 a 15/07/2026",
+                                           "analise": "Texto."})
+        texto = _texto_pdf(_bytes_pdf(r))
+        self.assertIn("R$ 40,00", texto)
+        self.assertNotIn("[LEADS][CELULAR][CENTRO][ABO][01JUN26]", texto)
+
 
 class AmbienteDeProducaoTest(SimpleTestCase):
     """

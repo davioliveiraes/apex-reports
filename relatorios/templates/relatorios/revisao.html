@@ -75,7 +75,8 @@ ser conferido: se ele errar, é aqui que se percebe.
     <span class="grupo-corpo">
       <span class="grupo-nome">{{ grupo.chave }}</span>
       <span class="grupo-meta">{{ grupo.campanhas|length }} campanha{{ grupo.campanhas|pluralize }}
-        em {{ grupo.anexos }} anexo{{ grupo.anexos|pluralize }}
+        {# Com um anexo só, "em 1 anexo" é ruído: não há o que comparar. #}
+        {% if grupo.anexos > 1 %}em {{ grupo.anexos }} anexos{% endif %}
         {% if grupo.campanhas %}· {{ grupo.campanhas|join:" · " }}{% endif %}</span>
     </span>
   </label>
@@ -84,8 +85,10 @@ ser conferido: se ele errar, é aqui que se percebe.
 {{ form.campanhas.errors }}
 <button class="botao botao-sec botao-inline" type="submit"
         name="aplicar_campanhas" value="1">Aplicar seleção</button>
-<p class="legenda">Refaz a leitura dos anexos só com o que estiver marcado, sem
-  reenviar arquivo. Anexo que ficar sem nenhuma campanha sai do relatório.</p>
+<p class="legenda">Refaz a leitura {% if modo_grupo or modo_listagem %}dos anexos{% else %}do anexo{% endif %}
+  só com o que estiver marcado, sem reenviar arquivo.
+  {% if modo_grupo or modo_listagem %}Anexo que ficar sem nenhuma campanha sai do
+  relatório.{% endif %}</p>
 {% endif %}
 
 {# ------------------------------------------------------------------ #}
