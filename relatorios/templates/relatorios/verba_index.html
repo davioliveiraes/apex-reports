@@ -1,0 +1,248 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex — Análise de Verba{% endblock %}
+{% block topo_sub %}Fechamento de verba{% endblock %}
+{% block nome_etapa1 %}Importar verba{% endblock %}
+{% block nome_etapa2 %}Conferir e enviar{% endblock %}
+{% block form_extra %}enctype="multipart/form-data"{% endblock %}
+
+{% block conteudo %}
+<h1>Fechamento de verba</h1>
+<p class="sub">Envie os exports do preset <b>VERBA</b> e informe o que foi
+  contratado — o Gerenciador não sabe esse número.</p>
+
+{% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
+
+<div class="bloco">
+  <span class="bloco-idx">01</span><span class="bloco-nome">Base interna</span>
+  <span class="bloco-rule"></span>
+</div>
+{% comment %}
+Os três campos que nenhuma planilha traz. O contratado é combinado fora do
+Meta, e a data de referência decide o mês analisado e quantos dias já
+encerraram — é dela que sai o denominador da projeção.
+{% endcomment %}
+<div class="campos">
+  <div class="campo">
+    <label for="{{ form.cliente.id_for_label }}">Cliente / unidade</label>
+    {{ form.cliente }}
+    <span class="ajuda">Só identifica o fechamento na tela; não vai na mensagem.</span>
+    {{ form.cliente.errors }}
+  </div>
+  <div class="campo">
+    <label for="{{ form.referencia.id_for_label }}">Data de hoje</label>
+    {{ form.referencia }}
+    <span class="ajuda">{{ form.referencia.help_text }}</span>
+    {{ form.referencia.errors }}
+  </div>
+  <div class="campo">
+    <label for="{{ form.orcamento.id_for_label }}">Orçamento contratado</label>
+    {{ form.orcamento }}
+    <span class="ajuda">{{ form.orcamento.help_text }}</span>
+    {{ form.orcamento.errors }}
+  </div>
+  <div class="campo">
+    <label>Esse valor é</label>
+    <div class="segmento">
+      {% for opcao in form.periodicidade %}
+      <label>{{ opcao.tag }}<span>{{ opcao.choice_label }}</span></label>
+      {% endfor %}
+    </div>
+    <span class="ajuda">{{ form.periodicidade.help_text }}</span>
+    {{ form.periodicidade.errors }}
+  </div>
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Exports do preset VERBA</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta" id="contador">0 / 2</span>
+</div>
+
+<div class="dropzone" id="dropzone" tabindex="0" role="button"
+     aria-label="Selecionar arquivos .xlsx">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
+    <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
+  </svg>
+  <span class="dropzone-txt"><strong>Arraste os .xlsx aqui</strong> ou clique para escolher</span>
+  <span class="dropzone-meta">campanha e conjunto · 10 MB cada</span>
+  {{ form.arquivos }}
+</div>
+
+<div class="anexos so-arquivo" id="anexos" hidden>
+  <div class="anexos-head">
+    <span>#</span><span>Arquivo</span>
+    <span class="num-col">Tam.</span><span></span>
+  </div>
+</div>
+{{ form.arquivos.errors }}
+
+<p class="legenda">O nível de cada arquivo é detectado pelas colunas — tanto faz
+  a ordem em que você envia. Orçamento só existe no nível em que foi definido:
+  <code>[CBO]</code> guarda o valor na campanha, <code>[ABO]</code> no conjunto
+  de anúncios, e é por isso que a coleta são dois arquivos.</p>
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Resumo do envio</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Frente</dt><dd>Análise de verba</dd></div>
+  <div class="resumo-item"><dt>Anexos</dt><dd class="num" id="rs-anexos">0 de 2</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>Mensagem + análise interna</dd></div>
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">Pré-requisitos</div>
+<div class="checks">
+  <div class="check" id="ck-anexos"><i>✓</i><span></span></div>
+  <div class="check" id="ck-base"><i>✓</i><span></span></div>
+</div>
+
+<div class="acao">
+  <button class="botao" type="submit" id="btn-enviar" disabled>
+    <span id="btn-rotulo">Ler verba</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  <div class="status">
+    <span class="status-eixo" aria-hidden="true"></span>
+    <span class="status-txt" id="status-txt">Nenhum anexo — arraste os .xlsx para começar</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Versão enxuta do painel de desempenho: aqui são no máximo 2 arquivos, sem
+  // nome de conta e sem reordenar — a ordem não significa nada, o nível de
+  // cada export é lido das colunas.
+  const MAX = 2;
+
+  const dz = document.getElementById('dropzone');
+  const input = dz.querySelector('input[type=file]');
+  const anexos = document.getElementById('anexos');
+  const contador = document.getElementById('contador');
+  const btn = document.getElementById('btn-enviar');
+  const btnRotulo = document.getElementById('btn-rotulo');
+  const statusTxt = document.getElementById('status-txt');
+  const statusEixo = document.querySelector('.status-eixo');
+  const rsAnexos = document.getElementById('rs-anexos');
+  const ckAnexos = document.getElementById('ck-anexos');
+  const ckBase = document.getElementById('ck-base');
+  const inputCliente = document.getElementById('{{ form.cliente.auto_id }}');
+  const inputOrcamento = document.getElementById('{{ form.orcamento.auto_id }}');
+
+  let arquivos = [];
+
+  const tamanho = bytes => bytes < 1024 * 1024
+    ? `${(bytes / 1024).toFixed(0)} KB`
+    : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+  function marcar(check, ok, texto) {
+    check.classList.toggle('falta', !ok);
+    check.querySelector('i').textContent = ok ? '✓' : '!';
+    check.querySelector('span').textContent = texto;
+  }
+
+  function avaliar() {
+    const n = arquivos.length;
+    const okAnexos = n >= 1 && n <= MAX;
+    const okBase = inputCliente.value.trim() !== ''
+                && inputOrcamento.value.trim() !== '';
+
+    rsAnexos.textContent = `${n} de ${MAX}`;
+    contador.textContent = `${n} / ${MAX}`;
+    contador.classList.toggle('excedido', n > MAX);
+
+    marcar(ckAnexos, okAnexos,
+      n > MAX ? `São no máximo 2 exports — remova ${n - MAX}`
+      : n ? `${n} ${n === 1 ? 'export' : 'exports'} do preset VERBA`
+      : 'Envie ao menos o export de campanha');
+    marcar(ckBase, okBase,
+      okBase ? 'Cliente e contratado preenchidos'
+             : 'Informe o cliente e o orçamento contratado');
+
+    btn.disabled = !(okAnexos && okBase);
+    statusEixo.classList.toggle('ativo', !btn.disabled);
+    statusTxt.classList.toggle('excedido', n > MAX);
+    statusTxt.textContent = !n ? 'Nenhum anexo — arraste os .xlsx para começar'
+      : btn.disabled ? 'Ajuste os pré-requisitos para continuar'
+      : `Pronto para ler ${n} ${n === 1 ? 'planilha' : 'planilhas'}`;
+  }
+
+  function sincronizar() {
+    const dt = new DataTransfer();
+    arquivos.forEach(f => dt.items.add(f));
+    input.files = dt.files;
+
+    anexos.querySelectorAll('.anexo').forEach(l => l.remove());
+    arquivos.forEach((f, i) => anexos.appendChild(linha(f, i)));
+    anexos.hidden = !arquivos.length;
+    avaliar();
+  }
+
+  function linha(f, i) {
+    const el = document.createElement('div');
+    el.className = 'anexo';
+
+    const alca = document.createElement('span');
+    alca.className = 'anexo-alca';
+    const num = document.createElement('span');
+    num.className = 'anexo-num';
+    num.textContent = String(i + 1).padStart(2, '0');
+    alca.appendChild(num);
+
+    const nome = document.createElement('span');
+    nome.className = 'anexo-nome';
+    nome.textContent = f.name;
+    nome.title = f.name;
+    const tam = document.createElement('span');
+    tam.className = 'anexo-tam';
+    tam.textContent = tamanho(f.size);
+
+    const cela = document.createElement('span');
+    const rem = document.createElement('button');
+    rem.type = 'button';
+    rem.className = 'anexo-remover';
+    rem.textContent = '×';
+    rem.setAttribute('aria-label', `Remover ${f.name}`);
+    rem.addEventListener('click', () => { arquivos.splice(i, 1); sincronizar(); });
+    cela.appendChild(rem);
+
+    el.append(alca, nome, tam, cela);
+    return el;
+  }
+
+  function adicionar(novos) {
+    for (const f of novos) {
+      if (!arquivos.some(a => a.name === f.name && a.size === f.size)) arquivos.push(f);
+    }
+    sincronizar();
+  }
+
+  [inputCliente, inputOrcamento].forEach(i => i.addEventListener('input', avaliar));
+  dz.addEventListener('click', () => input.click());
+  dz.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
+  input.addEventListener('change', () => adicionar([...input.files]));
+  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.add('arrastando'); }));
+  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.remove('arrastando'); }));
+  dz.addEventListener('drop', e => adicionar([...e.dataTransfer.files]));
+
+  document.getElementById('form-painel').addEventListener('submit', () => {
+    if (btn.disabled) return;
+    btn.classList.add('carregando');
+    btnRotulo.textContent = 'Lendo planilhas…';
+    btn.disabled = true;
+    statusEixo.classList.add('ativo');
+    statusTxt.textContent = 'Lendo planilhas…';
+  });
+
+  avaliar();
+</script>
+{% endblock %}

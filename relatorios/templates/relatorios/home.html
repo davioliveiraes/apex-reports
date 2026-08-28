@@ -1,0 +1,65 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex — Escolha a análise{% endblock %}
+{% block topo_sub %}Duas frentes{% endblock %}
+{% comment %}Sem etapas: escolher a frente não é etapa de fluxo nenhum.{% endcomment %}
+{% block etapas %}{% endblock %}
+
+{% comment %}
+Coluna única e centrada, sem o aside das telas de trabalho. A home não tem
+ação primária para fixar na lateral, e o par de cartões é a página inteira —
+com o grid de duas colunas ela ficava grudada no topo com a tela vazia abaixo.
+
+A pergunta que cada frente responde vem antes do nome dela porque é assim que
+a escolha acontece: o operador chega com uma dúvida, não com um substantivo.
+{% endcomment %}
+{% block miolo %}
+<div class="miolo-home">
+  <div class="home-caixa">
+    <h1>O que você vai analisar?</h1>
+    <p class="sub">As duas frentes leem exports do Gerenciador de Anúncios — mas
+      exports diferentes, que respondem perguntas diferentes.</p>
+
+    <div class="frentes">
+      <a class="frente" href="{% url 'index' %}">
+        <span class="frente-pergunta">“Como foi o mês?”</span>
+        <span class="frente-nome">
+          <strong>Análise de Desempenho</strong>
+          <svg class="frente-seta" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true">
+            <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+          </svg>
+        </span>
+        <span class="frente-desc">Como as campanhas entregaram: funil de vendas,
+          desempenho por campanha, comparação entre unidades e a análise do
+          período. Quatro modos de relatório, de uma conta a vinte.</span>
+        <span class="frente-fluxo">
+          <span>export de desempenho</span><i>→</i><span>PDF para o cliente</span>
+        </span>
+      </a>
+
+      <a class="frente" href="{% url 'verba' %}">
+        <span class="frente-pergunta">“Vai fechar no combinado?”</span>
+        <span class="frente-nome">
+          <strong>Análise de Verba</strong>
+          <svg class="frente-seta" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true">
+            <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+          </svg>
+        </span>
+        <span class="frente-desc">Fechamento de verba: o contratado contra o
+          configurado e o já gasto, com projeção de fechamento e a mensagem
+          pronta para o grupo do cliente. Não lê métrica de desempenho.</span>
+        <span class="frente-fluxo">
+          <span>preset VERBA</span><i>→</i><span>mensagem de WhatsApp</span>
+        </span>
+      </a>
+    </div>
+
+    <p class="legenda">Orçamento não é métrica, é configuração: ele só aparece na
+      tabela do Gerenciador, e por isso a verba pede o seu próprio export. Ver
+      <code>docs/GUIA_VERBA.md</code> para montar a predefinição.</p>
+  </div>
+</div>
+{% endblock %}

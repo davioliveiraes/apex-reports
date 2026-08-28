@@ -1,10 +1,18 @@
-# Gerador de Relatórios PDF — Apex (Meta Ads)
+# Relatórios Apex (Meta Ads)
 
-Aplicação Django que lê o export **.xlsx** do Meta Ads Manager e gera o
-relatório em PDF no padrão visual da Apex.
+Aplicação Django que lê exports **.xlsx** do Meta Ads Manager. A raiz oferece
+duas frentes, porque são exports diferentes respondendo perguntas diferentes:
 
-## Fluxo
-O painel inicial oferece quatro modos:
+| Frente | Pergunta | Export | Saída |
+| --- | --- | --- | --- |
+| **Análise de Desempenho** | "Como foi o mês?" | preset de desempenho | PDF |
+| **Análise de Verba** | "Vai fechar no combinado?" | preset `VERBA` | mensagem de WhatsApp |
+
+Misturá-las numa tela só faria enviar a planilha errada — as duas abrem sem
+reclamar, e o erro só apareceria no número.
+
+## Análise de Desempenho
+O painel oferece quatro modos:
 
 1. **Anexo único** — 1 `.xlsx` → relatório individual. A aplicação lê KPIs
    (investimento, resultados, custo/resultado, impressões, alcance,
@@ -50,6 +58,51 @@ veiculação** (todas / ativas / inativas) que só o Indicador Único oferecia.
 Os dois recortavam a mesma planilha por critérios diferentes; o status é
 decisão interna da agência e o operador já o enxerga na tabela, enquanto o
 produto é o que o cliente reconhece.
+
+## Análise de Verba
+
+Fechamento mensal de verba: o **contratado** contra o **configurado** e o **já
+gasto**, com projeção de fechamento. Orçamento não é métrica, é configuração —
+ele só existe na tabela do Gerenciador, e no nível em que foi definido:
+`[CBO]` guarda o valor na campanha, `[ABO]` no conjunto de anúncios. Por isso
+a coleta são **dois** exports do preset `VERBA` (ver `docs/GUIA_VERBA.md`), e
+por isso o cruzamento entre eles é **por ID**: nome de campanha é renomeado no
+meio do mês e o merge por nome perderia linhas sem avisar.
+
+A aplicação aceita um arquivo só quando a conta é 100% `[CBO]`, e avisa
+nominalmente quando encontra `[ABO]` sem o export de conjunto para resolvê-la.
+O nível de cada arquivo é deduzido das colunas — a ordem de envio não importa.
+
+Três campos são digitados, porque nenhuma planilha os traz: **cliente /
+unidade**, **orçamento contratado** (mensal ou diário, o app converte) e **data
+de hoje** (que define o mês analisado e quantos dias já encerraram). Na tela 02
+eles continuam editáveis: corrigir qualquer um refaz todos os números sem
+reenviar planilha, porque a sessão guarda as linhas cruas dos dois exports.
+
+A saída são dois blocos com botão de copiar — a mensagem para o grupo do
+cliente e a análise interna do desvio — mais a tabela de conferência campanha a
+campanha. **Não há PDF nesta frente**: o entregável é uma mensagem colada num
+grupo.
+
+O cálculo é determinístico (`relatorios/fechamento_verba.py`), sem rede e sem
+crédito: as fórmulas são fechadas e cada faixa de desvio tem uma frase de
+status já escrita. Um botão opcional pede ao modelo outra redação do mesmo
+texto — ele recebe apenas os números já calculados, nunca as planilhas, e a
+resposta é recusada se passar de 10 linhas, não terminar em pergunta ou citar
+métrica de performance.
+
+### O denominador do ritmo
+
+O número que essa frente existe para acertar é por quantos dias se divide o
+gasto. Campanha que subiu dia 17 não gastou de 1 a 16, e usar os dias
+encerrados no lugar dos dias de veiculação transforma entrega normal em
+subentrega crítica — troca "esperar" por "investigar leilão". Duas correções
+sobre a fórmula literal, e as duas mudam número:
+
+- **trava no dia 1º do mês** — campanha contínua que subiu em março daria
+  170+ dias veiculados e diluiria o ritmo até a projeção virar ficção;
+- **só campanhas que gastaram** — quem não entra no numerador não pode
+  esticar o denominador.
 
 ## Rodando
 ```bash
@@ -179,11 +232,36 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
 - `relatorios/templates/relatorios/pdf_relatorio.html` — template do PDF
   individual/consolidado; `pdf_listagem.html` — listagem;
   `pdf_indicador.html` — indicador único
-- `relatorios/views.py` — painel de modos → (revisão →) PDF
+- `relatorios/views.py` — home das duas frentes, painel de modos →
+  (revisão →) PDF
+- `relatorios/parser_verba.py` — leitura do preset `VERBA` e cruzamento dos
+  dois níveis por ID. Separado do parser de desempenho porque as colunas
+  **colidem**: `Início` aqui é a data de configuração da campanha; lá, o
+  recorte do relatório
+- `relatorios/fechamento_verba.py` — fórmulas do fechamento, as seis frases de
+  status e os dois blocos de saída. Determinístico e offline; as frases e as
+  perguntas fechadas ficam em constantes no topo, para editar sem tocar em
+  cálculo
+- `relatorios/views_verba.py` — as duas telas da verba
+- `relatorios/tests_verba.py` — testes da frente de verba (parser, fórmulas,
+  telas e IA)
+- `docs/GUIA_VERBA.md` — como montar a predefinição `VERBA` e exportar
 - `docs/img/logo_apex.png` — logo usado no cabeçalho do PDF
 - `docs/exemplo_*.pdf` — PDFs de exemplo (individual, consolidado, 20 unidades)
 
 ## Observações
+- **A frente de verba não lê métrica de performance, e isso é estrutural.** A
+  predefinição `VERBA` não exporta esses campos, o parser não os mapeia e o
+  payload da IA leva só os números do fechamento — a proibição da mensagem
+  ("sem CPM, CTR, CPA, resultados") não depende de ninguém lembrar dela.
+- No fechamento de verba, **o gasto soma todas as linhas** — inclusive
+  pausadas e zeradas, porque conjunto parado com R$ 0,00 é informação e
+  removê-lo erraria a soma do mês —, enquanto **o configurado diário soma só o
+  que está no ar**. Campanha desligada zera o configurado mesmo com conjuntos
+  ativos dentro: conjunto no ar sob campanha desligada não entrega.
+- Orçamento **vitalício** vira equivalente diário dividido pelo período em que
+  vale (`Início` → `Término`). Sem data de término, cai nos dias do mês e a
+  tela avisa que aquele número é conversão, não leitura.
 - A coluna de verba muda de rótulo entre exports do Meta ("Valor usado (BRL)",
   "Valor gasto (BRL)"). Todas as variantes conhecidas estão em `_COLUNAS`, e
   há teste: não reconhecê-la zera investimento e custo por resultado sem

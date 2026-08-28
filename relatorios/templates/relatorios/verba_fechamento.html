@@ -1,0 +1,233 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex — Fechamento de verba{% endblock %}
+{% block topo_sub %}Fechamento de verba{% endblock %}
+{% block form_id %}form-verba{% endblock %}
+{% block nome_etapa1 %}Importar verba{% endblock %}
+{% block nome_etapa2 %}Conferir e enviar{% endblock %}
+{% block cls_etapa1 %}concluida{% endblock %}
+{% block cls_etapa2 %}ativa{% endblock %}
+
+{% block conteudo %}
+<h1>{{ cliente }}</h1>
+<p class="sub">{{ calc.mes|capfirst }} · {{ calc.dias_encerrados }} de
+  {{ calc.dias_do_mes }} dias encerrados
+  {% if calc.ciclo_parcial %}· {{ calc.dias_veiculados }} dias de veiculação{% endif %}</p>
+
+{% if erro_ia %}
+<div class="{% if erro_ia_definitivo %}erro{% else %}aviso{% endif %}">
+  {{ erro_ia }} A mensagem abaixo continua sendo a do cálculo.
+</div>
+{% endif %}
+{% if recalculado %}<div class="aviso">Números refeitos com a base interna atualizada.</div>{% endif %}
+{% for aviso in avisos %}<div class="aviso">{{ aviso }}</div>{% endfor %}
+{% if calc.divergencia_contratado %}<div class="aviso">{{ calc.divergencia_contratado }}</div>{% endif %}
+
+{% comment %}
+O trilho de fechamento. Esta frente existe para responder "vai fechar no
+combinado?", e o trilho é a resposta antes de qualquer texto: a pista é o mês,
+a barra cheia é o que já saiu, a hachura é o que a projeção acrescenta e o
+traço branco é o contratado. Projeção que passa da marca aparece passando —
+a pista é escalada pelo maior dos dois, não cortada no combinado.
+{% endcomment %}
+{% if trilho %}
+<div class="trilho">
+  <div class="trilho-topo">
+    <div class="trilho-valor">{{ projecao_txt }}<small>projeção de fechamento</small></div>
+    <div class="trilho-desvio {{ trilho.tom }}">{{ desvio_txt }}</div>
+  </div>
+  <div class="pista" role="img"
+       aria-label="Gasto de {{ gasto_txt }} e projeção de {{ projecao_txt }} contra {{ contratado_txt }} contratados"
+       style="--gasto:{{ trilho.gasto }};--projetado:{{ trilho.projetado }};--alvo:{{ trilho.alvo }}">
+    <span class="pista-projetado"></span>
+    <span class="pista-gasto"></span>
+    <span class="pista-alvo"></span>
+  </div>
+  <div class="trilho-pes">
+    <span>{{ calc.dias_encerrados }}/{{ calc.dias_do_mes }} dias</span>
+    <span>{{ calc.dias_restantes }} restantes</span>
+  </div>
+  <div class="trilho-legenda">
+    <span><i class="amostra-gasto"></i>Gasto {{ gasto_txt }}</span>
+    <span><i class="amostra-projetado"></i>A gastar no ritmo atual</span>
+    <span><i class="amostra-alvo"></i>Contratado {{ contratado_txt }}</span>
+  </div>
+</div>
+{% endif %}
+
+<div class="bloco">
+  <span class="bloco-idx">01</span><span class="bloco-nome">Mensagem para o cliente</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="saida">
+  <div class="saida-cabeca">
+    <b>WhatsApp</b>
+    <span>{% if mensagem_ia_gerada %}reescrita pela IA{% else %}do cálculo{% endif %}</span>
+    <button type="button" class="copiar" data-alvo="txt-mensagem">Copiar</button>
+  </div>
+  <pre class="saida-texto" id="txt-mensagem">{{ mensagem }}</pre>
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Análise do desvio</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="saida interna">
+  <div class="saida-cabeca">
+    <b>Interna</b>
+    <span>não vai pro cliente</span>
+    <button type="button" class="copiar" data-alvo="txt-analise">Copiar</button>
+  </div>
+  <pre class="saida-texto" id="txt-analise">{{ analise }}</pre>
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">03</span><span class="bloco-nome">Conferência</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">{{ estruturas|length }} campanha{{ estruturas|pluralize:"s" }}</span>
+</div>
+{% comment %}
+A tabela existe para o operador discordar do app. O `Veiculação` sai como veio
+da planilha — é ele que decide quais estruturas entram no configurado diário —,
+e o orçamento aparece cru ao lado do equivalente diário, para o vitalício
+convertido não passar por leitura.
+{% endcomment %}
+<div class="tabela-rolagem">
+  <table>
+    <thead>
+      <tr>
+        <th>Campanha</th><th>Veiculação</th><th>Tipo</th>
+        <th>Orçamento (export)</th><th>Diário</th><th>Início</th><th>Gasto</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in estruturas %}
+      <tr>
+        <td>{{ e.nome }}{% if e.conjuntos %}
+          <br><span class="legenda">{{ e.conjuntos|length }} conjunto{{ e.conjuntos|pluralize:"s" }}</span>{% endif %}</td>
+        <td>{{ e.veiculacao }}</td>
+        <td>{{ e.tipo }}</td>
+        <td>{{ e.orcamento_bruto }}</td>
+        <td>{{ e.orcamento_diario_txt }}{% if e.orcamento_ativo_txt %}
+          <br><span class="legenda">{{ e.orcamento_ativo_txt }} no ar</span>{% endif %}</td>
+        <td>{{ e.inicio_br }}</td>
+        <td>{{ e.gasto_txt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="legenda">O gasto soma todas as linhas, inclusive pausadas e zeradas —
+  conjunto parado com R$ 0,00 é informação, e tirá-lo erraria a soma do mês. Já
+  o configurado diário soma só o que está no ar.</p>
+
+<div class="bloco">
+  <span class="bloco-idx">04</span><span class="bloco-nome">Base interna</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="campos">
+  <div class="campo">
+    <label for="{{ form.cliente.id_for_label }}">Cliente / unidade</label>
+    {{ form.cliente }}{{ form.cliente.errors }}
+  </div>
+  <div class="campo">
+    <label for="{{ form.referencia.id_for_label }}">Data de hoje</label>
+    {{ form.referencia }}{{ form.referencia.errors }}
+  </div>
+  <div class="campo">
+    <label for="{{ form.orcamento.id_for_label }}">Orçamento contratado</label>
+    {{ form.orcamento }}{{ form.orcamento.errors }}
+  </div>
+  <div class="campo">
+    <label>Esse valor é</label>
+    <div class="segmento">
+      {% for opcao in form.periodicidade %}
+      <label>{{ opcao.tag }}<span>{{ opcao.choice_label }}</span></label>
+      {% endfor %}
+    </div>
+    {{ form.periodicidade.errors }}
+  </div>
+</div>
+<p class="legenda">Corrigir aqui refaz todos os números — os dois exports já
+  estão em memória, não é preciso reenviar planilha.</p>
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Fechamento</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Contratado</dt>
+    <dd class="num">{{ contratado_txt }}/mês</dd></div>
+  <div class="resumo-item"><dt>Configurado</dt>
+    <dd class="num">{{ configurado_txt }}/dia</dd></div>
+  <div class="resumo-item"><dt>Gasto</dt>
+    <dd class="num">{{ gasto_txt }}</dd></div>
+  <div class="resumo-item"><dt>Projeção</dt>
+    <dd class="num">{{ projecao_txt }}</dd></div>
+  <div class="resumo-item"><dt>Desvio</dt>
+    <dd class="num">{{ desvio_txt }}</dd></div>
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">Denominador do ritmo</div>
+<div class="checks">
+  <div class="check{% if calc.ciclo_parcial %} falta{% endif %}">
+    <i>{% if calc.ciclo_parcial %}!{% else %}✓{% endif %}</i>
+    <span>{{ calc.dias_veiculados }} dia{{ calc.dias_veiculados|pluralize:"s" }}
+      de veiculação, de {{ calc.dias_encerrados }} encerrado{{ calc.dias_encerrados|pluralize:"s" }}</span>
+  </div>
+  <div class="check"><i>✓</i>
+    <span>Ritmo de {{ ritmo_txt }}/dia sobre
+      {{ calc.dias_restantes }} dia{{ calc.dias_restantes|pluralize:"s" }} restante{{ calc.dias_restantes|pluralize:"s" }}</span>
+  </div>
+</div>
+
+<div class="acao">
+  <button class="botao" type="submit" name="recalcular" value="1">
+    <span>Recalcular</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  {% if ia_disponivel %}
+  <p class="acao-nota">A mensagem acima já está pronta. A IA só reescreve o
+    mesmo texto — ela recebe os números calculados, nunca as planilhas.</p>
+  <button class="botao botao-sec botao-ia" type="submit" name="mensagem_ia" value="1">
+    <span>Reescrever com IA</span>
+  </button>
+  {% endif %}
+  <div class="status">
+    <span class="status-eixo ativo" aria-hidden="true"></span>
+    <span class="status-txt">{{ frase_status }}</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Copiar para a área de transferência: a saída desta frente é uma mensagem
+  // que vai colada num grupo, então o botão é a entrega — não há PDF aqui.
+  document.querySelectorAll('.copiar').forEach(botao => {
+    botao.addEventListener('click', async () => {
+      const texto = document.getElementById(botao.dataset.alvo).textContent;
+      try {
+        await navigator.clipboard.writeText(texto);
+      } catch (e) {
+        // clipboard exige contexto seguro; sem HTTPS resta selecionar o texto
+        // e deixar o operador usar Ctrl+C.
+        const faixa = document.createRange();
+        faixa.selectNodeContents(document.getElementById(botao.dataset.alvo));
+        const selecao = window.getSelection();
+        selecao.removeAllRanges();
+        selecao.addRange(faixa);
+        botao.textContent = 'Ctrl+C';
+        return;
+      }
+      botao.textContent = 'Copiado';
+      botao.classList.add('feito');
+      setTimeout(() => {
+        botao.textContent = 'Copiar';
+        botao.classList.remove('feito');
+      }, 2000);
+    });
+  });
+</script>
+{% endblock %}

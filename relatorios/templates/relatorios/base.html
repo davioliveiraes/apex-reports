@@ -6,335 +6,558 @@
 <title>{% block title %}Apex — Relatórios de Tráfego Pago{% endblock %}</title>
 <link rel="icon" type="image/png" href="{% static 'logo_apex.png' %}">
 <style>
+  /* ==================================================================== */
+  /* TOKENS                                                               */
+  /* ==================================================================== */
+  /* As superfícies e os textos são os MESMOS valores do PDF que a
+     aplicação gera (`pdf_relatorio.html`). Não é coincidência nem gosto: até
+     28/08/2026 o painel era plano, sem raio e organizado por fios, enquanto o
+     entregável era um dashboard de cards arredondados e elevados — o operador
+     atravessava uma emenda visual a cada relatório. Mudar o painel é mais
+     barato e mais seguro que mudar o que vai ao cliente, então foi o painel
+     que se mudou de lado. */
   :root{
     /* Faz o navegador desenhar barra de rolagem, seletores e demais controles
-       nativos no tema escuro — sem isso a barra do sistema sai clara sobre o
-       fundo preto. Padrão CSS, dispensa ::-webkit-scrollbar. */
+       nativos no tema escuro. Padrão CSS, dispensa ::-webkit-scrollbar. */
     color-scheme:dark;
 
-    /* superfícies */
-    --ink:#0A0A0C;          /* fundo da aplicação */
-    --panel:#101114;        /* coluna direita, barras */
-    --surface:#121316;      /* linhas de modo, dropzone, linhas da tabela */
-    --surface-2:#15171A;    /* inputs habilitados, cabeçalho de tabela */
-    --field-off:#0F1013;    /* input desabilitado / input dentro de linha */
+    /* Superfícies — três alturas, e só três. Antes eram cinco, e a diferença
+       entre elas não significava nada. */
+    --void:#0B0B0D;         /* chão da aplicação — o @page do PDF */
+    --slab:#141518;         /* aside, barras, cabeçalho de tabela — .painel */
+    --riser:#1B1D22;        /* cards sobre o slab — .card-funil */
+    --sunken:#0E0F12;       /* campos e poços dentro de um card */
 
-    /* traços */
-    --line:#23262B;         /* borda padrão */
-    --line-soft:#1E2126;    /* divisória entre linhas de lista */
-    --line-strong:#33373E;  /* tracejado da dropzone */
+    /* Traços */
+    --edge:#2A2D33;         /* a borda, única — vem do PDF */
+    --edge-soft:#1F2228;    /* divisória interna de lista */
+    --edge-lift:#3A3F47;    /* borda de elemento interativo em repouso */
 
-    /* texto */
-    --white:#F5F6F7;
-    --silver:#C7CBD1;
-    --silver-dim:#8B9199;   /* rótulos secundários, descrições */
-    --silver-mute:#6E747C;  /* dicas sob os campos, placeholder */
-    --grip:#5C6169;         /* alça de arraste */
+    /* Texto — os três níveis do PDF, nem um a mais */
+    --bright:#E8EAEE;       /* títulos e números */
+    --read:#C7CBD1;         /* corpo */
+    --faint:#8A8F98;        /* rótulos, legendas, dicas */
 
-    /* estado */
-    --red:#D8232A;
-    --red-hover:#E8383F;
-    --red-deep:#9B1C21;     /* pressionado */
-    --red-tint:#17110F;     /* fundo do item selecionado */
-    --ok:#34D399;           /* verificação satisfeita */
+    /* Estado. O vermelho é a marca e comanda; o resto existe porque o painel
+       tem estados que o PDF nunca mostra — e uma interface que só fala em
+       vermelho não consegue dizer "confira isto" sem soar como "pare". */
+    --apex:#D8232A;
+    --apex-lit:#E8383F;
+    --apex-deep:#9B1C21;
+    --apex-wash:#1C1214;    /* fundo do item escolhido */
+    --pace:#4C9F70;         /* no ritmo, requisito satisfeito */
+    --drift:#C98A19;        /* confira isto */
+    --drift-wash:#1E1810;
 
-    --sans:system-ui,"Segoe UI",Roboto,Arial,sans-serif;
-    --mono:ui-monospace,"JetBrains Mono","SF Mono",Consolas,"DejaVu Sans Mono",monospace;
+    /* Tipografia. Três papéis: display (peso e aperto), corpo e dado. O dado
+       é mono e SEMPRE tabular — este é um produto de números, e número que
+       dança de largura entre linhas não se compara de relance. */
+    --sans:system-ui,"Segoe UI Variable Text","Segoe UI",Roboto,Inter,Arial,sans-serif;
+    --mono:ui-monospace,"JetBrains Mono","SF Mono","Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace;
 
-    --header-h:54px;
-    --aside-w:348px;
+    /* Raio. O PDF usa 3mm; 6px é o equivalente óptico na densidade de tela. */
+    --r-chip:3px;
+    --r:6px;
+    --r-lg:10px;
+
+    --header-h:60px;
+    --aside-w:360px;
+    --leitura:1080px;       /* largura máxima da coluna de trabalho */
+    --sombra:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.7);
   }
-  /* Raio 0 em tudo: a interface é plana e são os traços que organizam.
-     Exceções: o PNG do logo e os círculos (radio, ponto de status). */
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--ink);color:var(--silver);font:14px/1.5 var(--sans);
-    height:100dvh;display:flex;flex-direction:column;overflow:hidden;
-    -webkit-font-smoothing:antialiased}
 
-  /* ------------------------------------------------------------------ */
-  /* Cabeçalho                                                          */
-  /* ------------------------------------------------------------------ */
-  .topo{flex-shrink:0;display:flex;align-items:center;gap:16px;
-    height:var(--header-h);padding:0 22px;border-bottom:1px solid var(--line)}
-  .topo img{width:26px;height:26px;border-radius:2px}
-  .marca{font:800 15px/1 var(--sans);letter-spacing:.13em;color:var(--white);
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--void);color:var(--read);
+    font:14px/1.55 var(--sans);
+    height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  /* Todo número da interface é tabular por padrão. */
+  .num,td,th,input,.mono{font-variant-numeric:tabular-nums}
+
+  /* ==================================================================== */
+  /* CABEÇALHO                                                            */
+  /* ==================================================================== */
+  .topo{flex-shrink:0;display:flex;align-items:center;gap:14px;
+    height:var(--header-h);padding:0 24px;background:var(--slab);
+    border-bottom:1px solid var(--edge)}
+  /* O par logo+marca é o caminho de volta à home — o anel do logo acende
+     para dizer que ali se clica, sem sublinhado nem mudança de layout. */
+  .marca-link{display:flex;align-items:center;gap:14px;text-decoration:none;
+    border-radius:var(--r);transition:opacity .14s}
+  .marca-link:hover{opacity:.9}
+  .marca-link:hover .logo{border-color:var(--apex)}
+  /* O logo ganhou um anel: em 26px sobre preto ele lia como borrão. */
+  .topo .logo{width:30px;height:30px;border-radius:var(--r);
+    border:1px solid var(--edge);background:var(--void);flex-shrink:0}
+  .marca{font:800 16px/1 var(--sans);letter-spacing:.14em;color:var(--bright);
     text-transform:uppercase}
-  .marca span{color:var(--red)}
-  .topo-sep{width:1px;height:14px;background:#2A2D33}
-  .topo-sub{font:13px/1 var(--sans);color:var(--silver-dim)}
+  .marca span{color:var(--apex)}
+  .topo-sep{width:1px;height:16px;background:var(--edge)}
+  .topo-sub{font:13px/1 var(--sans);color:var(--faint)}
 
   /* Etapas: o traço conector mora entre os chips, fora da borda de cada um —
      por isso o quadro fica no <span> e o <li> só alinha. */
   .etapas{display:flex;align-items:center;margin-left:auto;list-style:none}
   .etapa{display:flex;align-items:center}
-  .etapa + .etapa::before{content:"";width:22px;height:1px;background:#2A2D33;flex-shrink:0}
-  .etapa-chip{display:flex;align-items:center;gap:8px;padding:5px 10px;
-    border:1px solid var(--line);color:var(--silver-dim);font:600 12px/1 var(--sans);
-    white-space:nowrap}
-  .etapa-chip b{font:700 11px/1 var(--mono)}
-  .etapa.ativa .etapa-chip{background:var(--red-tint);border-color:var(--red);color:var(--white)}
-  .etapa.ativa .etapa-chip b{color:var(--red)}
-  .etapa.concluida .etapa-chip{border-color:var(--red);color:var(--silver)}
+  .etapa + .etapa::before{content:"";width:20px;height:1px;background:var(--edge);flex-shrink:0}
+  .etapa-chip{display:flex;align-items:center;gap:8px;padding:6px 11px;
+    border:1px solid var(--edge);border-radius:var(--r);background:var(--void);
+    color:var(--faint);font:600 12px/1 var(--sans);white-space:nowrap}
+  .etapa-chip b{font:700 10.5px/1 var(--mono);letter-spacing:.06em}
+  .etapa.ativa .etapa-chip{background:var(--apex-wash);border-color:var(--apex);
+    color:var(--bright);box-shadow:0 0 0 1px var(--apex) inset}
+  .etapa.ativa .etapa-chip b{color:var(--apex)}
+  .etapa.concluida .etapa-chip{border-color:var(--edge-lift);color:var(--read)}
+  .etapa.concluida .etapa-chip b{color:var(--pace)}
 
-  /* ------------------------------------------------------------------ */
-  /* Miolo — coluna de trabalho + aside fixo                            */
-  /* ------------------------------------------------------------------ */
+  /* ==================================================================== */
+  /* MIOLO — coluna de trabalho + aside fixo                              */
+  /* ==================================================================== */
   /* Só a coluna esquerda rola; o aside nunca sai de vista, porque é onde
      mora a ação primária. */
   .miolo{flex:1;display:grid;grid-template-columns:1fr var(--aside-w);min-height:0}
-  .trabalho{padding:22px 26px 26px;overflow:auto;min-width:0}
-  .resumo{border-left:1px solid var(--line);background:var(--panel);
-    padding:22px;display:flex;flex-direction:column;min-width:0;overflow:auto}
+  .trabalho{padding:26px 32px 40px;overflow:auto;min-width:0}
+  /* Trava de medida: sem ela o texto corre 1500px num monitor largo e a
+     linha fica ilegível. O conteúdo encosta à esquerda, alinhado à coluna. */
+  .trabalho > *{max-width:var(--leitura)}
+  .resumo{border-left:1px solid var(--edge);background:var(--slab);
+    padding:26px 24px;display:flex;flex-direction:column;min-width:0;overflow:auto}
 
-  h1{font:700 20px/1.25 var(--sans);letter-spacing:-.01em;color:var(--white);margin-bottom:4px}
-  .sub{font:13.5px/1.5 var(--sans);color:var(--silver-dim);margin-bottom:22px}
+  h1{font:800 27px/1.15 var(--sans);letter-spacing:-.022em;color:var(--bright);
+    margin-bottom:6px}
+  .sub{font:14px/1.5 var(--sans);color:var(--faint);margin-bottom:28px;
+    max-width:72ch}
 
-  /* ------------------------------------------------------------------ */
-  /* Cabeçalho de bloco — índice mono, título em caixa mista, régua      */
-  /* ------------------------------------------------------------------ */
-  .bloco{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-  .bloco:not(:first-of-type){margin-top:24px}
-  .bloco-idx{font:700 11px/1 var(--mono);color:var(--red)}
-  .bloco-nome{font:600 13px/1 var(--sans);color:var(--white)}
-  .bloco-rule{flex:1;height:1px;background:var(--line)}
-  .bloco-meta{font:600 11px/1 var(--mono);color:var(--silver-dim)}
-  .bloco-meta.excedido{color:var(--red)}
+  /* ==================================================================== */
+  /* CABEÇALHO DE BLOCO                                                   */
+  /* ==================================================================== */
+  /* O índice virou o chip vermelho preenchido que o PDF já usava nas suas
+     seções (`.secao-cabecalho .num`) — a mesma marca nos dois lados do
+     produto. Antes era um "01" mono solto, que lia como comentário de código. */
+  .bloco{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .bloco:not(:first-of-type){margin-top:34px}
+  .bloco-idx{flex-shrink:0;display:grid;place-items:center;width:22px;height:22px;
+    background:var(--apex);color:#fff;border-radius:var(--r-chip);
+    font:800 11px/1 var(--mono)}
+  .bloco-nome{font:700 14px/1 var(--sans);color:var(--bright);letter-spacing:-.01em}
+  .bloco-rule{flex:1;height:1px;background:var(--edge)}
+  .bloco-meta{font:600 11px/1 var(--mono);color:var(--faint);letter-spacing:.04em}
+  .bloco-meta.excedido{color:var(--apex)}
 
-  /* ------------------------------------------------------------------ */
-  /* Linhas de modo — coluna única, limite de arquivos explícito         */
-  /* ------------------------------------------------------------------ */
-  .modos{display:flex;flex-direction:column;gap:6px;margin-bottom:24px}
-  .modo-row{position:relative;display:flex;align-items:flex-start;gap:11px;
-    padding:12px 14px 12px 16px;background:var(--surface);border:1px solid var(--line);
-    cursor:pointer;transition:border-color .12s,background .12s}
+  /* ==================================================================== */
+  /* LINHAS DE ESCOLHA — modos e grupos de campanha                       */
+  /* ==================================================================== */
+  .modos{display:flex;flex-direction:column;gap:8px;margin-bottom:26px}
+  .modo-row{position:relative;display:flex;align-items:flex-start;gap:12px;
+    padding:14px 16px;background:var(--riser);border:1px solid var(--edge);
+    border-radius:var(--r);cursor:pointer;overflow:hidden;
+    transition:border-color .14s,background .14s}
   .modo-row input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
-  .modo-row:hover{border-color:var(--silver-dim)}
-  .modo-row:has(input:checked){border-color:var(--red);background:var(--red-tint)}
+  .modo-row:hover{border-color:var(--edge-lift)}
+  .modo-row:has(input:checked){border-color:var(--apex);background:var(--apex-wash)}
   .modo-row:has(input:checked)::before{content:"";position:absolute;left:0;top:0;bottom:0;
-    width:3px;background:var(--red)}
-  .modo-row:has(input:focus-visible){outline:2px solid var(--red);outline-offset:2px}
-  .modo-marca{position:relative;flex-shrink:0;width:15px;height:15px;margin-top:2px;
-    border-radius:50%;border:2px solid var(--line-strong);background:var(--ink)}
-  .modo-row:has(input:checked) .modo-marca{border-color:var(--red)}
-  .modo-row:has(input:checked) .modo-marca::after{content:"";position:absolute;inset:2.5px;
-    border-radius:50%;background:var(--red)}
+    width:3px;background:var(--apex)}
+  .modo-row:has(input:focus-visible){outline:2px solid var(--apex);outline-offset:2px}
+  .modo-marca{position:relative;flex-shrink:0;width:16px;height:16px;margin-top:2px;
+    border-radius:50%;border:1.5px solid var(--edge-lift);background:var(--void)}
+  .modo-row:has(input:checked) .modo-marca{border-color:var(--apex)}
+  .modo-row:has(input:checked) .modo-marca::after{content:"";position:absolute;inset:3px;
+    border-radius:50%;background:var(--apex)}
   .modo-corpo{flex:1;min-width:0}
-  .modo-top{display:flex;align-items:center;gap:10px}
-  .modo-top strong{font:700 14px/1.2 var(--sans);color:var(--white)}
-  .modo-chip{padding:2px 6px;background:#1C1E22;border:1px solid #2A2D33;
-    font:600 10.5px/1.4 var(--mono);color:var(--silver-dim)}
-  .modo-desc{display:block;margin-top:3px;font:12.5px/1.45 var(--sans);color:var(--silver-dim)}
+  .modo-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .modo-top strong{font:700 14.5px/1.2 var(--sans);color:var(--bright);
+    letter-spacing:-.01em}
+  .modo-chip{padding:3px 7px;background:var(--sunken);border:1px solid var(--edge);
+    border-radius:var(--r-chip);font:600 10.5px/1.4 var(--mono);color:var(--faint);
+    letter-spacing:.03em}
+  .modo-desc{display:block;margin-top:5px;font:13px/1.5 var(--sans);color:var(--faint)}
 
-  /* ------------------------------------------------------------------ */
-  /* Campos                                                             */
-  /* ------------------------------------------------------------------ */
-  label{display:block;margin-bottom:6px;font:600 12.5px/1.3 var(--sans);color:var(--white)}
+  /* ==================================================================== */
+  /* CAMPOS                                                               */
+  /* ==================================================================== */
+  label{display:block;margin-bottom:7px;font:600 12px/1.3 var(--sans);
+    color:var(--read);letter-spacing:.02em}
   input[type=text],input[type=date],textarea,select{
-    width:100%;background:var(--surface-2);border:1px solid #2A2D33;
-    color:var(--white);padding:10px 12px;font:14px/1.4 var(--sans)}
-  input::placeholder,textarea::placeholder{color:var(--silver-mute)}
-  textarea{resize:vertical;min-height:110px;line-height:1.5}
-  select{appearance:none;cursor:pointer;padding-right:34px;
-    background-image:linear-gradient(45deg,transparent 50%,var(--silver-dim) 50%),
-                     linear-gradient(135deg,var(--silver-dim) 50%,transparent 50%);
-    background-position:calc(100% - 17px) 19px,calc(100% - 12px) 19px;
+    width:100%;background:var(--sunken);border:1px solid var(--edge);
+    border-radius:var(--r);color:var(--bright);padding:11px 13px;
+    font:14px/1.4 var(--sans);transition:border-color .14s,box-shadow .14s}
+  input[type=text]:hover,input[type=date]:hover,textarea:hover,select:hover{
+    border-color:var(--edge-lift)}
+  input[type=text]:focus,input[type=date]:focus,textarea:focus,select:focus{
+    outline:0;border-color:var(--apex);box-shadow:0 0 0 3px rgba(216,35,42,.16)}
+  input::placeholder,textarea::placeholder{color:#5C6169}
+  textarea{resize:vertical;min-height:120px;line-height:1.6}
+  select{appearance:none;cursor:pointer;padding-right:36px;
+    background-image:linear-gradient(45deg,transparent 50%,var(--faint) 50%),
+                     linear-gradient(135deg,var(--faint) 50%,transparent 50%);
+    background-position:calc(100% - 18px) 20px,calc(100% - 13px) 20px;
     background-size:5px 5px,5px 5px;background-repeat:no-repeat}
-  select optgroup{background:var(--panel);color:var(--silver-dim);font-style:normal}
-  select option{background:var(--surface-2);color:var(--white)}
+  select optgroup{background:var(--slab);color:var(--faint);font-style:normal}
+  select option{background:var(--sunken);color:var(--bright)}
   /* o ícone de calendário do input nativo vem escuro sobre fundo escuro */
   input[type=date]::-webkit-calendar-picker-indicator{
-    filter:invert(1);opacity:.55;cursor:pointer}
+    filter:invert(1);opacity:.5;cursor:pointer}
 
-  .campos{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;margin-bottom:24px}
+  .campos{display:grid;grid-template-columns:1fr 1fr;gap:18px 20px;margin-bottom:26px}
   .campo{min-width:0}
   .campo-largo{grid-column:1 / -1}
-  .ajuda{display:block;margin-top:5px;font:12px/1.4 var(--sans);color:var(--silver-mute)}
+  .ajuda{display:block;margin-top:6px;font:12px/1.45 var(--sans);color:var(--faint)}
   /* Desabilitado = presente, apagado, com o motivo escrito na ajuda. O campo
      não muda de lugar entre os modos, então o formulário para de "pular"; e
      campo `disabled` não é enviado no POST, igual ao `hidden` de antes. */
   .campo:has(:disabled) label{color:#5C6169}
-  .campo :disabled{background:var(--field-off);color:#5C6169;cursor:not-allowed}
-  .par-datas{display:flex;gap:14px;flex-wrap:wrap}
+  .campo :disabled{background:transparent;color:#4A4E56;cursor:not-allowed;
+    border-color:var(--edge-soft);opacity:.6}
+  .par-datas{display:flex;gap:16px;flex-wrap:wrap}
   .par-datas > div{flex:1 1 160px}
+  /* Controle segmentado: para escolhas binárias e curtas. As linhas de
+     `.grupo-row` são para listas de campanha, onde cada item tem nome longo e
+     subtítulo — usá-las num "por mês / por dia" dava dois cartões de 60px
+     para uma decisão de duas palavras. */
+  .segmento{display:flex;width:fit-content;max-width:100%;background:var(--sunken);
+    border:1px solid var(--edge);border-radius:var(--r);overflow:hidden}
+  .segmento label{margin:0;position:relative;cursor:pointer}
+  .segmento input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+  .segmento span{display:block;padding:11px 22px;white-space:nowrap;
+    font:600 13px/1.2 var(--sans);color:var(--faint);
+    transition:background .14s,color .14s}
+  .segmento label + label span{border-left:1px solid var(--edge)}
+  .segmento label:hover span{color:var(--bright)}
+  .segmento label:has(input:checked) span{background:var(--apex);color:#fff}
+  .segmento label:has(input:focus-visible){outline:2px solid var(--apex);
+    outline-offset:2px;border-radius:var(--r)}
 
-  /* ------------------------------------------------------------------ */
-  /* Dropzone — faixa de uma linha                                      */
-  /* ------------------------------------------------------------------ */
-  .dropzone{display:flex;align-items:center;gap:12px;padding:13px 15px;
-    border:1.5px dashed var(--line-strong);background:var(--surface);cursor:pointer;
-    transition:border-color .12s,background .12s}
-  .dropzone:hover,.dropzone.arrastando{border-color:var(--red);background:var(--red-tint)}
-  .dropzone:focus-visible{outline:2px solid var(--red);outline-offset:2px}
-  .dropzone svg{width:20px;height:20px;color:var(--silver-dim);flex-shrink:0}
-  .dropzone:hover svg,.dropzone.arrastando svg{color:var(--red)}
-  .dropzone-txt{font:13.5px/1.4 var(--sans);color:var(--silver)}
-  .dropzone-txt strong{color:var(--white)}
-  .dropzone-meta{margin-left:auto;font:12px/1.4 var(--sans);color:var(--silver-mute);
+  .campo-lista{display:flex;flex-direction:column;gap:16px;margin-bottom:4px}
+  .campo[aria-disabled=true]{opacity:.45;pointer-events:none}
+
+  /* ==================================================================== */
+  /* DROPZONE                                                             */
+  /* ==================================================================== */
+  .dropzone{display:flex;align-items:center;gap:13px;padding:16px 18px;
+    border:1.5px dashed var(--edge-lift);border-radius:var(--r);
+    background:var(--riser);cursor:pointer;
+    transition:border-color .14s,background .14s}
+  .dropzone:hover,.dropzone.arrastando{border-color:var(--apex);background:var(--apex-wash)}
+  .dropzone:focus-visible{outline:2px solid var(--apex);outline-offset:2px}
+  .dropzone svg{width:22px;height:22px;color:var(--faint);flex-shrink:0}
+  .dropzone:hover svg,.dropzone.arrastando svg{color:var(--apex)}
+  .dropzone-txt{font:14px/1.4 var(--sans);color:var(--read)}
+  .dropzone-txt strong{color:var(--bright);font-weight:700}
+  .dropzone-meta{margin-left:auto;font:12px/1.4 var(--mono);color:var(--faint);
     white-space:nowrap}
   .dropzone input{display:none}
 
-  /* ------------------------------------------------------------------ */
-  /* Tabela de anexos                                                   */
-  /* ------------------------------------------------------------------ */
-  .anexos{margin-top:12px;border:1px solid var(--line)}
-  .anexos-head,.anexo{display:grid;grid-template-columns:34px 1fr 210px 64px 34px;
+  /* ==================================================================== */
+  /* TABELA DE ANEXOS                                                     */
+  /* ==================================================================== */
+  .anexos{margin-top:14px;border:1px solid var(--edge);border-radius:var(--r);
+    overflow:hidden}
+  .anexos-head,.anexo{display:grid;grid-template-columns:38px 1fr 210px 68px 38px;
     align-items:center}
-  .anexos-head{background:var(--surface-2);border-bottom:1px solid var(--line);
-    font:600 11px/1 var(--mono);letter-spacing:.06em;color:var(--silver-dim)}
-  .anexos-head span{padding:9px 10px}
-  .anexos-head span:first-child{padding-left:12px}
+  .anexos-head{background:var(--slab);border-bottom:1px solid var(--edge);
+    font:600 10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--faint)}
+  .anexos-head span{padding:10px}
+  .anexos-head span:first-child{padding-left:13px}
   .anexos-head .num-col{text-align:right}
-  .anexo{background:var(--surface);border-bottom:1px solid var(--line-soft)}
+  .anexo{background:var(--riser);border-bottom:1px solid var(--edge-soft)}
   .anexo:last-child{border-bottom:0}
-  .anexo.arrastando{background:var(--red-tint);opacity:.75}
-  .anexo-alca{display:flex;align-items:center;gap:5px;padding-left:9px;cursor:grab;
-    color:var(--grip)}
+  .anexo.arrastando{background:var(--apex-wash);opacity:.75}
+  .anexo-alca{display:flex;align-items:center;gap:6px;padding-left:10px;cursor:grab;
+    color:#5C6169}
   .anexo-alca svg{width:10px;height:16px;flex-shrink:0}
-  .anexo-num{font:600 11.5px/1 var(--mono);color:var(--silver-dim);
-    font-variant-numeric:tabular-nums}
-  .anexo-conta{padding:7px 10px;min-width:0}
-  .anexo-conta input{width:100%;background:var(--field-off);border:1px solid var(--line);
-    color:var(--white);padding:7px 9px;font:600 13px/1.25 var(--sans)}
-  .anexo-nome{padding:7px 10px;font:11.5px/1.3 var(--mono);color:var(--silver-dim);
+  .anexo-num{font:600 11.5px/1 var(--mono);color:var(--faint)}
+  .anexo-conta{padding:8px 10px;min-width:0}
+  .anexo-conta input{width:100%;background:var(--sunken);border:1px solid var(--edge);
+    border-radius:var(--r-chip);color:var(--bright);padding:8px 10px;
+    font:600 13px/1.25 var(--sans)}
+  .anexo-nome{padding:8px 10px;font:11.5px/1.3 var(--mono);color:var(--faint);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .anexo-tam{padding:7px 10px;text-align:right;font:11.5px/1.3 var(--mono);
-    color:var(--silver-dim);font-variant-numeric:tabular-nums}
-  .anexo-remover{width:22px;height:22px;margin:0 auto;background:transparent;
-    border:1px solid var(--line);color:var(--silver-dim);font:14px/1 var(--sans);
-    cursor:pointer;display:grid;place-items:center}
-  .anexo-remover:hover{color:var(--red);border-color:var(--red)}
-  .anexos-nota{margin-top:9px;font:12px/1.4 var(--sans);color:var(--silver-mute)}
+  .anexo-tam{padding:8px 10px;text-align:right;font:11.5px/1.3 var(--mono);
+    color:var(--faint)}
+  .anexo-remover{width:24px;height:24px;margin:0 auto;background:transparent;
+    border:1px solid var(--edge);border-radius:var(--r-chip);color:var(--faint);
+    font:15px/1 var(--sans);cursor:pointer;display:grid;place-items:center;
+    transition:color .14s,border-color .14s}
+  .anexo-remover:hover{color:var(--apex);border-color:var(--apex)}
+  .anexos-nota{margin-top:10px;font:12px/1.45 var(--sans);color:var(--faint)}
   /* Anexo único: o nome da conta não vai para o PDF. `visibility` e não
      `display` — o input precisa continuar no DOM para os índices de
      `nome_conta` e de `arquivos` seguirem alinhados no servidor. */
   .anexos.sem-nomes .anexo-conta{visibility:hidden}
+  /* Verba: sem nome de conta e sem reordenar — a lista é só a conferência dos
+     dois arquivos, e o nível de cada um sai das colunas, não da ordem. */
+  .anexos.so-arquivo .anexos-head,.anexos.so-arquivo .anexo{
+    grid-template-columns:38px 1fr 68px 38px}
 
-  /* ------------------------------------------------------------------ */
-  /* Aside                                                              */
-  /* ------------------------------------------------------------------ */
-  .resumo-titulo{font:600 13px/1 var(--sans);color:var(--white);margin-bottom:16px}
-  .resumo-lista{border-top:1px solid var(--line)}
-  .resumo-item{display:flex;justify-content:space-between;gap:12px;padding:10px 0;
-    border-bottom:1px solid var(--line-soft)}
-  .resumo-item dt{font:12.5px/1.4 var(--sans);color:var(--silver-dim)}
-  .resumo-item dd{font:600 12.5px/1.4 var(--sans);color:var(--white);text-align:right}
-  .resumo-item dd.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
-  .checks{display:flex;flex-direction:column;gap:9px}
-  .check{display:flex;gap:9px;align-items:flex-start;font:12.5px/1.4 var(--sans);
-    color:var(--silver)}
-  .check i{flex-shrink:0;width:16px;height:16px;display:grid;place-items:center;
-    font-style:normal;font:700 10px/1 var(--sans);border:1px solid var(--ok);color:var(--ok)}
-  .check.falta{color:var(--white)}
-  .check.falta i{border-color:var(--red);color:var(--red)}
-  .acao{margin-top:auto;padding-top:20px}
+  /* ==================================================================== */
+  /* ASIDE                                                                */
+  /* ==================================================================== */
+  .resumo-titulo{font:600 10.5px/1 var(--mono);letter-spacing:.12em;
+    text-transform:uppercase;color:var(--faint);margin-bottom:14px}
+  .resumo-lista{border-top:1px solid var(--edge)}
+  .resumo-item{display:flex;justify-content:space-between;align-items:baseline;
+    gap:12px;padding:11px 0;border-bottom:1px solid var(--edge-soft)}
+  .resumo-item dt{font:13px/1.4 var(--sans);color:var(--faint)}
+  .resumo-item dd{font:600 13px/1.4 var(--sans);color:var(--bright);text-align:right}
+  /* O número é o conteúdo do aside, não uma legenda dele: em 12,5px ele era
+     a coisa mais fraca da tela num produto que existe para produzir números. */
+  .resumo-item dd.num{font:700 16px/1.3 var(--mono);color:var(--bright)}
+  .checks{display:flex;flex-direction:column;gap:11px}
+  .check{display:flex;gap:10px;align-items:flex-start;font:12.5px/1.45 var(--sans);
+    color:var(--faint)}
+  .check i{flex-shrink:0;width:17px;height:17px;display:grid;place-items:center;
+    font-style:normal;font:700 10px/1 var(--sans);border-radius:var(--r-chip);
+    border:1px solid var(--pace);color:var(--pace);margin-top:1px}
+  .check.falta{color:var(--bright)}
+  .check.falta i{border-color:var(--drift);color:var(--drift)}
+  .acao{margin-top:auto;padding-top:24px}
 
-  /* ------------------------------------------------------------------ */
-  /* Botões                                                             */
-  /* ------------------------------------------------------------------ */
-  .botao{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;
-    background:var(--red);color:#fff;border:1px solid var(--red);cursor:pointer;
-    font:700 13px/1 var(--sans);letter-spacing:.04em;text-transform:uppercase;
-    padding:14px 16px;transition:background .12s,border-color .12s;text-decoration:none}
+  /* ==================================================================== */
+  /* BOTÕES                                                               */
+  /* ==================================================================== */
+  .botao{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    width:100%;background:var(--apex);color:#fff;border:1px solid var(--apex);
+    border-radius:var(--r);cursor:pointer;font:700 13px/1 var(--sans);
+    letter-spacing:.05em;text-transform:uppercase;padding:15px 17px;
+    text-decoration:none;box-shadow:var(--sombra);
+    transition:background .14s,border-color .14s,transform .1s}
   .botao svg{width:16px;height:16px;flex-shrink:0}
-  .botao:hover{background:var(--red-hover);border-color:var(--red-hover)}
-  .botao:active{background:var(--red-deep);border-color:var(--red-deep)}
-  .botao:disabled{background:var(--surface-2);border-color:var(--line);
-    color:var(--silver-mute);cursor:not-allowed}
-  .botao-sec{background:transparent;border-color:var(--line);color:var(--silver);
-    justify-content:flex-start;margin-top:9px}
-  .botao-sec:hover{background:var(--surface-2);border-color:var(--silver-dim)}
-  .botao.carregando{background:var(--surface-2);border-color:var(--line);
-    color:var(--silver);cursor:progress}
+  .botao:hover{background:var(--apex-lit);border-color:var(--apex-lit)}
+  .botao:active{background:var(--apex-deep);border-color:var(--apex-deep);
+    transform:translateY(1px)}
+  .botao:disabled{background:var(--sunken);border-color:var(--edge);
+    color:#5C6169;cursor:not-allowed;box-shadow:none}
+  .botao-sec{background:transparent;border-color:var(--edge-lift);color:var(--read);
+    justify-content:flex-start;margin-top:10px;box-shadow:none}
+  .botao-sec:hover{background:var(--riser);border-color:var(--faint);color:var(--bright)}
+  .botao.carregando{background:var(--sunken);border-color:var(--edge);
+    color:var(--read);cursor:progress;box-shadow:none}
   /* Ação de IA no aside: vem ANTES do Gerar PDF, então o respiro do .botao-sec
      precisa mudar de lado. A nota abaixo dela é o que explica o que o clique
      faz — sem isso o botão parece um segundo "gerar". */
   .botao-ia{margin-top:0}
-  .acao-nota{font:12px/1.4 var(--sans);color:var(--silver-mute);margin:9px 0 16px}
-
-  /* ------------------------------------------------------------------ */
-  /* Status — pé do aside                                               */
-  /* ------------------------------------------------------------------ */
-  .status{display:flex;align-items:center;gap:8px;margin-top:12px}
-  .status-eixo{flex-shrink:0;width:7px;height:7px;border-radius:50%;background:var(--line-strong)}
-  .status-eixo.ativo{background:var(--red)}
-  .status-txt{font:12px/1.4 var(--sans);color:var(--silver-dim)}
-  .status-txt.excedido{color:var(--red)}
-
-  /* ------------------------------------------------------------------ */
-  /* Mensagens                                                          */
-  /* ------------------------------------------------------------------ */
-  .erro,.aviso{padding:12px 14px;margin-bottom:16px;font:13px/1.5 var(--sans);
-    display:flex;gap:10px}
-  .erro::before,.aviso::before{font:600 10.5px/1.55 var(--mono);letter-spacing:.12em;
-    text-transform:uppercase;flex-shrink:0}
-  .erro{background:#22100F;border:1px solid var(--red);color:#F3B7BA}
-  .erro::before{content:"erro";color:var(--red)}
-  .aviso{background:#221B0D;border:1px solid #C98A19;color:#F1C878}
-  .aviso::before{content:"atenção";color:#E0A22B}
-  /* Botão dentro do aviso ("Gerar assim mesmo"): largura de conteúdo, para não
-     virar uma barra do tamanho da mensagem. */
-  .aviso .botao{width:auto}
-  .errorlist{list-style:none;color:#F3B7BA;font:12px/1.4 var(--sans);margin-top:5px}
-
-  /* ------------------------------------------------------------------ */
-  /* Revisão — KPIs e tabelas                                           */
-  /* ------------------------------------------------------------------ */
-  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
-    border:1px solid var(--line);margin-bottom:8px}
-  .kpi{background:var(--surface);padding:14px;text-align:center}
-  .kpi small{display:block;font:600 10.5px/1.3 var(--mono);letter-spacing:.1em;
-    text-transform:uppercase;color:var(--silver-dim)}
-  .kpi b{display:block;font:700 21px/1.2 var(--sans);color:var(--white);margin-top:5px;
-    font-variant-numeric:tabular-nums}
-  .metricas{font:12.5px/1.5 var(--sans);color:var(--silver-dim);margin-bottom:20px}
-
-  .tabela-rolagem{overflow-x:auto;margin:8px 0 4px}
-  table{width:100%;border-collapse:collapse;font:13px/1.45 var(--sans);
-    font-variant-numeric:tabular-nums}
-  th{background:var(--surface-2);color:var(--silver-dim);text-align:left;padding:9px 10px;
-    border-bottom:1px solid var(--line);
-    font:600 11px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase}
-  td{padding:9px 10px;border-bottom:1px solid var(--line-soft);background:var(--surface)}
-  tr.melhor td:first-child{color:var(--ok);font-weight:700}
-  .legenda{font:12px/1.4 var(--sans);color:var(--silver-mute);margin:7px 0 18px}
-  .secao-titulo{margin:22px 0 8px;font:600 12.5px/1 var(--sans);color:var(--white)}
-  /* Grupos de campanha — o que entra no relatório (revisão) */
-  .grupos{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
-  .grupo-row{display:flex;align-items:flex-start;gap:11px;padding:11px 14px;
-    background:var(--surface);border:1px solid var(--line);cursor:pointer;
-    transition:border-color .12s,background .12s}
-  .grupo-row:hover{border-color:var(--silver-dim)}
-  .grupo-row:has(input:checked){border-color:var(--red);background:var(--red-tint)}
-  .grupo-row input{flex-shrink:0;width:15px;height:15px;margin-top:2px;
-    accent-color:var(--red);cursor:pointer}
-  .grupo-corpo{flex:1;min-width:0}
-  .grupo-nome{display:block;font:700 12.5px/1.3 var(--mono);color:var(--white)}
-  /* Nome de campanha é um bloco só, sem espaço para quebrar — sem isto a
-     lista estoura a coluna em vez de dobrar. */
-  .grupo-meta{display:block;margin-top:4px;font:12px/1.45 var(--sans);
-    color:var(--silver-dim);overflow-wrap:anywhere}
+  .acao-nota{font:12px/1.45 var(--sans);color:var(--faint);margin:10px 0 16px}
   /* Ação dentro da coluna de trabalho: largura de conteúdo, não a barra
      inteira — a barra é do aside, onde mora a ação primária. */
   .botao-inline{width:auto;margin-top:0}
 
-  .campo-lista{display:flex;flex-direction:column;gap:14px;margin-bottom:4px}
-  .campo[aria-disabled=true]{opacity:.45;pointer-events:none}
+  /* ==================================================================== */
+  /* STATUS — pé do aside                                                 */
+  /* ==================================================================== */
+  .status{display:flex;align-items:flex-start;gap:9px;margin-top:14px}
+  .status-eixo{flex-shrink:0;width:7px;height:7px;margin-top:5px;border-radius:50%;
+    background:var(--edge-lift)}
+  .status-eixo.ativo{background:var(--pace);box-shadow:0 0 0 3px rgba(76,159,112,.18)}
+  .status-txt{font:12px/1.45 var(--sans);color:var(--faint)}
+  .status-txt.excedido{color:var(--apex)}
 
-  :focus-visible{outline:2px solid var(--red);outline-offset:2px}
+  /* ==================================================================== */
+  /* MENSAGENS                                                            */
+  /* ==================================================================== */
+  .erro,.aviso{padding:13px 15px;margin-bottom:16px;border-radius:var(--r);
+    font:13px/1.55 var(--sans);display:flex;gap:11px;align-items:flex-start}
+  .erro::before,.aviso::before{font:700 10px/1.7 var(--mono);letter-spacing:.12em;
+    text-transform:uppercase;flex-shrink:0}
+  .erro{background:#1C1214;border:1px solid var(--apex);color:#F3B7BA}
+  .erro::before{content:"erro";color:var(--apex)}
+  .aviso{background:var(--drift-wash);border:1px solid #8A6212;color:#E8C77A}
+  .aviso::before{content:"atenção";color:var(--drift)}
+  /* Botão dentro do aviso ("Gerar assim mesmo"): largura de conteúdo, para não
+     virar uma barra do tamanho da mensagem. */
+  .aviso .botao{width:auto}
+  .errorlist{list-style:none;color:#F3B7BA;font:12px/1.45 var(--sans);margin-top:6px}
 
+  /* ==================================================================== */
+  /* REVISÃO — KPIs e tabelas                                             */
+  /* ==================================================================== */
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px}
+  .kpi{background:var(--riser);border:1px solid var(--edge);border-radius:var(--r);
+    padding:16px;text-align:center}
+  .kpi small{display:block;font:600 10px/1.3 var(--mono);letter-spacing:.12em;
+    text-transform:uppercase;color:var(--faint)}
+  .kpi b{display:block;font:800 24px/1.2 var(--sans);color:var(--bright);
+    margin-top:7px;letter-spacing:-.02em}
+  .metricas{font:13px/1.55 var(--sans);color:var(--faint);margin-bottom:22px}
+
+  .tabela-rolagem{overflow-x:auto;margin:10px 0 4px;border:1px solid var(--edge);
+    border-radius:var(--r)}
+  table{width:100%;border-collapse:collapse;font:13px/1.5 var(--sans)}
+  th{background:var(--slab);color:var(--faint);text-align:left;padding:10px 12px;
+    border-bottom:1px solid var(--edge);white-space:nowrap;
+    font:600 10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase}
+  td{padding:11px 12px;border-bottom:1px solid var(--edge-soft);background:var(--riser);
+    color:var(--read)}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover td{background:#20232A}
+  tr.melhor td:first-child{color:var(--pace);font-weight:700}
+  .legenda{font:12px/1.5 var(--sans);color:var(--faint);margin:9px 0 20px}
+  .secao-titulo{margin:26px 0 10px;font:700 13px/1 var(--sans);color:var(--bright)}
+
+  /* Grupos de campanha — o que entra no relatório (revisão) */
+  .grupos{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+  .grupo-row{display:flex;align-items:flex-start;gap:12px;padding:13px 15px;
+    background:var(--riser);border:1px solid var(--edge);border-radius:var(--r);
+    cursor:pointer;transition:border-color .14s,background .14s}
+  .grupo-row:hover{border-color:var(--edge-lift)}
+  /* Marcado aqui é o PADRÃO — a tela abre com todos os grupos escolhidos. Um
+     lavado vermelho em 100% da lista não distingue nada e ainda faz a tela
+     inteira gritar; o realce forte fica no `.modo-row`, onde de fato só um
+     item entre quatro está escolhido. Aqui basta a borda subir e a caixa
+     acender. */
+  .grupo-row:has(input:checked){border-color:var(--edge-lift);background:var(--riser)}
+  .grupo-row:has(input:checked) .grupo-nome{color:var(--bright)}
+  /* Desmarcado é que é o desvio do padrão: some o item para o fundo. */
+  .grupo-row:not(:has(input:checked)){background:var(--sunken);opacity:.62}
+  .grupo-row input{flex-shrink:0;width:16px;height:16px;margin-top:2px;
+    accent-color:var(--apex);cursor:pointer}
+  .grupo-corpo{flex:1;min-width:0}
+  .grupo-nome{display:block;font:700 12.5px/1.3 var(--mono);color:var(--bright);
+    letter-spacing:.02em}
+  /* Nome de campanha é um bloco só, sem espaço para quebrar — sem isto a
+     lista estoura a coluna em vez de dobrar. */
+  .grupo-meta{display:block;margin-top:5px;font:12px/1.5 var(--sans);
+    color:var(--faint);overflow-wrap:anywhere}
+
+  /* ==================================================================== */
+  /* HOME — as duas frentes                                               */
+  /* ==================================================================== */
+  /* A home não usa o grid de duas colunas: ela não tem ação primária para
+     fixar num aside, e com o conteúdo curto que tem sobrava 60% de vazio na
+     tela. Aqui é uma coluna centrada, e a escolha ocupa o meio do campo. */
+  .miolo-home{flex:1;overflow:auto;display:flex;flex-direction:column;
+    justify-content:center;padding:48px 32px}
+  .home-caixa{width:100%;max-width:780px;margin:0 auto}
+  .frentes{display:flex;flex-direction:column;gap:14px;margin:28px 0 22px}
+  .frente{position:relative;display:block;padding:22px 24px;background:var(--riser);
+    border:1px solid var(--edge);border-radius:var(--r-lg);text-decoration:none;
+    overflow:hidden;transition:border-color .16s,background .16s,transform .16s}
+  .frente:hover{border-color:var(--apex);background:var(--apex-wash);
+    transform:translateY(-2px);box-shadow:var(--sombra)}
+  .frente::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+    background:var(--apex);opacity:0;transition:opacity .16s}
+  .frente:hover::before{opacity:1}
+  /* A pergunta que a frente responde vem ANTES do nome dela: é assim que o
+     operador escolhe — ele chega com uma dúvida, não com um substantivo. */
+  .frente-pergunta{display:block;font:600 11px/1 var(--mono);letter-spacing:.1em;
+    text-transform:uppercase;color:var(--apex);margin-bottom:10px}
+  .frente-nome{display:flex;align-items:center;gap:12px}
+  .frente-nome strong{font:800 21px/1.2 var(--sans);color:var(--bright);
+    letter-spacing:-.02em}
+  .frente-seta{margin-left:auto;flex-shrink:0;width:20px;height:20px;
+    color:var(--faint);transition:color .16s,transform .16s}
+  .frente:hover .frente-seta{color:var(--apex);transform:translateX(4px)}
+  .frente-desc{display:block;margin-top:9px;font:13.5px/1.6 var(--sans);
+    color:var(--faint)}
+  /* Rodapé do card: entrada → saída, o par que de fato distingue as frentes. */
+  .frente-fluxo{display:flex;align-items:center;gap:10px;margin-top:16px;
+    padding-top:14px;border-top:1px solid var(--edge)}
+  .frente-fluxo span{font:600 11px/1.4 var(--mono);color:var(--read);
+    background:var(--sunken);border:1px solid var(--edge);
+    border-radius:var(--r-chip);padding:4px 9px}
+  .frente-fluxo i{font-style:normal;color:var(--apex);font-weight:700}
+
+  /* ==================================================================== */
+  /* BLOCOS DE SAÍDA COPIÁVEIS (fechamento de verba)                      */
+  /* ==================================================================== */
+  .saida{border:1px solid var(--edge);border-radius:var(--r);margin-bottom:18px;
+    overflow:hidden}
+  .saida-cabeca{display:flex;align-items:center;gap:11px;padding:10px 14px;
+    background:var(--slab);border-bottom:1px solid var(--edge)}
+  .saida-cabeca b{font:700 10.5px/1 var(--mono);letter-spacing:.1em;
+    text-transform:uppercase;color:var(--bright)}
+  .saida-cabeca span{font:12px/1.4 var(--sans);color:var(--faint)}
+  .saida-texto{margin:0;padding:16px 18px;background:var(--riser);
+    font:13px/1.75 var(--mono);color:var(--read);white-space:pre-wrap;
+    overflow-wrap:anywhere}
+  .copiar{margin-left:auto;flex-shrink:0;padding:6px 12px;background:transparent;
+    border:1px solid var(--edge-lift);border-radius:var(--r-chip);color:var(--read);
+    cursor:pointer;font:600 10.5px/1.3 var(--mono);letter-spacing:.08em;
+    text-transform:uppercase;transition:border-color .14s,color .14s}
+  .copiar:hover{border-color:var(--apex);color:var(--bright)}
+  .copiar.feito{border-color:var(--pace);color:var(--pace)}
+  .saida.interna .saida-cabeca b{color:var(--drift)}
+
+  /* ==================================================================== */
+  /* TRILHO DE FECHAMENTO — a assinatura da frente de verba               */
+  /* ==================================================================== */
+  /* O mês como uma pista: o que já foi gasto, o que a projeção acrescenta e
+     onde está o contratado. A frente inteira existe para responder "vai
+     fechar no combinado?", e esta é a resposta antes de qualquer texto. */
+  .trilho{background:var(--riser);border:1px solid var(--edge);
+    border-radius:var(--r-lg);padding:20px 22px;margin-bottom:22px}
+  .trilho-topo{display:flex;justify-content:space-between;align-items:baseline;
+    gap:16px;margin-bottom:16px}
+  .trilho-valor{font:800 30px/1 var(--sans);color:var(--bright);letter-spacing:-.03em}
+  .trilho-valor small{font:600 12px/1 var(--sans);color:var(--faint);
+    letter-spacing:0;margin-left:7px}
+  .trilho-desvio{font:700 13px/1 var(--mono);padding:6px 10px;border-radius:var(--r-chip);
+    border:1px solid currentColor}
+  .trilho-desvio.no-ritmo{color:var(--pace)}
+  .trilho-desvio.desviando{color:var(--drift)}
+  .trilho-desvio.fora{color:var(--apex)}
+  /* A pista. `--gasto` e `--projetado` são porcentagens do contratado, e vêm
+     do servidor em `style=` — é dado, não estilo, e não existe até haver
+     planilha lida. */
+  .pista{position:relative;height:14px;background:var(--sunken);
+    border:1px solid var(--edge);border-radius:var(--r-chip);overflow:hidden}
+  .pista-projetado{position:absolute;left:0;top:0;bottom:0;
+    width:var(--projetado,0%);background:repeating-linear-gradient(
+      135deg,rgba(216,35,42,.28) 0 5px,transparent 5px 10px)}
+  .pista-gasto{position:absolute;left:0;top:0;bottom:0;width:var(--gasto,0%);
+    background:var(--apex)}
+  /* A marca do contratado: onde a pista deveria terminar. Recuada em 2px
+     porque a pista recorta (`overflow:hidden`) — no caso mais comum, o de
+     projeção dentro do combinado, o alvo cai em 100% e sem o recuo ele ficaria
+     inteiro fora da vista. */
+  .pista-alvo{position:absolute;top:0;bottom:0;width:2px;background:var(--bright);
+    left:calc(min(var(--alvo,100%),100%) - 2px);
+    box-shadow:0 0 0 1px rgba(11,11,13,.9)}
+  .trilho-pes{display:flex;justify-content:space-between;gap:16px;margin-top:11px;
+    font:11.5px/1.4 var(--mono);color:var(--faint)}
+  .trilho-legenda{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;
+    padding-top:14px;border-top:1px solid var(--edge);
+    font:11.5px/1.4 var(--sans);color:var(--faint)}
+  .trilho-legenda span{display:flex;align-items:center;gap:7px}
+  .trilho-legenda i{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+  .amostra-gasto{background:var(--apex)}
+  .amostra-projetado{background:repeating-linear-gradient(
+    135deg,rgba(216,35,42,.5) 0 3px,transparent 3px 6px);border:1px solid var(--edge-lift)}
+  .amostra-alvo{background:var(--bright);width:2px!important;border-radius:1px}
+
+  :focus-visible{outline:2px solid var(--apex);outline-offset:2px}
+  code{font:12.5px/1.4 var(--mono);color:var(--read)}
+
+  /* ==================================================================== */
+  /* RESPONSIVO                                                           */
+  /* ==================================================================== */
   /* Estreito: o aside desce para o fim da coluna e a página volta a rolar
      como documento — a ação fixa só faz sentido quando há duas colunas. */
   @media (max-width:1080px){
     body{height:auto;overflow:visible}
     .miolo{grid-template-columns:1fr}
-    .resumo{border-left:0;border-top:1px solid var(--line);overflow:visible}
+    .resumo{border-left:0;border-top:1px solid var(--edge);overflow:visible}
     .trabalho{overflow:visible}
+    .miolo-home{padding:32px 22px}
   }
   @media (max-width:720px){
     .campos{grid-template-columns:1fr}
-    .anexos-head,.anexo{grid-template-columns:30px 1fr 64px 30px}
+    .anexos-head,.anexo{grid-template-columns:32px 1fr 68px 32px}
     .anexos-head span:nth-child(3),.anexo-nome{display:none}
     .topo-sub,.topo-sep{display:none}
+    .trabalho{padding:20px 18px 32px}
+    h1{font-size:22px}
+    .kpis{grid-template-columns:1fr}
+    .frente-nome strong{font-size:18px}
+    /* Em 390px cabem logo, marca e os dois chips, mas sem folga: o rótulo da
+       etapa sai e fica só o número, que é o que se lê de relance. Medido —
+       `scrollWidth` continua igual à viewport nas duas versões; isto é
+       respiro, não conserto de estouro. */
+    .topo{padding:0 16px;gap:10px}
+    .etapa-chip{padding:6px 9px;font-size:0}
+    .etapa + .etapa::before{width:12px}
+    /* `nowrap` numa faixa estreita rouba a linha inteira do texto principal. */
+    .dropzone-meta{display:none}
   }
   @media (prefers-reduced-motion:reduce){
     *{transition:none!important;animation:none!important;scroll-behavior:auto!important}
@@ -343,31 +566,49 @@
 </head>
 <body>
   <header class="topo">
-    <img src="{% static 'logo_apex.png' %}" alt="Logo Apex">
-    <span class="marca"><span>A</span>pex</span>
+    {% comment %}
+    Logo e marca são um alvo só, apontando para a escolha de frente. O
+    cabeçalho fica FORA do <form>, então isto é um link comum — nada de
+    aninhar âncora em formulário. Sair daqui não perde trabalho: a sessão
+    guarda o que já foi lido, e voltar para a tela 02 reabre onde parou.
+    {% endcomment %}
+    <a class="marca-link" href="{% url 'home' %}"
+       aria-label="Voltar para a escolha da análise">
+      <img class="logo" src="{% static 'logo_apex.png' %}" alt="">
+      <span class="marca"><span>A</span>pex</span>
+    </a>
     <span class="topo-sep" aria-hidden="true"></span>
-    <span class="topo-sub">Relatórios de tráfego pago</span>
-    {% comment %}Etapas do fluxo; as classes vêm das páginas filhas.{% endcomment %}
+    <span class="topo-sub">{% block topo_sub %}Relatórios de tráfego pago{% endblock %}</span>
+    {% comment %}
+    Etapas do fluxo; as classes vêm das páginas filhas. A home substitui o
+    bloco inteiro por um vazio: escolher a frente não é uma etapa de nada.
+    {% endcomment %}
+    {% block etapas %}
     <ol class="etapas" aria-label="Progresso">
       <li class="etapa {% block cls_etapa1 %}ativa{% endblock %}" id="etapa-1">
-        <span class="etapa-chip"><b>01</b>Importar dados</span>
+        <span class="etapa-chip"><b>01</b>{% block nome_etapa1 %}Importar dados{% endblock %}</span>
       </li>
       <li class="etapa {% block cls_etapa2 %}{% endblock %}" id="etapa-2">
         <span class="etapa-chip"><b>02</b>{% block nome_etapa2 %}Revisar e gerar{% endblock %}</span>
       </li>
     </ol>
+    {% endblock %}
   </header>
 
   {% comment %}
   O formulário envolve as duas colunas: o botão primário mora no aside, mas
   os campos ficam na coluna de trabalho. Por isso o <form> é o próprio grid.
+  A home troca o bloco por um `<div>` — ela é uma página de links, e um
+  formulário sem campo nem envio ali seria só marcação inventada.
   {% endcomment %}
+  {% block miolo %}
   <form class="miolo" method="post" id="{% block form_id %}form-painel{% endblock %}"
         {% block form_extra %}{% endblock %}>
     {% csrf_token %}
     <main class="trabalho">{% block conteudo %}{% endblock %}</main>
     <aside class="resumo">{% block resumo %}{% endblock %}</aside>
   </form>
+  {% endblock %}
 
   {% block scripts %}{% endblock %}
 </body>

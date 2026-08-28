@@ -118,10 +118,10 @@ class FluxoIndividualTest(TestCase):
             {"nome": "Campanha B", "res": 20, "inv": 120.0, "imp": 2000,
              "alc": 1000, "cliques": 120},
         ])
-        return self.client.post("/", {"cliente": "ILOC", "arquivos": [f]})
+        return self.client.post("/desempenho/", {"cliente": "ILOC", "arquivos": [f]})
 
     def _gerar_pdf(self):
-        return self.client.post("/revisao/", {
+        return self.client.post("/desempenho/revisao/", {
             "cliente": "ILOC", "periodo": "01/07/2026 a 15/07/2026",
             "analise": "Texto de análise.",
         })
@@ -130,7 +130,7 @@ class FluxoIndividualTest(TestCase):
         r = self._upload()
         self.assertEqual(r.status_code, 302)
 
-        r = self.client.get("/revisao/")
+        r = self.client.get("/desempenho/revisao/")
         self.assertEqual(r.status_code, 200)
         html = r.content.decode()
         self.assertIn("Topo de Funil — Atração", html)
@@ -173,7 +173,7 @@ class FluxoIndividualTest(TestCase):
              "imp": 3000, "alc": 2000, "cliques": 200}
             for i in range(12)
         ])
-        r = self.client.post("/", {"cliente": "ILOC", "arquivos": [f]})
+        r = self.client.post("/desempenho/", {"cliente": "ILOC", "arquivos": [f]})
         self.assertEqual(r.status_code, 302)
 
         r = self._gerar_pdf()
@@ -213,7 +213,7 @@ class FluxoConsolidadoTest(TestCase):
                  "alc": 20000, "status": "not_delivering"},
             ]),
         ]
-        return self.client.post("/", {"cliente": "TIM Brasil", "arquivos": arquivos})
+        return self.client.post("/desempenho/", {"cliente": "TIM Brasil", "arquivos": arquivos})
 
     def test_agregacao(self):
         r = self._upload_tres()
@@ -237,11 +237,11 @@ class FluxoConsolidadoTest(TestCase):
     def test_pdf_consolidado(self):
         self._upload_tres()
 
-        r = self.client.get("/revisao/")
+        r = self.client.get("/desempenho/revisao/")
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "unidade_0")
 
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "TIM Brasil", "periodo": "01/07/2026 a 15/07/2026",
             "analise": "Análise do grupo.",
             "unidade_0": "TIM São José", "unidade_1": "TIM Bragança",
@@ -276,15 +276,15 @@ class FluxoConsolidadoTest(TestCase):
                                       "imp": 900, "alc": 700}],
                      indicador="Compras"),
         ]
-        r = self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        r = self.client.post("/desempenho/", {"cliente": "Grupo", "arquivos": arquivos})
         self.assertEqual(r.status_code, 302)
 
         # Aviso na tela de revisão (não bloqueia o fluxo)
-        r = self.client.get("/revisao/")
+        r = self.client.get("/desempenho/revisao/")
         self.assertContains(r, "não usam o mesmo indicador")
 
         # A validação é interna: o aviso NÃO vaza para o PDF do cliente
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
             "analise": "Análise.", "unidade_0": "Loja A", "unidade_1": "Loja B",
         })
@@ -301,14 +301,14 @@ class FluxoConsolidadoTest(TestCase):
             ])
             for i in range(20)
         ]
-        r = self.client.post("/", {"cliente": "Grupo 20", "arquivos": arquivos})
+        r = self.client.post("/desempenho/", {"cliente": "Grupo 20", "arquivos": arquivos})
         self.assertEqual(r.status_code, 302)
         self.assertEqual(len(self.client.session["relatorio_apex"]["unidades"]), 20)
 
         post = {"cliente": "Grupo 20", "periodo": "01/07/2026 a 15/07/2026",
                 "analise": "Análise."}
         post.update({f"unidade_{i}": f"Unidade {i:02d}" for i in range(20)})
-        r = self.client.post("/revisao/", post)
+        r = self.client.post("/desempenho/revisao/", post)
         self.assertEqual(r.status_code, 200)
         pdf = _bytes_pdf(r)
         texto = _texto_pdf(pdf)
@@ -381,10 +381,10 @@ class CasosReaisTest(TestCase):
 
     def test_elix_no_pdf_diz_que_o_gargalo_e_a_captacao(self):
         dados = self._elix()
-        self.client.post("/", {"cliente": "Elix Finance", "arquivos": [
+        self.client.post("/desempenho/", {"cliente": "Elix Finance", "arquivos": [
             _arquivo("elix.xlsx", self.ELIX, inicio="2026-07-31",
                      fim="2026-08-06")]})
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "Elix Finance", "periodo": "31/07/2026 a 06/08/2026",
             "analise": dados["analise_sugerida"].replace("\n", "\r\n")})
         pdf = _bytes_pdf(r)
@@ -508,7 +508,7 @@ class OrcamentoDePaginaTest(TestCase):
         return texto
 
     def _cabe(self, campos, total):
-        r = self.client.post("/revisao/", dict(campos, analise=self._texto(total)))
+        r = self.client.post("/desempenho/revisao/", dict(campos, analise=self._texto(total)))
         return _paginas(_bytes_pdf(r)) == 1
 
     def _maximo(self, campos, teto_busca=4000):
@@ -558,11 +558,11 @@ class OrcamentoDePaginaTest(TestCase):
         ]
         for modo, limite, arquivos, campos in casos:
             with self.subTest(modo=modo):
-                self.client.post("/", {"cliente": "Medição",
+                self.client.post("/desempenho/", {"cliente": "Medição",
                                        "arquivos": arquivos})
                 for blocos in (3, 4, 5):
                     texto = self._texto(limite, blocos)
-                    r = self.client.post("/revisao/",
+                    r = self.client.post("/desempenho/revisao/",
                                          dict(campos, analise=texto))
                     pdf = _bytes_pdf(r)
                     onde = "%s: %d caracteres em %d blocos" % (modo, limite,
@@ -576,7 +576,7 @@ class OrcamentoDePaginaTest(TestCase):
                     self.assertIn(fim, _texto_pdf(pdf), onde + " saiu cortado")
 
     def test_teto_da_conta_individual(self):
-        self.client.post("/", {"cliente": "Medição", "arquivos": [
+        self.client.post("/desempenho/", {"cliente": "Medição", "arquivos": [
             _arquivo("a.xlsx", [
                 {"nome": "Camp A", "res": 40, "inv": 80.0, "imp": 4000,
                  "alc": 2500, "cliques": 300},
@@ -590,7 +590,7 @@ class OrcamentoDePaginaTest(TestCase):
         self._conferir(templates.LIMITE_PDF, self._maximo(campos), "conta")
 
     def test_teto_do_consolidado(self):
-        self.client.post("/", {"cliente": "Medição", "arquivos": [
+        self.client.post("/desempenho/", {"cliente": "Medição", "arquivos": [
             _arquivo("u%d.xlsx" % i, [
                 {"nome": "C", "res": 40 + i, "inv": 80.0 + i, "imp": 4000,
                  "alc": 2500, "cliques": 300}]) for i in range(3)]})
@@ -675,7 +675,7 @@ class AnalisePorIATest(TestCase):
 
     def _importar(self, campanhas=None, cliente="Elix"):
         f = _arquivo("e.xlsx", campanhas or self.ELIX)
-        self.client.post("/", {"cliente": cliente, "arquivos": [f]})
+        self.client.post("/desempenho/", {"cliente": cliente, "arquivos": [f]})
         return self.client.session["relatorio_apex"]
 
     def _pedir(self, resposta=RESPOSTA_IA, analise="texto do motor", **campos):
@@ -687,7 +687,7 @@ class AnalisePorIATest(TestCase):
         efeito = ({"side_effect": resposta} if isinstance(resposta, Exception)
                   else {"return_value": resposta})
         with patch(alvo, **efeito) as chamada:
-            r = self.client.post("/revisao/", base)
+            r = self.client.post("/desempenho/revisao/", base)
         self.assertEqual(r.status_code, 200)
         return r, self.client.session["relatorio_apex"], chamada
 
@@ -695,10 +695,10 @@ class AnalisePorIATest(TestCase):
     def test_botao_so_aparece_havendo_chave(self):
         self._importar()
         self.assertIn('name="analise_ia"',
-                      self.client.get("/revisao/").content.decode())
+                      self.client.get("/desempenho/revisao/").content.decode())
         with override_settings(OPENAI_API_KEY=""):
             self.assertNotIn('name="analise_ia"',
-                             self.client.get("/revisao/").content.decode())
+                             self.client.get("/desempenho/revisao/").content.decode())
 
     def test_texto_do_modelo_entra_no_textarea_e_na_sessao(self):
         do_motor = self._importar()["analise_sugerida"]
@@ -730,17 +730,17 @@ class AnalisePorIATest(TestCase):
     def test_recarregar_a_tela_mantem_o_texto_da_ia(self):
         self._importar()
         self._pedir()
-        self.assertIn("Hortolândia", self.client.get("/revisao/").content.decode())
+        self.assertIn("Hortolândia", self.client.get("/desempenho/revisao/").content.decode())
 
     def test_pdf_sai_com_o_texto_da_ia(self):
         self._importar()
         _r, dados, _ = self._pedir()
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "Elix", "periodo": "01/07/2026 a 15/07/2026",
             "analise": dados["analise_ia"].replace("\n", "\r\n")})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("destaque positivo foi Hortolândia", texto)
-        self.assertEqual(_paginas(_bytes_pdf(self.client.post("/revisao/", {
+        self.assertEqual(_paginas(_bytes_pdf(self.client.post("/desempenho/revisao/", {
             "cliente": "Elix", "periodo": "01/07/2026 a 15/07/2026",
             "analise": dados["analise_ia"].replace("\n", "\r\n")}))), 1)
 
@@ -781,7 +781,7 @@ class AnalisePorIATest(TestCase):
                    171.24, 3900, 1950, "2026-07-01", "2026-07-15"])
         buf = io.BytesIO()
         wb.save(buf)
-        self.client.post("/", {"cliente": "Elix", "arquivos": [
+        self.client.post("/desempenho/", {"cliente": "Elix", "arquivos": [
             SimpleUploadedFile("s.xlsx", buf.getvalue(), content_type=XLSX_MIME)]})
 
         payload = redator_ia.montar_payload(self.client.session["relatorio_apex"])
@@ -1030,7 +1030,7 @@ class AnalisePorIATest(TestCase):
             _arquivo("b.xlsx", [{"nome": "CB", "res": 10, "inv": 200.0,
                                  "imp": 5000, "alc": 4000}]),
         ]
-        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        self.client.post("/desempenho/", {"cliente": "Grupo", "arquivos": arquivos})
         dados = self.client.session["relatorio_apex"]
 
         payload = redator_ia.montar_payload(dados)
@@ -1039,7 +1039,7 @@ class AnalisePorIATest(TestCase):
         self.assertNotIn("campanhas", payload)
 
         with patch("relatorios.redator_ia._chamar", return_value=RESPOSTA_IA):
-            r = self.client.post("/revisao/", {
+            r = self.client.post("/desempenho/revisao/", {
                 "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
                 "analise": "x", "analise_ia": "1",
                 "unidade_0": "Praça A", "unidade_1": "Praça B"})
@@ -1056,11 +1056,11 @@ class AnalisePorIATest(TestCase):
         arquivos = [_arquivo(f"{n}.xlsx", [{"nome": n, "res": 50, "inv": 100.0,
                                             "imp": 5000, "alc": 4000}])
                     for n in ("a", "b")]
-        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        self.client.post("/desempenho/", {"cliente": "Grupo", "arquivos": arquivos})
         entre_os_dois = "x" * ((templates.LIMITE_PDF_GRUPO
                                 + templates.LIMITE_PDF) // 2)
         with patch("relatorios.redator_ia._chamar", return_value=entre_os_dois):
-            r = self.client.post("/revisao/", {
+            r = self.client.post("/desempenho/revisao/", {
                 "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
                 "analise": "x", "analise_ia": "1",
                 "unidade_0": "A", "unidade_1": "B"})
@@ -1085,7 +1085,7 @@ class LeiturasDoFunilIATest(TestCase):
 
     def _importar(self):
         f = _arquivo("e.xlsx", self.CAMPANHAS)
-        self.client.post("/", {"cliente": "Elix", "arquivos": [f]})
+        self.client.post("/desempenho/", {"cliente": "Elix", "arquivos": [f]})
         return self.client.session["relatorio_apex"]
 
     def _pedir(self, resposta_funil):
@@ -1093,7 +1093,7 @@ class LeiturasDoFunilIATest(TestCase):
                 "analise": "texto do motor", "analise_ia": "1"}
         alvo = "relatorios.redator_ia._chamar"
         with patch(alvo, side_effect=[RESPOSTA_IA, resposta_funil]) as chamada:
-            r = self.client.post("/revisao/", base)
+            r = self.client.post("/desempenho/revisao/", base)
         self.assertEqual(r.status_code, 200)
         return r, self.client.session["relatorio_apex"], chamada
 
@@ -1184,7 +1184,7 @@ class LeiturasDoFunilIATest(TestCase):
         alvo = "relatorios.redator_ia._chamar"
         with patch(alvo, side_effect=[
                 RESPOSTA_IA, redator_ia.ErroDeIA("instabilidade", "servico")]):
-            r = self.client.post("/revisao/", {
+            r = self.client.post("/desempenho/revisao/", {
                 "cliente": "Elix", "periodo": "01/07/2026 a 15/07/2026",
                 "analise": "texto do motor", "analise_ia": "1"})
         self.assertEqual(r.status_code, 200)
@@ -1211,8 +1211,8 @@ class TextoLongoNoPdfTest(TestCase):
 
     def _pdf(self, analise):
         f = _arquivo("e.xlsx", self.CAMPANHAS)
-        self.client.post("/", {"cliente": "Mobile Magazine", "arquivos": [f]})
-        r = self.client.post("/revisao/", {
+        self.client.post("/desempenho/", {"cliente": "Mobile Magazine", "arquivos": [f]})
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "Mobile Magazine", "periodo": "05/08/2026 a 11/08/2026",
             "analise": analise.replace("\n", "\r\n")})
         return _bytes_pdf(r)
@@ -1259,8 +1259,8 @@ class TextoLongoNoPdfTest(TestCase):
         arquivos = [_arquivo(f"{n}.xlsx", [{"nome": n, "res": 50, "inv": 100.0,
                                             "imp": 5000, "alc": 4000}])
                     for n in ("a", "b", "c")]
-        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
-        r = self.client.post("/revisao/", {
+        self.client.post("/desempenho/", {"cliente": "Grupo", "arquivos": arquivos})
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "Grupo", "periodo": "01/07/2026 a 15/07/2026",
             "unidade_0": "A", "unidade_1": "B", "unidade_2": "C",
             "analise": self._analise(6).replace("\n", "\r\n")})
@@ -1353,7 +1353,7 @@ class AnaliseAutomaticaTest(TestCase):
             {"nome": "Campanha B", "res": 0, "inv": 60.0, "imp": 2000,
              "alc": 1000, "status": "not_delivering"},
         ])
-        r = self.client.post("/", {"cliente": "ILOC", "arquivos": [f]})
+        r = self.client.post("/desempenho/", {"cliente": "ILOC", "arquivos": [f]})
         self.assertEqual(r.status_code, 302)
 
         analise = self.client.session["relatorio_apex"]["analise_sugerida"]
@@ -1362,7 +1362,7 @@ class AnaliseAutomaticaTest(TestCase):
             self.assertNotIn(termo, analise)
 
         # PDF gerado com a análise sugerida: nada de status ou auditoria
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "ILOC", "periodo": "01/07/2026 a 15/07/2026",
             "analise": analise,
         })
@@ -1381,7 +1381,7 @@ class AnaliseAutomaticaTest(TestCase):
             {"nome": "Campanha B", "res": 20, "inv": 120.0, "imp": 2000,
              "alc": 1000, "cliques": 120},
         ])
-        self.client.post("/", {"cliente": "ILOC", "arquivos": [f]})
+        self.client.post("/desempenho/", {"cliente": "ILOC", "arquivos": [f]})
 
         metricas = {"investimento": 644.98, "alcance": 16279,
                     "impressoes": 57965, "frequencia": 3.56, "cpm": 11.13,
@@ -1398,7 +1398,7 @@ class AnaliseAutomaticaTest(TestCase):
                         textos.append(analysis.templates.redigir(av, metricas))
         maior = max(textos, key=len)
 
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "ILOC", "periodo": "01/07/2026 a 15/07/2026",
             "analise": maior,
         })
@@ -1416,12 +1416,12 @@ class AnaliseAutomaticaTest(TestCase):
         f = _arquivo("conta.xlsx", [
             {"nome": "Campanha A", "res": 40, "inv": 80.0, "imp": 4000,
              "alc": 2500, "cliques": 300}])
-        self.client.post("/", {"cliente": "ILOC", "arquivos": [f]})
+        self.client.post("/desempenho/", {"cliente": "ILOC", "arquivos": [f]})
         analise = self.client.session["relatorio_apex"]["analise_sugerida"]
         blocos = analise.split("\n\n")
         self.assertGreaterEqual(len(blocos), 3)
 
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "ILOC", "periodo": "01/07/2026 a 15/07/2026",
             "analise": analise.replace("\n", "\r\n"),
         })
@@ -1606,14 +1606,14 @@ class AnaliseAutomaticaTest(TestCase):
         arquivos = [_arquivo("u%d.xlsx" % i, [
             {"nome": "C", "res": 100 + i * 20, "inv": 100.0 + i * 90,
              "imp": 9000, "alc": 4000, "cliques": 400}]) for i in range(20)]
-        self.client.post("/", {"cliente": "TIM Brasil", "arquivos": arquivos})
+        self.client.post("/desempenho/", {"cliente": "TIM Brasil", "arquivos": arquivos})
         analise = self.client.session["relatorio_apex"]["analise_sugerida"]
         # A praça mais cara e a mais barata são nomeadas pelo nome do arquivo
         # até o operador renomear; o texto tem que caber de qualquer forma.
         campos = {"cliente": "TIM Brasil", "periodo": "01/07/2026 a 15/07/2026",
                   "analise": analise}
         campos.update({"unidade_%d" % i: n for i, n in enumerate(nomes)})
-        r = self.client.post("/revisao/", campos)
+        r = self.client.post("/desempenho/revisao/", campos)
         pdf = _bytes_pdf(r)
         texto = _texto_pdf(pdf)
         self.assertEqual(_paginas_com_rodape_invadido(pdf), [])
@@ -1639,7 +1639,7 @@ class ValidacaoUploadTest(TestCase):
                                           "imp": 100, "alc": 80}])
             for i in range(21)
         ]
-        r = self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        r = self.client.post("/desempenho/", {"cliente": "Grupo", "arquivos": arquivos})
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "Máximo de 20 arquivos")
 
@@ -1649,7 +1649,7 @@ class ValidacaoUploadTest(TestCase):
                                   "imp": 100, "alc": 80}]),
             SimpleUploadedFile("notas.txt", b"nao e planilha", content_type="text/plain"),
         ]
-        r = self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        r = self.client.post("/desempenho/", {"cliente": "Grupo", "arquivos": arquivos})
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "notas.txt")
 
@@ -1660,7 +1660,7 @@ class ValidacaoUploadTest(TestCase):
             SimpleUploadedFile("b.xlsx", b"bytes invalidos", content_type=XLSX_MIME),
             _arquivo("c.xlsx", [ok]),
         ]
-        r = self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
+        r = self.client.post("/desempenho/", {"cliente": "Grupo", "arquivos": arquivos})
         self.assertEqual(r.status_code, 200)
         html = r.content.decode()
         self.assertIn("b.xlsx", html)
@@ -1683,47 +1683,47 @@ class NomeDoArquivoTest(TestCase):
         return resposta["Content-Disposition"].split('filename="')[1].rstrip('"')
 
     def test_anexo_unico(self):
-        self.client.post("/", {"cliente": "TIM BRASIL",
+        self.client.post("/desempenho/", {"cliente": "TIM BRASIL",
                                "arquivos": self._anexos(1)})
-        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM BRASIL",
                                            "periodo": "01/07/2026 a 31/07/2026",
                                            "analise": ""})
         self.assertEqual(self._nome(r),
                          "TIM-BRASIL-anexounico-1-jul-26-31-jul-26.pdf")
 
     def test_consolidado(self):
-        self.client.post("/", {"cliente": "TIM BRASIL",
+        self.client.post("/desempenho/", {"cliente": "TIM BRASIL",
                                "arquivos": self._anexos(3)})
-        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM BRASIL",
                                            "periodo": "01/07/2026 a 31/07/2026",
                                            "analise": ""})
         self.assertEqual(self._nome(r),
                          "TIM-BRASIL-consolidado-1-jul-26-31-jul-26.pdf")
 
     def test_listagem(self):
-        self.client.post("/", {"modo": "listagem", "cliente": "TIM BRASIL",
+        self.client.post("/desempenho/", {"modo": "listagem", "cliente": "TIM BRASIL",
                                "arquivos": self._anexos(3)})
-        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM BRASIL",
                                            "inicio": "2026-07-01",
                                            "fim": "2026-07-31"})
         self.assertEqual(self._nome(r),
                          "TIM-BRASIL-listagem-1-jul-26-31-jul-26.pdf")
 
     def test_indicador_unico(self):
-        self.client.post("/", {"modo": "indicador", "cliente": "TIM BRASIL",
+        self.client.post("/desempenho/", {"modo": "indicador", "cliente": "TIM BRASIL",
                                "metrica": "investimento_total",
                                "arquivos": self._anexos(3, inicio="2026-07-01",
                                                         fim="2026-07-31")})
-        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM BRASIL",
                                            "metrica": "investimento_total"})
         self.assertEqual(self._nome(r),
                          "TIM-BRASIL-indicadorunico-1-jul-26-31-jul-26.pdf")
 
     def test_sem_periodo_marca_a_data_de_geracao(self):
         """Uma data só, sem rótulo, seria lida como início de intervalo."""
-        self.client.post("/", {"modo": "listagem", "cliente": "TIM BRASIL",
+        self.client.post("/desempenho/", {"modo": "listagem", "cliente": "TIM BRASIL",
                                "arquivos": self._anexos(2)})
-        r = self.client.post("/revisao/", {"cliente": "TIM BRASIL"})
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM BRASIL"})
         hoje = date.today()
         self.assertEqual(
             self._nome(r),
@@ -1731,9 +1731,9 @@ class NomeDoArquivoTest(TestCase):
             f"{_MESES_PT[hoje.month - 1]}-{hoje:%y}.pdf")
 
     def test_acento_e_pontuacao_viram_hifen(self):
-        self.client.post("/", {"cliente": "Grupo São José & Cia",
+        self.client.post("/desempenho/", {"cliente": "Grupo São José & Cia",
                                "arquivos": self._anexos(1)})
-        r = self.client.post("/revisao/", {"cliente": "Grupo São José & Cia",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "Grupo São José & Cia",
                                            "periodo": "", "analise": ""})
         self.assertTrue(self._nome(r).startswith("Grupo-Sao-Jose-Cia-anexounico-"),
                         self._nome(r))
@@ -1745,9 +1745,9 @@ class IndicadorDeResultadoTest(TestCase):
     é o do indicador de maior volume, sempre traduzido."""
 
     def _pdf_unico(self, campanhas):
-        self.client.post("/", {"cliente": "ILOC",
+        self.client.post("/desempenho/", {"cliente": "ILOC",
                                "arquivos": [_arquivo("a.xlsx", campanhas)]})
-        return _texto_pdf(_bytes_pdf(self.client.post("/revisao/", {
+        return _texto_pdf(_bytes_pdf(self.client.post("/desempenho/revisao/", {
             "cliente": "ILOC", "periodo": "", "analise": ""})))
 
     def test_indicador_dominante_vence_a_primeira_linha(self):
@@ -1819,8 +1819,8 @@ class IndicadorDeResultadoTest(TestCase):
                                        "imp": 900, "alc": 700}],
                      indicador="actions:lead"),
         ]
-        self.client.post("/", {"cliente": "Grupo", "arquivos": arquivos})
-        html = self.client.get("/revisao/").content.decode()
+        self.client.post("/desempenho/", {"cliente": "Grupo", "arquivos": arquivos})
+        html = self.client.get("/desempenho/revisao/").content.decode()
         self.assertIn("Conversas Iniciadas", html)
         # O aviso de divergência continua, mas em linguagem de gente
         self.assertIn("não usam o mesmo indicador", html)
@@ -1848,18 +1848,18 @@ class FluxoListagemTest(TestCase):
         post = {"modo": "listagem", "cliente": cliente, "arquivos": arquivos}
         if nomes:
             post["nome_conta"] = nomes
-        return self.client.post("/", post)
+        return self.client.post("/desempenho/", post)
 
     def _post_listagem(self, cliente="TIM Brasil", nomes=None):
         """Fluxo completo: painel → revisão → PDF."""
         self._upload(cliente, nomes)
-        return self.client.post("/revisao/", {"cliente": cliente})
+        return self.client.post("/desempenho/revisao/", {"cliente": cliente})
 
     def test_upload_leva_a_revisao_antes_do_pdf(self):
         r = self._upload()
-        self.assertRedirects(r, "/revisao/")
+        self.assertRedirects(r, "/desempenho/revisao/")
         # A revisão mostra a prévia da tabela que vai ao PDF
-        html = self.client.get("/revisao/").content.decode()
+        html = self.client.get("/desempenho/revisao/").content.decode()
         self.assertIn("Revisar listagem", html)
         self.assertIn("unidade centro", html)
 
@@ -1872,7 +1872,7 @@ class FluxoListagemTest(TestCase):
 
     def test_nomes_editados_na_revisao_vao_para_o_pdf(self):
         self._upload()
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "TIM Brasil", "unidade_0": "Loja Centro",
             "unidade_1": "Loja Norte", "unidade_2": "Loja Sul"})
         texto = _texto_pdf(_bytes_pdf(r))
@@ -1914,10 +1914,10 @@ class FluxoListagemTest(TestCase):
             _arquivo("gorda.xlsx", [{"nome": "C", "res": 30, "inv": 90.0,
                                      "imp": 3000, "alc": 2000}]),
         ]
-        self.client.post("/", {"modo": "listagem", "cliente": "TIM Brasil",
+        self.client.post("/desempenho/", {"modo": "listagem", "cliente": "TIM Brasil",
                                "arquivos": arquivos})
         texto = _texto_pdf(_bytes_pdf(
-            self.client.post("/revisao/", {"cliente": "TIM Brasil"})))
+            self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil"})))
         self.assertLess(texto.index("gorda"), texto.index("magra"))
 
     def test_valores_por_conta_em_pt_br_sem_consolidar(self):
@@ -1963,10 +1963,10 @@ class FluxoListagemTest(TestCase):
                              [{"nome": "C", "res": 0, "inv": 12.0}]),
                     _arquivo("com_dados.xlsx",
                              [{"nome": "C", "res": 4, "inv": 20.0, "imp": 1000}])]
-        self.client.post("/", {"modo": "listagem", "cliente": "TIM Brasil",
+        self.client.post("/desempenho/", {"modo": "listagem", "cliente": "TIM Brasil",
                                "arquivos": arquivos})
         texto = _texto_pdf(_bytes_pdf(
-            self.client.post("/revisao/", {"cliente": "TIM Brasil"})))
+            self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil"})))
         self.assertIn("R$ 20,00", texto)   # CPM da conta com impressões
         self.assertIn("—", texto)          # CPM e custo/resultado da outra
 
@@ -1981,19 +1981,19 @@ class FluxoListagemTest(TestCase):
             _arquivo("sul.xlsx", [{"nome": "C", "res": 25, "inv": 100.0}],
                      inicio="2026-07-10", fim="2026-07-31"),
         ]
-        return self.client.post("/", {"modo": "listagem", "cliente": "TIM Brasil",
+        return self.client.post("/desempenho/", {"modo": "listagem", "cliente": "TIM Brasil",
                                       "arquivos": arquivos})
 
     def test_periodo_sugerido_a_partir_dos_anexos(self):
         self._upload_periodos()
-        html = self.client.get("/revisao/").content.decode()
+        html = self.client.get("/desempenho/revisao/").content.decode()
         # ISO no value: é o formato que o input nativo de data entende
         self.assertIn('value="2026-07-01"', html)
         self.assertIn('value="2026-07-31"', html)
 
     def test_periodo_editado_vai_para_o_cabecalho_do_pdf(self):
         self._upload_periodos()
-        r = self.client.post("/revisao/", {"cliente": "TIM Brasil",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil",
                                            "inicio": "2026-07-01",
                                            "fim": "2026-07-31"})
         self.assertIn("01/07/2026 — 31/07/2026", _texto_pdf(_bytes_pdf(r)))
@@ -2001,7 +2001,7 @@ class FluxoListagemTest(TestCase):
     def test_periodo_em_branco_omite_o_bloco(self):
         self._upload_periodos()
         texto = _texto_pdf(_bytes_pdf(
-            self.client.post("/revisao/", {"cliente": "TIM Brasil"})))
+            self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil"})))
         self.assertNotRegex(texto, r"\d{2}/\d{2}/\d{4} — \d{2}/\d{2}/\d{4}")
 
     def test_meia_data_e_periodo_invertido_sao_recusados(self):
@@ -2009,13 +2009,13 @@ class FluxoListagemTest(TestCase):
                      {"fim": "2026-07-31"},                          # sem início
                      {"inicio": "2026-07-31", "fim": "2026-07-01"}):  # invertido
             self._upload_periodos()
-            r = self.client.post("/revisao/", dict(post, cliente="TIM Brasil"))
+            r = self.client.post("/desempenho/revisao/", dict(post, cliente="TIM Brasil"))
             self.assertEqual(r.status_code, 200)
             self.assertNotEqual(r["Content-Type"], "application/pdf")
 
     def test_modo_unico_exige_exatamente_um_arquivo(self):
         ok = {"nome": "C", "res": 1, "inv": 10.0, "imp": 100, "alc": 80}
-        r = self.client.post("/", {
+        r = self.client.post("/desempenho/", {
             "modo": "unico", "cliente": "ILOC",
             "arquivos": [_arquivo("a.xlsx", [ok]), _arquivo("b.xlsx", [ok])],
         })
@@ -2024,7 +2024,7 @@ class FluxoListagemTest(TestCase):
 
     def test_modo_consolidado_exige_dois_ou_mais(self):
         ok = {"nome": "C", "res": 1, "inv": 10.0, "imp": 100, "alc": 80}
-        r = self.client.post("/", {
+        r = self.client.post("/desempenho/", {
             "modo": "consolidado", "cliente": "Grupo",
             "arquivos": [_arquivo("a.xlsx", [ok])],
         })
@@ -2033,7 +2033,7 @@ class FluxoListagemTest(TestCase):
 
     def test_modos_1_e_2_exigem_cliente(self):
         ok = {"nome": "C", "res": 1, "inv": 10.0, "imp": 100, "alc": 80}
-        r = self.client.post("/", {
+        r = self.client.post("/desempenho/", {
             "modo": "unico", "arquivos": [_arquivo("a.xlsx", [ok])]})
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "Informe o cliente")
@@ -2085,12 +2085,12 @@ class FluxoIndicadorTest(TestCase):
                 "metrica": metrica, "arquivos": arquivos}
         if nomes:
             post["nome_conta"] = nomes
-        return self.client.post("/", post)
+        return self.client.post("/desempenho/", post)
 
     def _post(self, metrica, cliente="TIM Brasil", arquivos=None, **extra):
         """Fluxo completo: painel → revisão → PDF."""
         self._upload(metrica, cliente, arquivos)
-        return self.client.post("/revisao/",
+        return self.client.post("/desempenho/revisao/",
                                 {"cliente": cliente, "metrica": metrica, **extra})
 
     def _texto(self, metrica, **kw):
@@ -2098,8 +2098,8 @@ class FluxoIndicadorTest(TestCase):
 
     def test_upload_leva_a_revisao_com_previa(self):
         r = self._upload("conversas_iniciadas")
-        self.assertRedirects(r, "/revisao/")
-        html = self.client.get("/revisao/").content.decode()
+        self.assertRedirects(r, "/desempenho/revisao/")
+        html = self.client.get("/desempenho/revisao/").content.decode()
         self.assertIn("Revisar indicador", html)
         self.assertIn("75", html)          # total já calculado na prévia
 
@@ -2112,7 +2112,7 @@ class FluxoIndicadorTest(TestCase):
 
     def test_trocar_metrica_na_revisao_nao_exige_reenviar_anexos(self):
         self._upload("conversas_iniciadas")
-        r = self.client.post("/revisao/", {"cliente": "TIM", "metrica": "cpa"})
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM", "metrica": "cpa"})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("R$ 3,14", texto)    # CPA geral recalculado
         self.assertIn("Custo por Resultado", texto)
@@ -2121,7 +2121,7 @@ class FluxoIndicadorTest(TestCase):
         # O front manda um token; o PDF volta com esse token num cookie, sinal
         # de que o arquivo saiu — é o que fecha a etapa 02 na tela.
         self._upload("cpa")
-        r = self.client.post("/revisao/", {"cliente": "TIM", "metrica": "cpa",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM", "metrica": "cpa",
                                            "download_token": "abc123"})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.cookies["apex_download"].value, "abc123")
@@ -2135,7 +2135,7 @@ class FluxoIndicadorTest(TestCase):
         # ao PDF, não o "unidade_centro" derivado do arquivo.
         self._upload("conversas_iniciadas",
                      nomes=["Loja Centro", "Loja Norte", "Loja Sul"])
-        r = self.client.post("/revisao/",
+        r = self.client.post("/desempenho/revisao/",
                              {"cliente": "TIM", "metrica": "conversas_iniciadas"})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("Loja Centro", texto)
@@ -2144,7 +2144,7 @@ class FluxoIndicadorTest(TestCase):
     def test_nome_em_branco_cai_no_nome_do_arquivo(self):
         # Campo vazio → mantém o comportamento antigo (nome derivado do arquivo).
         self._upload("conversas_iniciadas", nomes=["", "Loja Norte", ""])
-        r = self.client.post("/revisao/",
+        r = self.client.post("/desempenho/revisao/",
                              {"cliente": "TIM", "metrica": "conversas_iniciadas"})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("unidade centro", texto)   # fallback do arquivo
@@ -2152,7 +2152,7 @@ class FluxoIndicadorTest(TestCase):
 
     def test_nome_editado_na_revisao_vence_o_do_painel(self):
         self._upload("conversas_iniciadas", nomes=["Loja Centro", "N", "S"])
-        r = self.client.post("/revisao/", {
+        r = self.client.post("/desempenho/revisao/", {
             "cliente": "TIM", "metrica": "conversas_iniciadas",
             "unidade_0": "Centro Revisado", "unidade_1": "N", "unidade_2": "S"})
         texto = _texto_pdf(_bytes_pdf(r))
@@ -2204,10 +2204,10 @@ class FluxoIndicadorTest(TestCase):
                              "imp": imp, "alc": alc, "cliques": cli}])
             for nome, res, inv, imp, alc, cli in CONTAS_INDICADOR
         ]
-        self.client.post("/", {"modo": "listagem", "cliente": "TIM Brasil",
+        self.client.post("/desempenho/", {"modo": "listagem", "cliente": "TIM Brasil",
                                "arquivos": arquivos})
         listagem = _texto_pdf(_bytes_pdf(
-            self.client.post("/revisao/", {"cliente": "TIM Brasil"})))
+            self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil"})))
         for nome in ("unidade centro", "unidade norte", "unidade sul"):
             self.assertIn(nome, indicador)
             self.assertIn(nome, listagem)
@@ -2249,18 +2249,18 @@ class FluxoIndicadorTest(TestCase):
 
     def test_exige_dois_arquivos_e_metrica(self):
         ok = {"nome": "C", "res": 1, "inv": 10.0, "imp": 100, "alc": 80}
-        r = self.client.post("/", {"modo": "indicador", "cliente": "G",
+        r = self.client.post("/desempenho/", {"modo": "indicador", "cliente": "G",
                                    "metrica": "cpa",
                                    "arquivos": [_arquivo("a.xlsx", [ok])]})
         self.assertContains(r, "pelo menos 2 arquivos")
 
-        r = self.client.post("/", {
+        r = self.client.post("/desempenho/", {
             "modo": "indicador", "cliente": "G",
             "arquivos": [_arquivo("a.xlsx", [ok]), _arquivo("b.xlsx", [ok])]})
         self.assertContains(r, "Escolha a métrica")
 
     def test_seletor_agrupado_por_estagio_no_painel(self):
-        html = self.client.get("/").content.decode()
+        html = self.client.get("/desempenho/").content.decode()
         self.assertIn("Topo de Funil", html)
         self.assertIn("Meio de Funil", html)
         self.assertIn("Fundo de Funil", html)
@@ -2313,10 +2313,10 @@ class RegistroMetricasTest(TestCase):
                                  "imp": imp, "alc": alc, "cliques": cli}])
                 for nome, res, inv, imp, alc, cli in CONTAS_INDICADOR
             ]
-            self.client.post("/", {
+            self.client.post("/desempenho/", {
                 "modo": "indicador", "cliente": "TIM",
                 "metrica": "custo_por_mil_alcancados", "arquivos": arquivos})
-            r = self.client.post("/revisao/", {
+            r = self.client.post("/desempenho/revisao/", {
                 "cliente": "TIM", "metrica": "custo_por_mil_alcancados"})
             self.assertEqual(r["Content-Type"], "application/pdf")
             texto = _texto_pdf(_bytes_pdf(r))
@@ -2362,13 +2362,13 @@ class SelecaoDeCampanhasTest(TestCase):
                     for nome, campanhas in (contas or self.CONTAS)]
         post = {"modo": modo, "cliente": "TIM Brasil", "arquivos": arquivos}
         post.update(extra)
-        return self.client.post("/", post)
+        return self.client.post("/desempenho/", post)
 
     def _aplicar(self, chaves, **extra):
         post = {"cliente": "TIM Brasil", "aplicar_campanhas": "1",
                 "campanhas": chaves}
         post.update(extra)
-        return self.client.post("/revisao/", post)
+        return self.client.post("/desempenho/revisao/", post)
 
     def _sessao(self):
         return self.client.session["relatorio_apex"]
@@ -2415,7 +2415,7 @@ class SelecaoDeCampanhasTest(TestCase):
     # ---- consolidado -------------------------------------------------
     def test_a_tela_lista_os_grupos_com_as_campanhas_dentro(self):
         self._upload()
-        html = self.client.get("/revisao/").content.decode()
+        html = self.client.get("/desempenho/revisao/").content.decode()
         self.assertIn("Campanhas incluídas", html)
         self.assertIn(self.CELULAR, html)
         self.assertIn(self.ULTRA, html)
@@ -2427,7 +2427,7 @@ class SelecaoDeCampanhasTest(TestCase):
         # Sem escolha a fazer, a caixa marcada sozinha seria ruído
         self._upload(contas=[(nome, [c for c in campanhas if "ULTRA" not in c["nome"]])
                              for nome, campanhas in self.CONTAS])
-        html = self.client.get("/revisao/").content.decode()
+        html = self.client.get("/desempenho/revisao/").content.decode()
         self.assertNotIn("Campanhas incluídas", html)
         self.assertNotIn('name="aplicar_campanhas"', html)
 
@@ -2507,7 +2507,7 @@ class SelecaoDeCampanhasTest(TestCase):
     def test_o_pdf_sai_com_a_selecao_aplicada(self):
         self._upload()
         self._aplicar([self.ULTRA])
-        r = self.client.post("/revisao/", {"cliente": "TIM Brasil",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil",
                                            "periodo": "01/07/2026 a 15/07/2026",
                                            "analise": "Texto."})
         texto = _texto_pdf(_bytes_pdf(r))
@@ -2522,7 +2522,7 @@ class SelecaoDeCampanhasTest(TestCase):
         self._aplicar([self.ULTRA])
         contas = self._sessao()["contas"]
         self.assertEqual([c["nome"] for c in contas], ["centro", "norte"])
-        r = self.client.post("/revisao/", {"cliente": "TIM Brasil"})
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil"})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("R$ 40,00", texto)     # centro só com a ultra
         self.assertIn("2 contas", texto)
@@ -2551,7 +2551,7 @@ class SelecaoDeCampanhasTest(TestCase):
 
     def test_indicador_lista_os_grupos_e_oferece_o_botao(self):
         self._upload_indicador()
-        html = self.client.get("/revisao/").content.decode()
+        html = self.client.get("/desempenho/revisao/").content.decode()
         self.assertIn("Campanhas incluídas", html)
         self.assertIn(self.CELULAR, html)
         self.assertIn(self.ULTRA, html)
@@ -2581,7 +2581,7 @@ class SelecaoDeCampanhasTest(TestCase):
     def test_indicador_o_pdf_sai_com_a_selecao_aplicada(self):
         self._upload_indicador(metrica="investimento_total")
         self._aplicar([self.ULTRA], metrica="investimento_total")
-        r = self.client.post("/revisao/", {"cliente": "TIM Brasil",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil",
                                            "metrica": "investimento_total"})
         texto = _texto_pdf(_bytes_pdf(r))
         self.assertIn("R$ 50,00", texto)     # só a ultra: 40 + 10
@@ -2593,12 +2593,12 @@ class SelecaoDeCampanhasTest(TestCase):
     # mesmo dos outros modos, sobre um anexo em vez de vários.
     def _upload_unico(self, campanhas=None):
         arquivo = _arquivo("centro.xlsx", campanhas or self.CONTAS[0][1])
-        return self.client.post("/", {"modo": "unico", "cliente": "TIM Brasil",
+        return self.client.post("/desempenho/", {"modo": "unico", "cliente": "TIM Brasil",
                                       "arquivos": [arquivo]})
 
     def test_unico_lista_os_grupos_do_anexo(self):
         self._upload_unico()
-        html = self.client.get("/revisao/").content.decode()
+        html = self.client.get("/desempenho/revisao/").content.decode()
         self.assertIn("Campanhas incluídas", html)
         self.assertIn(self.CELULAR, html)
         self.assertIn(self.ULTRA, html)
@@ -2608,7 +2608,7 @@ class SelecaoDeCampanhasTest(TestCase):
 
     def test_unico_com_um_grupo_so_nao_abre_a_selecao(self):
         self._upload_unico([c for c in self.CONTAS[0][1] if "ULTRA" not in c["nome"]])
-        html = self.client.get("/revisao/").content.decode()
+        html = self.client.get("/desempenho/revisao/").content.decode()
         self.assertNotIn("Campanhas incluídas", html)
         self.assertNotIn('name="aplicar_campanhas"', html)
 
@@ -2674,7 +2674,7 @@ class SelecaoDeCampanhasTest(TestCase):
     def test_unico_o_pdf_sai_com_a_selecao_aplicada(self):
         self._upload_unico()
         self._aplicar([self.ULTRA])
-        r = self.client.post("/revisao/", {"cliente": "TIM Brasil",
+        r = self.client.post("/desempenho/revisao/", {"cliente": "TIM Brasil",
                                            "periodo": "01/07/2026 a 15/07/2026",
                                            "analise": "Texto."})
         texto = _texto_pdf(_bytes_pdf(r))
@@ -2853,9 +2853,37 @@ class ArquivoEnvTest(SimpleTestCase):
                          - variaveis(".env.example"), set())
 
 
+class CabecalhoTest(TestCase):
+    """O par logo+marca é o caminho de volta à escolha de frente.
+
+    Vale para as duas frentes porque o cabeçalho mora no `base.html` — se o
+    link sair de lá, sai de todas as telas de uma vez.
+    """
+
+    def test_o_logo_leva_a_home_em_todas_as_telas(self):
+        for url in ("/", "/desempenho/", "/verba/"):
+            with self.subTest(url=url):
+                html = self.client.get(url).content.decode()
+                self.assertIn('<a class="marca-link" href="/"', html)
+
+    def test_o_link_envolve_o_logo_e_a_marca(self):
+        # Um alvo só: clicar em qualquer um dos dois volta. Se a âncora
+        # fechasse antes da marca, metade do gesto não funcionaria.
+        html = self.client.get("/desempenho/").content.decode()
+        trecho = html.split('<a class="marca-link"')[1].split("</a>")[0]
+        self.assertIn("logo_apex.png", trecho)
+        self.assertIn(">Apex<".replace("Apex", "pex"), trecho)
+
+    def test_o_link_nao_fica_dentro_do_formulario(self):
+        # Âncora dentro do <form> não é erro de HTML, mas o cabeçalho é
+        # externo por construção — e é isso que mantém o link inofensivo.
+        html = self.client.get("/desempenho/").content.decode()
+        self.assertLess(html.index('class="marca-link"'), html.index("<form"))
+
+
 class SuperficieExpostaTest(TestCase):
     """
-    A aplicação publica duas rotas, e nada mais.
+    A aplicação publica cinco rotas, e nada mais.
 
     O `/admin` do projeto recém-criado sobreviveu até aqui sem ter o que
     administrar — não existe um único modelo. Na prática era um segundo
@@ -2869,7 +2897,8 @@ class SuperficieExpostaTest(TestCase):
     def test_as_rotas_publicadas_sao_so_estas(self):
         from apex_reports.urls import urlpatterns
         self.assertEqual([str(p.pattern) for p in urlpatterns],
-                         ["", "revisao/"])
+                         ["", "desempenho/", "desempenho/revisao/",
+                          "verba/", "verba/fechamento/"])
 
     def test_so_ficam_instalados_os_apps_usados(self):
         """`auth`, `contenttypes` e `messages` vieram do `startproject` e nunca

@@ -165,11 +165,16 @@ def filtrar_campanhas(registros, chaves):
             if chave_grupo_campanha(r.get("campanha")) in escolhidos]
 
 
-def _mapear_colunas(header):
-    """Retorna {chave: índice}. Prioriza match exato; depois 'contém', respeitando exclusões."""
+def _mapear_colunas(header, colunas=None):
+    """Retorna {chave: índice}. Prioriza match exato; depois 'contém', respeitando exclusões.
+
+    `colunas` troca o mapa de palavras-chave — é o que deixa o leitor do preset
+    VERBA (`parser_verba.py`) reusar esta busca sem duplicá-la. Sem o argumento,
+    o mapa é o do export de desempenho, como sempre foi.
+    """
     normalizados = [_norm(h) for h in header]
     mapa = {}
-    for chave, (alternativas, proibidos) in _COLUNAS.items():
+    for chave, (alternativas, proibidos) in (colunas or _COLUNAS).items():
         # 1º passe: nome exatamente igual a uma keyword
         for i, nome in enumerate(normalizados):
             if any(len(alt) == 1 and nome == alt[0] for alt in alternativas):

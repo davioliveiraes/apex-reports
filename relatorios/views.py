@@ -21,6 +21,16 @@ from .parser_xlsx import (consolidar, consolidar_grupo, filtrar_campanhas,
 SESSION_KEY = "relatorio_apex"
 
 
+def home(request):
+    """Raiz — a escolha entre Análise de Desempenho e Análise de Verba.
+
+    Tela sem estado e sem formulário: só os dois caminhos. Existe porque as
+    duas frentes pedem exports diferentes do Gerenciador, e um painel único
+    convidaria a enviar a planilha errada.
+    """
+    return render(request, "relatorios/home.html")
+
+
 def index(request):
     """Painel — escolha do modo + upload de 1 a 20 .xlsx.
 

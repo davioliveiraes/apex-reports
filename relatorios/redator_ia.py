@@ -22,10 +22,12 @@ Três garantias, nesta ordem:
 
 import json
 import re
+import unicodedata
 
 from django.conf import settings
 from django.utils.html import escape
 
+from . import fechamento_verba as _verba
 from .analysis import templates as _templates
 
 # Tempo que o operador espera olhando a tela. Acima disso é melhor devolver o
@@ -791,3 +793,149 @@ def _parse_leituras_funil(texto):
         if isinstance(valor, str) and 0 < len(valor.strip()) <= LIMITE_LEITURA_FUNIL:
             saida[chave] = valor.strip()
     return saida
+
+
+# ----------------------------------------------------------------------
+# Fechamento de verba — reescrita da mensagem
+# ----------------------------------------------------------------------
+# Terceira chamada do projeto, e a mais barata das três: o texto tem dez
+# linhas e todos os números já vêm calculados. O modelo aqui só redige.
+#
+# A garantia central desta chamada é o que ela NÃO envia. O payload leva os
+# valores prontos do `fechamento_verba.calcular` e nada mais — nenhuma linha
+# de planilha, nenhuma métrica de desempenho. A proibição da seção 6 ("não
+# citar CPM, CTR, CPA, resultados") deixa de depender de o modelo obedecer:
+# ele não recebe esses números, então não tem o que citar.
+ESFORCO_VERBA = "low"
+
+# Dez linhas de texto. O teto alto é pelo mesmo motivo de MAX_TOKENS: nos
+# modelos de raciocínio ele cobre também os tokens gastos antes da primeira
+# letra, e estourá-lo devolve resposta vazia, não cortada.
+MAX_TOKENS_VERBA = 3000
+
+LINHAS_MAXIMAS_VERBA = 10
+
+# Métricas de desempenho que a seção 6 proíbe na mensagem de verba. Aparecendo
+# qualquer uma, a resposta é recusada e a mensagem do motor fica no lugar —
+# não vale "limpar" o texto do modelo: se ele citou o que não recebeu, a frase
+# inteira é invenção.
+TERMOS_DE_PERFORMANCE = (
+    "cpm", "ctr", "cpa", "cpc", "roas", "thruplay",
+    "impress", "alcance", "frequenc", "clique", "conversao", "conversa",
+    "lead", "resultado", "engajamento", "custo por",
+)
+
+# Texto do operador (seções 6 e 7 do prompt de Fechamento de Verba), na íntegra
+# e sem edição nossa — mesma regra do PROMPT_OPERADOR: mexer aqui é mexer no
+# produto.
+PROMPT_VERBA = """Você é um analista de tráfego pago conferindo orçamento, não performance.
+
+Sua função é reescrever a mensagem de fechamento de verba abaixo, mantendo exatamente os mesmos números.
+
+## 6. REGRAS DA MENSAGEM
+
+**Obrigatório:** PT-BR direto · negrito com asterisco simples · máximo 10 linhas · terminar com pergunta fechada · máximo 1 emoji.
+
+**Proibido:** ação operacional (pausar, duplicar, ativar) · nomenclatura interna ou nome de campanha · métrica de performance (CPM, CTR, CPA, resultados) · prometer resultado · justificar desvio com causa não confirmada · "aparentemente", "acredito que", "talvez".
+
+## 7. SAÍDA
+
+Devolva SOMENTE a mensagem, no formato:
+
+```
+Bom dia! Passando o fechamento de verba pra confirmar 👇
+
+*Contratado:* R$ [contratado_mensal]/mês
+*Configurado:* R$ [configurado_diario]/dia
+*Gasto até [DD/MM]:* R$ [gasto]
+*Projeção de fechamento:* R$ [projecao_fechamento]
+
+[frase de status]
+[pergunta fechada]
+```
+"""
+
+_REGRAS_DE_ENTRADA_VERBA = """
+## O QUE VOCÊ RECEBE
+
+Um JSON com os valores já calculados e já formatados, mais a frase de status e
+a pergunta que encerram a mensagem.
+
+## REGRAS DA ENTRADA
+
+- Copie os valores como vieram. Não recalcule, não arredonde, não converta.
+- Mantenha o sentido da frase de status: ela sai de uma tabela de decisão e
+  trocá-la muda o que o cliente entende do mês.
+- Termine com uma pergunta fechada — a que veio serve; outra equivalente também.
+- Não escreva nada além da mensagem: sem título, sem comentário, sem cerca de
+  código.
+"""
+
+
+def _payload_verba(calc, cliente=""):
+    """O fechamento como o modelo o recebe: números prontos e nada mais."""
+    return {
+        "cliente": cliente,
+        "mes_analisado": calc["mes"],
+        "contratado_mensal": _verba.reais(calc["contratado_mensal"]),
+        "configurado_diario": _verba.reais(calc["configurado_diario"]),
+        "gasto_ate": f"{calc['ontem']:%d/%m}",
+        "gasto": _verba.reais(calc["gasto"]),
+        "projecao_fechamento": _verba.reais(calc["projecao_fechamento"]),
+        "frase_de_status": _verba.frase_status(calc),
+        "pergunta_fechada": _verba.PERGUNTAS[calc["status"]],
+    }
+
+
+def gerar_mensagem_verba(calc, cliente=""):
+    """Outra redação da mesma mensagem de fechamento.
+
+    Levanta `ErroDeIA` — a view mostra o aviso e mantém o texto do motor, que
+    nunca deixa de existir.
+    """
+    if not disponivel():
+        raise ErroDeIA("Nenhuma chave de API configurada: defina OPENAI_API_KEY "
+                       "no ambiente (em produção, /etc/apex-reports/env).",
+                       "chave")
+    bruto = _chamar(
+        [{"role": "system", "content": PROMPT_VERBA + _REGRAS_DE_ENTRADA_VERBA},
+         {"role": "user", "content": json.dumps(_payload_verba(calc, cliente),
+                                                ensure_ascii=False, indent=1)}],
+        max_tokens=MAX_TOKENS_VERBA, esforco=ESFORCO_VERBA)
+    return _validar_mensagem_verba(bruto)
+
+
+def _validar_mensagem_verba(texto):
+    """A resposta, ou `ErroDeIA` explicando por que ela foi recusada.
+
+    Recusar aqui não custa relatório nenhum: a mensagem determinística está na
+    tela desde antes do clique, e continua depois dele.
+    """
+    limpo = _CERCA_JSON.sub("", (texto or "").strip()).strip()
+    if not limpo:
+        raise ErroDeIA("O modelo devolveu uma mensagem vazia.", "formato")
+
+    linhas = [l for l in limpo.splitlines() if l.strip()]
+    if len(linhas) > LINHAS_MAXIMAS_VERBA:
+        raise ErroDeIA(
+            f"A mensagem veio com {len(linhas)} linhas e o limite é "
+            f"{LINHAS_MAXIMAS_VERBA}. Mantida a mensagem do cálculo.", "formato")
+
+    normal = _sem_acento(limpo)
+    citados = sorted({t for t in TERMOS_DE_PERFORMANCE if t in normal})
+    if citados:
+        raise ErroDeIA(
+            "A mensagem citou métrica de performance (" + ", ".join(citados)
+            + "), que o fechamento de verba não usa. Mantida a mensagem do "
+              "cálculo.", "formato")
+
+    if not limpo.rstrip().endswith("?"):
+        raise ErroDeIA("A mensagem não terminou com pergunta fechada. "
+                       "Mantida a mensagem do cálculo.", "formato")
+    return limpo
+
+
+def _sem_acento(texto):
+    baixo = texto.lower()
+    return "".join(c for c in unicodedata.normalize("NFD", baixo)
+                   if unicodedata.category(c) != "Mn")

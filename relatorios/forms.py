@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
+from datetime import date
+
 from django import forms
 
 from . import metricas
+from .parser_xlsx import _to_float
 
 
 class MultipleFileInput(forms.ClearableFileInput):
@@ -224,3 +227,105 @@ class RevisaoIndicadorForm(_ComCampanhas, _ComUnidades):
         label="Métrica comparada", choices=metricas.opcoes_agrupadas,
         help_text="Trocar a métrica aqui regera o PDF sem reenviar os anexos.",
     )
+
+
+# ----------------------------------------------------------------------
+# Análise de Verba
+# ----------------------------------------------------------------------
+class _BaseInterna(forms.Form):
+    """Os três campos que nenhuma planilha traz.
+
+    O Gerenciador sabe o que foi configurado e o que foi gasto; ele não sabe o
+    que foi **contratado** — isso é combinado fora dele. Sem esses campos o
+    fechamento não tem contra o que comparar, e é por isso que eles são
+    digitados a cada envio em vez de lidos.
+    """
+
+    MENSAL = "mensal"
+    DIARIO = "diario"
+    PERIODICIDADES = [(MENSAL, "por mês"), (DIARIO, "por dia")]
+
+    cliente = forms.CharField(
+        label="Cliente / unidade", max_length=120,
+        widget=forms.TextInput(attrs={"placeholder": "Ex.: Rei do Celular"}),
+    )
+    # CharField, e não DecimalField, porque o valor é digitado à mão em pt-BR:
+    # o DecimalField recusa "1.000,00" (só entende o ponto como decimal) e
+    # engasga num "R$" colado. `_to_float` é o mesmo conversor que lê dinheiro
+    # das planilhas — uma implementação só para os dois caminhos.
+    orcamento = forms.CharField(
+        label="Orçamento contratado", max_length=20,
+        widget=forms.TextInput(attrs={"placeholder": "Ex.: 990,00",
+                                      "inputmode": "decimal"}),
+        help_text="O valor combinado com o cliente, não o configurado no Meta.",
+    )
+    periodicidade = forms.ChoiceField(
+        label="Esse valor é", choices=PERIODICIDADES, initial=MENSAL,
+        widget=forms.RadioSelect,
+        help_text="R$ 990/mês e R$ 33/dia são o mesmo contrato — o app converte.",
+    )
+    # `format` explícito pelo mesmo motivo da listagem: o input nativo de data
+    # só entende ISO, e a locale pt-BR renderizaria o inicial como dd/mm/aaaa.
+    referencia = forms.DateField(
+        label="Data de hoje", initial=date.today,
+        widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+        help_text="Define o mês analisado e quantos dias já encerraram.",
+    )
+
+    def clean_orcamento(self):
+        valor = _to_float(self.cleaned_data["orcamento"])
+        if valor is None:
+            raise forms.ValidationError(
+                "Informe o valor em reais — ex.: 990,00 ou 1.000,00.")
+        if valor <= 0:
+            raise forms.ValidationError("O orçamento contratado precisa ser "
+                                        "maior que zero.")
+        return valor
+
+    def contratado(self):
+        """`(mensal, diário)` — só um dos dois vem preenchido; o outro é
+        derivado em `fechamento_verba.calcular`, que sabe os dias do mês."""
+        valor = self.cleaned_data["orcamento"]
+        if self.cleaned_data["periodicidade"] == self.MENSAL:
+            return valor, None
+        return None, valor
+
+
+class VerbaUploadForm(_BaseInterna):
+    """Tela 01 da verba: a base interna + os exports do preset VERBA."""
+
+    MAX_ARQUIVOS = 2
+
+    arquivos = MultipleFileField(
+        label="Exports do preset VERBA (.xlsx)",
+        widget=MultipleFileInput(attrs={"accept": ".xlsx", "multiple": True}),
+        help_text="Um por nível: campanha e conjunto de anúncios. Conta 100% "
+                  "CBO fecha só com o de campanha.",
+    )
+
+    def clean_arquivos(self):
+        arquivos = self.cleaned_data["arquivos"]
+        if len(arquivos) > self.MAX_ARQUIVOS:
+            raise forms.ValidationError(
+                "O fechamento de verba usa no máximo 2 arquivos — um de "
+                f"campanha e um de conjunto de anúncios (você enviou "
+                f"{len(arquivos)})."
+            )
+        for f in arquivos:
+            if not f.name.lower().endswith(".xlsx"):
+                raise forms.ValidationError(
+                    f'"{f.name}" não é um .xlsx — envie apenas arquivos '
+                    "exportados do Gerenciador de Anúncios."
+                )
+            if f.size > 10 * 1024 * 1024:
+                raise forms.ValidationError(f'"{f.name}" está acima de 10 MB.')
+        return arquivos
+
+
+class VerbaBaseForm(_BaseInterna):
+    """Tela 02 da verba: a mesma base interna, sem os anexos.
+
+    Corrigir o contratado ou a data de referência refaz todos os números sem
+    reenviar planilha — as linhas dos dois exports ficam na sessão, no mesmo
+    espírito do *Aplicar seleção* dos relatórios de desempenho.
+    """
