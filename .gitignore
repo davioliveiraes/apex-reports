@@ -6,6 +6,10 @@ claude_resume.txt
 # PDFs de exemplo ignorados; a pasta de imagens (logo) é versionada
 docs/*
 !docs/img/
+# O guia de coleta do preset VERBA é documentação de produto, não rascunho: o
+# erro do parser manda o operador lê-lo, e um checkout sem ele deixa a
+# mensagem apontando para o nada.
+!docs/GUIA_VERBA.md
 # Redundante com a regra acima, e de propósito: o contexto do projeto não vai
 # para o repositório nem que `docs/*` seja estreitado um dia.
 docs/CONTEXTO.md
@@ -15,3 +19,12 @@ staticfiles/
 # `.local.json`: um `.claude/settings.json` de projeto, se um dia existir, é
 # config compartilhada e deve ser versionada.
 .claude/settings.local.json
+
+# Skills instaladas por `npx skills add`. São duas entradas para um conteúdo
+# só: os arquivos moram em `.agents/skills/` (formato que Codex, Cursor e Gemini
+# CLI também leem) e `.claude/skills/` guarda um symlink para lá. Ferramenta de
+# trabalho local, não código do produto — e o symlink não sobrevive a um
+# checkout no Windows sem `core.symlinks`, então versioná-lo só criaria lixo.
+# Reinstalar é um comando.
+.agents/
+.claude/skills/
