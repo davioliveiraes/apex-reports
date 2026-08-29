@@ -1,90 +1,118 @@
 {% extends "relatorios/base.html" %}
 {% block title %}Apex Acelera | Reports{% endblock %}
-{% block topo_sub %}Três frentes{% endblock %}
-{% comment %}Sem etapas: escolher a frente não é etapa de fluxo nenhum.{% endcomment %}
+{% block topo_sub %}Gestão de Tráfego{% endblock %}
+{% comment %}Sem etapas: escolher a análise não é etapa de fluxo nenhum.{% endcomment %}
 {% block etapas %}{% endblock %}
 
 {% comment %}
 Coluna única e centrada, sem o aside das telas de trabalho. A home não tem
-ação primária para fixar na lateral, e o trio de cartões é a página inteira —
-com o grid de duas colunas ela ficava grudada no topo com a tela vazia abaixo.
+ação primária para fixar na lateral, e a grade de cartões é a página inteira —
+com o grid de duas colunas do `.miolo` ela ficava grudada no topo com a tela
+vazia abaixo.
 
-A pergunta que cada frente responde vem antes do nome dela porque é assim que
-a escolha acontece: o operador chega com uma dúvida, não com um substantivo.
+Grade 2×2, e não uma pilha: são quatro análises do mesmo nível, e uma lista
+vertical sugere ordem de importância onde só há ordem de leitura. A chamada em
+vermelho vem antes do nome porque é assim que a escolha acontece — o operador
+chega com uma dúvida ou com um objetivo, não com um substantivo.
 
-A ordem é a da frequência de uso, não a da ordem em que as frentes foram
-construídas: a leitura do período é o que se faz toda semana, o PDF fecha o
-mês e a verba se confere quando o número desconfia. O primeiro cartão é o que
-mais recebe clique.
+A hierarquia que a tela precisa mostrar é uma só: **um cartão gera PDF, os
+outros três geram texto para o cliente.** Ela sai do par entrada→saída no rodapé
+de cada cartão, que é o que de fato distingue as quatro.
 
-Cada cartão tem três linhas e nada mais: a pergunta, o nome com o par
-entrada→saída ao lado, e a descrição. A página inteira cabe numa tela sem
-rolagem, medido — é uma tela de ESCOLHA, e rolar para ver a terceira opção
-esconde justamente o que se veio comparar.
+Os cartões têm altura igual porque o rodapé é empurrado para baixo com
+`margin-top:auto` — sem isso, descrições de tamanhos diferentes deixariam os
+quatro fluxos em quatro alturas, e o olho lê isso como desalinho.
 {% endcomment %}
 {% block miolo %}
 <div class="miolo-home">
   <div class="home-caixa">
     <h1>O que você vai analisar?</h1>
-    <p class="sub">As três frentes leem exports do Gerenciador de Anúncios.
-      Duas delas leem o mesmo arquivo e entregam coisas diferentes; a terceira
-      pede um export próprio.</p>
+    <p class="sub">Escolha a análise de acordo com o objetivo. Gere o relatório
+      completo em PDF ou faça leituras específicas para compartilhar com o
+      cliente.</p>
 
     <div class="frentes">
-      <a class="frente" href="{% url 'leitura' %}">
-        <span class="frente-pergunta">“O que eu mando no grupo agora?”</span>
+      <a class="frente" href="{% url 'index' %}">
+        <span class="frente-chamada">Visão completa do período</span>
         <span class="frente-nome">
-          <strong>Leitura Rápida</strong>
-          <span class="frente-fluxo">
-            <span>export de desempenho</span><i>→</i><span>mensagem de WhatsApp</span>
-          </span>
+          <strong>Análise Geral</strong>
           <svg class="frente-seta" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                aria-hidden="true">
             <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
           </svg>
         </span>
-        <span class="frente-desc">O mesmo export da análise de desempenho, uma
-          conta, e a leitura do período escrita para o cliente: classificação,
-          três parágrafos e a pergunta que cruza os contatos com as vendas.
-          Sem PDF — o que sai daqui é texto para colar.</span>
+        <span class="frente-desc">Análise completa das principais métricas da
+          operação, com funil de vendas, desempenho por campanha e leitura do
+          período em um relatório PDF pronto para o cliente.</span>
+        <span class="frente-fluxo">
+          <span>export de desempenho</span><i>→</i><span>PDF para o cliente</span>
+        </span>
       </a>
 
-      <a class="frente" href="{% url 'index' %}">
-        <span class="frente-pergunta">“Como foi o mês?”</span>
+      {% comment %}
+      Mesma tela que a home chamava de "Leitura Rápida" até 29/08/2026, e a
+      mesma rota: o que mudou foi o nome e o lugar. O atalho separado saiu
+      junto — duas portas para a mesma página confundem mais do que agilizam.
+
+      O fluxo diz "export de desempenho", e não "preset DESEMPENHO": essa
+      predefinição não existe no Gerenciador, e o chip é onde o operador lê o
+      que precisa trazer. Rótulo simétrico que manda procurar um preset
+      inexistente custa uma volta ao Gerenciador.
+      {% endcomment %}
+      <a class="frente" href="{% url 'leitura' %}">
+        <span class="frente-chamada">Como está a performance?</span>
         <span class="frente-nome">
           <strong>Análise de Desempenho</strong>
-          <span class="frente-fluxo">
-            <span>export de desempenho</span><i>→</i><span>PDF para o cliente</span>
-          </span>
           <svg class="frente-seta" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                aria-hidden="true">
             <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
           </svg>
         </span>
-        <span class="frente-desc">Como as campanhas entregaram: funil de vendas,
-          desempenho por campanha, comparação entre unidades e a análise do
-          período. Quatro modos de relatório, de uma conta a vinte.</span>
+        <span class="frente-desc">Leitura objetiva das principais métricas de
+          desempenho da campanha, com diagnóstico do período e texto pronto
+          para enviar ao cliente. Sem PDF.</span>
+        <span class="frente-fluxo">
+          <span>export de desempenho</span><i>→</i><span>mensagem para o cliente</span>
+        </span>
       </a>
 
       <a class="frente" href="{% url 'verba' %}">
-        <span class="frente-pergunta">“Vai fechar no combinado?”</span>
+        <span class="frente-chamada">Vai fechar no combinado?</span>
         <span class="frente-nome">
           <strong>Análise de Verba</strong>
-          <span class="frente-fluxo">
-            <span>preset VERBA</span><i>→</i><span>mensagem de WhatsApp</span>
-          </span>
           <svg class="frente-seta" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                aria-hidden="true">
             <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
           </svg>
         </span>
-        <span class="frente-desc">Fechamento de verba: o contratado contra o
-          configurado e o já gasto, com projeção de fechamento e a mensagem
-          pronta para o grupo do cliente. Não lê métrica de desempenho.</span>
+        <span class="frente-desc">Análise do orçamento contratado, configurado
+          e já utilizado, com projeção de fechamento e texto pronto para
+          enviar ao cliente.</span>
+        <span class="frente-fluxo">
+          <span>preset VERBA</span><i>→</i><span>mensagem para o cliente</span>
+        </span>
       </a>
+
+      {% comment %}
+      Não é uma âncora: sem `href` não há navegação, e o cartão não vira um
+      link que leva a lugar nenhum. O selo "Em breve" ocupa o lugar da seta —
+      é ela que promete que há algo do outro lado.
+      {% endcomment %}
+      <div class="frente em-breve" aria-disabled="true">
+        <span class="frente-chamada">Onde está o gargalo?</span>
+        <span class="frente-nome">
+          <strong>Análise de Rastreamento</strong>
+          <span class="frente-selo">Em breve</span>
+        </span>
+        <span class="frente-desc">Diagnóstico do caminho entre entrega, clique
+          e conversão para identificar possíveis gargalos da campanha.</span>
+        <span class="frente-fluxo">
+          <span>preset RASTREAMENTO</span><i>→</i><span>mensagem para o cliente</span>
+        </span>
+      </div>
     </div>
   </div>
 </div>

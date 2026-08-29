@@ -22,11 +22,12 @@ SESSION_KEY = "relatorio_apex"
 
 
 def home(request):
-    """Raiz — a escolha entre Análise de Desempenho e Análise de Verba.
+    """Raiz — a escolha da análise, numa grade de quatro.
 
-    Tela sem estado e sem formulário: só os dois caminhos. Existe porque as
-    duas frentes pedem exports diferentes do Gerenciador, e um painel único
-    convidaria a enviar a planilha errada.
+    Tela sem estado e sem formulário: só os caminhos. Existe porque as frentes
+    pedem exports diferentes do Gerenciador e devolvem coisas diferentes — um
+    PDF ou um texto para o cliente —, e um painel único convidaria a enviar a
+    planilha errada.
     """
     return render(request, "relatorios/home.html")
 

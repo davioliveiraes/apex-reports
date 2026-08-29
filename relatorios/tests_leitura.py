@@ -499,21 +499,73 @@ class FluxoLeituraTest(TestCase):
         self.assertNotIn("01AGO26", html)
 
 
-class HomeTresFrentesTest(TestCase):
+class HomeTest(TestCase):
+    """A grade 2×2 e o que ela promete.
 
-    def test_a_home_oferece_as_tres_frentes(self):
-        html = self.client.get("/").content.decode()
+    Três das quatro análises têm rota; a quarta é interface. Um cartão que
+    parece clicável e não leva a lugar nenhum é pior do que um cartão que
+    declara não estar pronto.
+    """
+
+    def _html(self):
+        return self.client.get("/").content.decode()
+
+    def test_as_tres_analises_prontas_apontam_para_as_rotas_certas(self):
+        html = self._html()
         for destino in ("/desempenho/", "/leitura/", "/verba/"):
             with self.subTest(destino=destino):
-                self.assertIn(f'href="{destino}"', html)
+                self.assertIn(f'class="frente" href="{destino}"', html)
 
-    def test_a_ordem_dos_cartoes_e_a_da_frequencia_de_uso(self):
-        """Leitura toda semana, PDF no fim do mês, verba quando o número
-        desconfia. O primeiro cartão é o que mais recebe clique."""
-        html = self.client.get("/").content.decode()
-        posicoes = [html.index(f'class="frente" href="{d}"')
-                    for d in ("/leitura/", "/desempenho/", "/verba/")]
+    def test_a_ordem_da_grade(self):
+        """Linha de cima: a completa e a de desempenho. Linha de baixo: verba
+        e rastreamento. É a ordem que a grade 2×2 desenha."""
+        html = self._html()
+        posicoes = [html.index(m) for m in (
+            "Análise Geral", "Análise de Desempenho",
+            "Análise de Verba", "Análise de Rastreamento")]
         self.assertEqual(posicoes, sorted(posicoes))
+
+    def test_o_pdf_continua_na_analise_geral(self):
+        """O nome mudou; a rota que gera o relatório é a mesma."""
+        html = self._html()
+        cartao = html.split('class="frente" href="/desempenho/"')[1].split("</a>")[0]
+        self.assertIn("Análise Geral", cartao)
+        self.assertIn("PDF para o cliente", cartao)
+        self.assertNotIn("Análise de Desempenho", cartao)
+
+    def test_so_a_analise_geral_promete_pdf(self):
+        """A hierarquia da tela é uma só: um cartão devolve PDF, os outros
+        três devolvem texto para o cliente."""
+        html = self._html()
+        self.assertEqual(html.count("PDF para o cliente"), 1)
+        self.assertEqual(html.count("mensagem para o cliente"), 3)
+
+    def test_o_rastreamento_nao_e_clicavel(self):
+        html = self._html()
+        cartao = html.split('class="frente em-breve"')[1].split("</div>")[0]
+        self.assertIn("Análise de Rastreamento", cartao)
+        self.assertIn("Em breve", cartao)
+        # Sem href e sem âncora: não há navegação para lugar nenhum.
+        self.assertNotIn("href", cartao)
+        self.assertNotIn("<a ", cartao)
+        self.assertIn('aria-disabled="true"', html)
+
+    def test_o_rastreamento_nao_publicou_rota(self):
+        self.assertEqual(self.client.get("/rastreamento/").status_code, 404)
+
+    def test_a_leitura_rapida_virou_a_analise_de_desempenho(self):
+        """A funcionalidade não saiu: mudou de nome e de lugar. O atalho
+        separado saiu junto — duas portas para a mesma tela confundem mais do
+        que agilizam."""
+        html = self._html()
+        self.assertNotIn("Leitura Rápida", html)
+        self.assertIn('class="frente" href="/leitura/"', html)
+        self.assertEqual(self.client.get("/leitura/").status_code, 200)
+
+    def test_o_cabecalho_nao_conta_mais_as_frentes(self):
+        html = self._html()
+        self.assertNotIn("Três frentes", html)
+        self.assertIn("Gestão de Tráfego", html)
 
     def test_o_logo_leva_a_home_tambem_na_leitura(self):
         html = self.client.get("/leitura/").content.decode()

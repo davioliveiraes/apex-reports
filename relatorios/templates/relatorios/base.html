@@ -427,38 +427,59 @@
      tela. Aqui é uma coluna centrada, e a escolha ocupa o meio do campo. */
   .miolo-home{flex:1;overflow:auto;display:flex;flex-direction:column;
     justify-content:center;padding:clamp(20px,4vh,44px) 32px}
-  .home-caixa{width:100%;max-width:780px;margin:0 auto}
-  .frentes{display:flex;flex-direction:column;gap:12px;margin:20px 0 0}
-  .frente{position:relative;display:block;padding:17px 22px;background:var(--riser);
-    border:1px solid var(--edge);border-radius:var(--r-lg);text-decoration:none;
-    overflow:hidden;transition:border-color .16s,background .16s,transform .16s}
+  .home-caixa{width:100%;max-width:840px;margin:0 auto}
+  /* Grade 2×2, e não uma pilha: são quatro análises do mesmo nível, e uma
+     lista vertical sugere ordem de importância onde só há ordem de leitura.
+     A largura fica travada em 840px — a escolha ocupa o meio do campo, não a
+     tela inteira. */
+  .frentes{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0 0}
+  /* `flex` em coluna para o rodapé poder ser empurrado para baixo: sem isso,
+     descrições de tamanhos diferentes deixariam os quatro fluxos em quatro
+     alturas, e o olho lê isso como desalinho. */
+  .frente{position:relative;display:flex;flex-direction:column;padding:18px 20px;
+    background:var(--riser);border:1px solid var(--edge);
+    border-radius:var(--r-lg);text-decoration:none;overflow:hidden;
+    transition:border-color .16s,background .16s,transform .16s}
   .frente:hover{border-color:var(--apex);background:var(--apex-wash);
     transform:translateY(-2px);box-shadow:var(--sombra)}
   .frente::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
     background:var(--apex);opacity:0;transition:opacity .16s}
   .frente:hover::before{opacity:1}
-  /* A pergunta que a frente responde vem ANTES do nome dela: é assim que o
-     operador escolhe — ele chega com uma dúvida, não com um substantivo. */
-  .frente-pergunta{display:block;font:600 11px/1 var(--mono);letter-spacing:.1em;
-    text-transform:uppercase;color:var(--apex);margin-bottom:8px}
-  .frente-nome{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-  .frente-nome strong{font:800 21px/1.2 var(--sans);color:var(--bright);
+  /* A chamada vem ANTES do nome: é assim que a escolha acontece — o operador
+     chega com uma dúvida ou com um objetivo, não com um substantivo. */
+  .frente-chamada{display:block;font:600 11px/1.3 var(--mono);letter-spacing:.1em;
+    text-transform:uppercase;color:var(--apex);margin-bottom:9px}
+  .frente-nome{display:flex;align-items:center;gap:12px}
+  .frente-nome strong{font:800 19px/1.25 var(--sans);color:var(--bright);
     letter-spacing:-.02em}
-  .frente-seta{flex-shrink:0;width:20px;height:20px;
+  .frente-seta{flex-shrink:0;margin-left:auto;width:20px;height:20px;
     color:var(--faint);transition:color .16s,transform .16s}
   .frente:hover .frente-seta{color:var(--apex);transform:translateX(4px)}
-  .frente-desc{display:block;margin-top:8px;font:13.5px/1.6 var(--sans);
+  .frente-desc{display:block;margin:9px 0 16px;font:13.5px/1.6 var(--sans);
     color:var(--faint)}
-  /* Entrada → saída, o par que de fato distingue as frentes. Já foi um rodapé
-     com divisória; subiu para a linha do nome quando a home passou a ter três
-     cartões e o rodapé sozinho custava 70px por cartão — 210px, o suficiente
-     para empurrar a escolha para fora da tela num notebook. Aqui ele não
-     perde nada: continua sendo a legenda do nome, ao lado dele. */
-  .frente-fluxo{display:flex;align-items:center;gap:10px;margin-left:auto}
-  .frente-fluxo span{font:600 11px/1.4 var(--mono);color:var(--read);
+  /* Entrada → saída, o par que de fato distingue as quatro. É ele que mostra
+     a única hierarquia que importa na tela: um cartão devolve PDF, os outros
+     três devolvem texto para o cliente. `margin-top:auto` cola o rodapé no
+     fundo do cartão, alinhando os quatro na mesma linha. */
+  .frente-fluxo{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+    margin-top:auto;padding-top:13px;border-top:1px solid var(--edge)}
+  .frente-fluxo span{font:600 10.5px/1.4 var(--mono);color:var(--read);
     background:var(--sunken);border:1px solid var(--edge);
-    border-radius:var(--r-chip);padding:4px 9px}
+    border-radius:var(--r-chip);padding:4px 8px}
   .frente-fluxo i{font-style:normal;color:var(--apex);font-weight:700}
+  /* Frente ainda não construída. Recuada, não escondida: ela comunica o que
+     vem, e some do caminho de quem procura o que existe hoje. Não é âncora,
+     então não há navegação para impedir — o cursor padrão já diz isso. */
+  .frente.em-breve{background:var(--slab);border-style:dashed}
+  .frente.em-breve:hover{border-color:var(--edge);background:var(--slab);
+    transform:none;box-shadow:none}
+  .frente.em-breve:hover::before{opacity:0}
+  .frente.em-breve .frente-chamada{color:var(--faint)}
+  .frente.em-breve .frente-nome strong{color:var(--read)}
+  .frente-selo{margin-left:auto;flex-shrink:0;font:600 10px/1 var(--mono);
+    letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
+    background:var(--sunken);border:1px solid var(--edge-lift);
+    border-radius:var(--r-chip);padding:5px 9px}
 
   /* ==================================================================== */
   /* BLOCOS DE SAÍDA COPIÁVEIS (fechamento de verba)                      */
@@ -575,6 +596,13 @@
     135deg,rgba(216,35,42,.5) 0 3px,transparent 3px 6px);border:1px solid var(--edge-lift)}
   .amostra-alvo{background:var(--bright);width:2px!important;border-radius:1px}
 
+  /* Legenda que não é rodapé: instrução que precisa ser lida ANTES da ação
+     logo abaixo dela. Ganha a barra da marca à esquerda para não se perder
+     entre os outros parágrafos de apoio da tela. */
+  .legenda.destaque{margin:0 0 14px;padding:9px 0 9px 13px;color:var(--read);
+    border-left:2px solid var(--apex)}
+  .legenda.destaque b{color:var(--bright)}
+
   :focus-visible{outline:2px solid var(--apex);outline-offset:2px}
   code{font:12.5px/1.4 var(--mono);color:var(--read)}
 
@@ -595,10 +623,19 @@
      terceiro cartão para fora. É a única frente que se importa — as outras
      telas rolam como documento e sempre roleram. Limite medido: abaixo disto
      os 526px de conteúdo mais o padrão de respiro não cabem. */
+  /* Uma coluna só quando as duas não cabem mais — e aí a caixa encolhe junto.
+     Sem o teto, o cartão único ocuparia os 840px da caixa e viraria a faixa
+     larga que a grade 2×2 veio substituir. */
+  @media (max-width:860px){
+    .frentes{grid-template-columns:1fr}
+    .home-caixa{max-width:560px}
+  }
   @media (max-height:700px){
     .miolo-home{padding-top:16px;padding-bottom:16px}
-    .frentes{gap:10px;margin-top:14px}
-    .frente{padding:14px 20px}
+    .frentes{gap:11px;margin-top:14px}
+    .frente{padding:14px 18px}
+    .frente-desc{margin:8px 0 12px}
+    .frente-fluxo{padding-top:11px}
   }
   @media (max-width:720px){
     .campos{grid-template-columns:1fr}
@@ -608,9 +645,7 @@
     .trabalho{padding:20px 18px 32px}
     h1{font-size:22px}
     .kpis{grid-template-columns:1fr}
-    .frente-nome strong{font-size:18px}
-    .frente-fluxo{margin-left:0;width:100%;margin-top:12px;padding-top:11px;
-      border-top:1px solid var(--edge)}
+    .frente-nome strong{font-size:17px}
     /* Em 390px cabem logo, marca e os dois chips, mas sem folga: o rótulo da
        etapa sai e fica só o número, que é o que se lê de relance. Medido —
        `scrollWidth` continua igual à viewport nas duas versões; isto é
