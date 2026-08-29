@@ -843,16 +843,19 @@ Sua função é reescrever a mensagem de fechamento de verba abaixo, mantendo ex
 Devolva SOMENTE a mensagem, no formato:
 
 ```
-Bom dia! Passando o fechamento de verba pra confirmar 👇
+Passando o fechamento de verba pra confirmar 👇
 
-*Contratado:* R$ [contratado_mensal]/mês
+*Contratado:* R$ [contratado]/[unidade_do_contratado]
 *Configurado:* R$ [configurado_diario]/dia
-*Gasto até [DD/MM]:* R$ [gasto]
-*Projeção de fechamento:* R$ [projecao_fechamento]
+*Gasto de [DD/MM] a [DD/MM]:* R$ [gasto]
+*Fechamento previsto:* R$ [projecao_fechamento]
 
 [frase de status]
 [pergunta fechada]
 ```
+
+Sem saudação de horário. A mensagem pode sair de manhã, de tarde ou de noite, e
+"Bom dia" numa que sai às sete mente na primeira palavra.
 """
 
 _REGRAS_DE_ENTRADA_VERBA = """
@@ -864,6 +867,9 @@ a pergunta que encerram a mensagem.
 ## REGRAS DA ENTRADA
 
 - Copie os valores como vieram. Não recalcule, não arredonde, não converta.
+- O contratado vem com a unidade dele em `unidade_do_contratado`, e ela nem
+  sempre é "mês": há cliente que fecha a verba por semana. Escreva a unidade
+  que veio no JSON, não a do gabarito acima.
 - Mantenha o sentido da frase de status: ela sai de uma tabela de decisão e
   trocá-la muda o que o cliente entende do mês.
 - Termine com uma pergunta fechada — a que veio serve; outra equivalente também.
@@ -876,14 +882,18 @@ def _payload_verba(calc, cliente=""):
     """O fechamento como o modelo o recebe: números prontos e nada mais."""
     return {
         "cliente": cliente,
-        "mes_analisado": calc["mes"],
-        "contratado_mensal": _verba.reais(calc["contratado_mensal"]),
-        "configurado_diario": _verba.reais(calc["configurado_diario"]),
-        "gasto_ate": f"{calc['ontem']:%d/%m}",
+        "periodo_analisado": calc["rotulo"],
+        "contratado": _verba.reais(calc["contratado_ciclo"]),
+        # A unidade viaja junto porque ela MUDA: o gabarito do prompt escreve
+        # "/mês", mas o cliente que fecha por semana precisa ler "/semana".
+        "unidade_do_contratado": _verba.vocabulario(calc)["nome"],
+        "configurado_diario": _verba.reais(calc["contratado_diario"]),
+        "gasto_de": f"{calc['desde']:%d/%m}",
+        "gasto_ate": f"{calc['ate']:%d/%m}",
         "gasto": _verba.reais(calc["gasto"]),
         "projecao_fechamento": _verba.reais(calc["projecao_fechamento"]),
         "frase_de_status": _verba.frase_status(calc),
-        "pergunta_fechada": _verba.PERGUNTAS[calc["status"]],
+        "pergunta_fechada": _verba.pergunta(calc),
     }
 
 

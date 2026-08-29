@@ -25,16 +25,63 @@ Como a estrutura varia de conta para conta, a exportação é sempre feita **dua
 
 ## Passo a passo
 
-### 1. Abrir a conta e travar o período
+### 1. Abrir a conta e escolher o período do ciclo
 
 Gerenciador de Anúncios → seletor de conta no topo → escolher o cliente.
-No seletor de datas, usar **Este mês**.
 
-> Não usar "Últimos 30 dias" — atravessa a virada de mês e quebra a conferência contra o contratado.
+No seletor de datas, escolher **o intervalo do ciclo deste cliente**: do dia em
+que o ciclo começou até **ontem**.
 
-### 2. Escolher o nível certo da tabela
+| O cliente | Seletor de datas |
+|---|---|
+| fecha do dia 1º | **Este mês** |
+| fecha de segunda a domingo | **Esta semana** |
+| fecha por quinzena | intervalo **personalizado**, do dia em que a quinzena começou |
+| entrou no meio do mês (dia 17, dia 30…) | intervalo **personalizado**, do dia do contrato até ontem |
+| fecha numa semana que não começa na segunda | intervalo **personalizado**, de sete dias |
 
-As abas *Campanhas* / *Conjuntos de anúncios* / *Anúncios* mudam o que sai no export. Exportar apenas o nível de campanha faz todas as linhas `[ABO]` virem com orçamento em branco.
+> Não usar "Últimos 30 dias" nem "Últimos 7 dias" quando o ciclo do cliente não
+> for esse: são janelas móveis, e a aplicação vai tomá-las como o ciclo.
+
+**Este passo define o fechamento inteiro.** A predefinição inclui `Início dos
+relatórios` e `Encerramento dos relatórios` (passo 4), e a aplicação lê o ciclo
+dali: o ciclo COMEÇA onde o relatório começa, e tem o tamanho da periodicidade
+escolhida na tela — 7 dias, 15 dias, ou até a véspera do mesmo dia no mês
+seguinte.
+
+Não há campo de data na tela por causa disso. Em troca, a aplicação confia no
+intervalo escolhido aqui: exportar "Últimos 7 dias" para um cliente mensal cria
+um ciclo que começa sete dias atrás, e nenhuma conta acusa isso. **A tela 02
+escreve o ciclo deduzido** — confira essa linha antes de copiar a mensagem.
+
+O que ela recusa em vermelho é o export que cobre MAIS de um ciclo: trinta dias
+num cliente semanal soma quatro fechamentos num número só.
+
+> Não confundir com as colunas `Início` e `Término` da aba *Configurações de
+> anúncios*: aquelas são as datas em que a CAMPANHA foi configurada para
+> começar e terminar. As quatro convivem no export e a aplicação usa cada par
+> para uma coisa — o de configuração decide desde quando a campanha veicula, o
+> de relatório decide o ciclo e a que período o gasto se refere.
+
+### 2. Escolher a aba do nível em que a conta está montada
+
+As abas *Campanhas* / *Conjuntos de anúncios* / *Anúncios* mudam o que sai no
+export. **Um arquivo só**, e a aba depende da estrutura da conta:
+
+| Estrutura | Aba a exportar |
+|---|---|
+| `[CBO]` — orçamento na campanha | **Campanhas** |
+| `[ABO]` — orçamento no conjunto | **Conjuntos de anúncios** |
+
+É a mesma escolha que se marca na tela 01, e a aplicação confere: marcar CBO e
+enviar o export de conjunto soma o gasto no nível errado sem reclamar de nada,
+então ela recusa.
+
+Eram dois arquivos até 29/08/2026, e a razão era o orçamento — `[CBO]` guarda o
+valor na campanha, `[ABO]` no conjunto. O diário do fechamento passou a vir do
+contratado dividido pelos dias do ciclo (R$ 300/semana = R$ 43/dia), o orçamento
+da planilha virou informação de conferência, e o segundo arquivo perdeu a
+função.
 
 ### 3. Abrir o personalizador de colunas
 
@@ -53,6 +100,16 @@ Use a busca do painel em vez de navegar pelas categorias.
 - [x] `Valor gasto`
 
 Um campo só. Desmarque todo o resto da aba.
+
+**Aba: Mais** — grupo *Configurações de relatório*
+
+- [x] `Início dos relatórios`
+- [x] `Encerramento dos relatórios`
+
+São as duas que dizem de que período é o gasto. **Sem elas o app recusa o
+arquivo**, porque projetar um gasto de intervalo desconhecido é como o
+fechamento sai errado sem ninguém perceber. Se não aparecerem nessa aba, buscar
+por `relatórios` no campo de busca do painel.
 
 **Aba: Configurações de anúncios**
 
@@ -91,14 +148,15 @@ Ainda no painel, marcar **Salvar como predefinição** no rodapé e nomear `VERB
 
 A predefinição fica disponível no dropdown de colunas para todas as contas — a seleção não precisa ser refeita cliente a cliente.
 
-### 7. Exportar nos dois níveis
+### 7. Exportar
 
-Canto superior direito da tabela → **Exportar e compartilhar** → *Exportar dados da tabela* → formato `.xlsx`.
+Canto superior direito da tabela → **Exportar e compartilhar** → *Exportar dados
+da tabela* → formato `.xlsx`.
 
-1. Exportar na aba **Campanhas**
-2. Trocar para **Conjuntos de anúncios** e repetir
+Exportar na aba escolhida no passo 2 — **Campanhas** para conta CBO,
+**Conjuntos de anúncios** para conta ABO.
 
-Resultado: dois arquivos. Fim da coleta.
+Resultado: um arquivo. Fim da coleta.
 
 ---
 
@@ -145,31 +203,38 @@ O export traz valor e periodicidade na mesma célula — `R$ 33,00 Diário`, `R$
 
 ### Conta `[CBO]` traz orçamento em branco no export de conjunto
 
-E o inverso vale para `[ABO]` no export de campanha. Não é erro — é a estrutura. Por isso os dois arquivos. A aplicação aceita **um só** quando a conta é 100% `[CBO]`, e avisa nominalmente quando encontra `[ABO]` sem o export de conjunto para resolvê-la.
+E o inverso vale para `[ABO]` no export de campanha. Não é erro — é a estrutura, e é por isso que a aba a exportar depende dela. Exportar a aba errada não faz a aplicação reclamar de orçamento: faz ela somar o gasto no nível errado. Por isso a estrutura é declarada na tela 01 e **conferida contra as colunas** do arquivo.
 
-### O merge é por ID, nunca por nome
+### O orçamento do export não decide número nenhum
 
-Nome de campanha é renomeado durante o mês e o cruzamento perde linhas sem avisar. As colunas de identificação não mudam — por isso entram na predefinição `VERBA`. Sem elas a aplicação cai no nome e **avisa na tela** que caiu.
+Desde 29/08/2026 o diário do fechamento é o **contratado dividido pelos dias do ciclo** — R$ 300/semana são R$ 43/dia, R$ 990/mês são R$ 32/dia num mês de 31. A coluna `Orçamento` continua sendo lida e continua na tabela de conferência, porque é ela que denuncia o Meta setado em R$ 20/dia sob um contrato que pede R$ 43. Mas denuncia para você ler, não para a conta usar.
+
+Antes o diário saía da soma dos orçamentos configurados, e bastava a conta ser `[ABO]` sem o export de conjunto para ele virar R$ 0/dia num fechamento com R$ 1.304 gastos.
 
 ### Linhas com gasto zerado
 
-Manter no agregado de investimento. Conjunto pausado com R$ 0,00 gasto é informação — some ele e a soma do mês fica errada. A aplicação soma o gasto de todas as linhas e o orçamento só das ativas.
+Manter no agregado de investimento. Estrutura pausada com R$ 0,00 gasto é informação — some ela e a soma do ciclo fica errada. A aplicação soma o gasto de todas as linhas.
 
 ---
 
 ## Checklist de coleta por conta
 
-- [ ] Período travado em *Este mês*
-- [ ] Predefinição `VERBA` aplicada
-- [ ] Export nível **campanha** (`.xlsx`)
-- [ ] Export nível **conjunto de anúncios** (`.xlsx`)
+- [ ] Período do seletor = o ciclo do cliente, do começo dele até ontem
+- [ ] Predefinição `VERBA` aplicada (com as duas colunas de período do relatório)
+- [ ] Export da aba do nível da conta — **Campanhas** (CBO) ou **Conjuntos de anúncios** (ABO)
+- [ ] Na tela 02, o ciclo deduzido bate com o do contrato
 
 ---
 
 ## Depois da coleta
 
 Abrir a aplicação → **Análise de Verba** → preencher a base interna
-(cliente/unidade, orçamento contratado e data de hoje), arrastar os dois
-`.xlsx` e ler o resultado. A aplicação devolve os dois blocos do fechamento —
-a mensagem do cliente e a análise interna do desvio — mais a tabela de
-conferência campanha a campanha.
+(cliente/unidade, orçamento contratado, por mês ou por semana, e a estrutura da
+conta), arrastar o `.xlsx` e ler o resultado.
+
+Não há data a digitar: o ciclo vem do intervalo do próprio export. **Confira a
+linha do ciclo deduzido** na tela 02 antes de copiar — é ela que diz se o
+intervalo escolhido no Gerenciador foi o certo.
+
+A aplicação devolve os dois blocos do fechamento — a mensagem do cliente e a
+análise interna do desvio — mais a tabela de conferência estrutura a estrutura.

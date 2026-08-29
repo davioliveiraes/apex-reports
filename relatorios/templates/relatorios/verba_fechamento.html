@@ -9,8 +9,8 @@
 
 {% block conteudo %}
 <h1>{{ cliente }}</h1>
-<p class="sub">{{ calc.mes|capfirst }} · {{ calc.dias_encerrados }} de
-  {{ calc.dias_do_mes }} dias encerrados
+<p class="sub">{{ calc.rotulo|capfirst }} · {{ calc.dias_encerrados }} de
+  {{ calc.dias_do_ciclo }} dias encerrados · export de {{ relatado_txt }}
   {% if calc.ciclo_parcial %}· {{ calc.dias_veiculados }} dias de veiculação{% endif %}</p>
 
 {% if erro_ia %}
@@ -21,6 +21,12 @@
 {% if recalculado %}<div class="aviso">Números refeitos com a base interna atualizada.</div>{% endif %}
 {% for aviso in avisos %}<div class="aviso">{{ aviso }}</div>{% endfor %}
 {% if calc.divergencia_contratado %}<div class="aviso">{{ calc.divergencia_contratado }}</div>{% endif %}
+{% comment %}
+O gasto que não cabe no ciclo. Vem em vermelho, e não como aviso âmbar, porque
+não é uma ressalva sobre o número — é a suspeita de que o número está errado, e
+seguir com ele significa mandar um valor errado para o cliente.
+{% endcomment %}
+{% if calc.alerta_periodo %}<div class="erro">{{ calc.alerta_periodo }}</div>{% endif %}
 
 {% comment %}
 O trilho de fechamento. Esta frente existe para responder "vai fechar no
@@ -43,7 +49,7 @@ a pista é escalada pelo maior dos dois, não cortada no combinado.
     <span class="pista-alvo"></span>
   </div>
   <div class="trilho-pes">
-    <span>{{ calc.dias_encerrados }}/{{ calc.dias_do_mes }} dias</span>
+    <span>{{ calc.dias_encerrados }}/{{ calc.dias_do_ciclo }} dias</span>
     <span>{{ calc.dias_restantes }} restantes</span>
   </div>
   <div class="trilho-legenda">
@@ -83,7 +89,9 @@ a pista é escalada pelo maior dos dois, não cortada no combinado.
 <div class="bloco">
   <span class="bloco-idx">03</span><span class="bloco-nome">Conferência</span>
   <span class="bloco-rule"></span>
-  <span class="bloco-meta">{{ estruturas|length }} campanha{{ estruturas|pluralize:"s" }}</span>
+  <span class="bloco-meta">{{ estruturas|length }}
+    {% if nivel_conjunto %}conjunto{{ estruturas|pluralize:"s" }}
+    {% else %}campanha{{ estruturas|pluralize:"s" }}{% endif %}</span>
 </div>
 {% comment %}
 A tabela existe para o operador discordar do app. O `Veiculação` sai como veio
@@ -95,20 +103,19 @@ convertido não passar por leitura.
   <table>
     <thead>
       <tr>
-        <th>Campanha</th><th>Veiculação</th><th>Tipo</th>
-        <th>Orçamento (export)</th><th>Diário</th><th>Início</th><th>Gasto</th>
+        <th>{% if nivel_conjunto %}Conjunto{% else %}Campanha{% endif %}</th>
+        <th>Veiculação</th><th>Orçamento no Meta</th><th>Equivale a</th>
+        <th>Início</th><th>Gasto</th>
       </tr>
     </thead>
     <tbody>
       {% for e in estruturas %}
       <tr>
-        <td>{{ e.nome }}{% if e.conjuntos %}
-          <br><span class="legenda">{{ e.conjuntos|length }} conjunto{{ e.conjuntos|pluralize:"s" }}</span>{% endif %}</td>
+        <td>{{ e.nome }}{% if e.campanha %}
+          <br><span class="legenda">{{ e.campanha }}</span>{% endif %}</td>
         <td>{{ e.veiculacao }}</td>
-        <td>{{ e.tipo }}</td>
         <td>{{ e.orcamento_bruto }}</td>
-        <td>{{ e.orcamento_diario_txt }}{% if e.orcamento_ativo_txt %}
-          <br><span class="legenda">{{ e.orcamento_ativo_txt }} no ar</span>{% endif %}</td>
+        <td>{{ e.orcamento_diario_txt }}</td>
         <td>{{ e.inicio_br }}</td>
         <td>{{ e.gasto_txt }}</td>
       </tr>
@@ -117,21 +124,28 @@ convertido não passar por leitura.
   </table>
 </div>
 <p class="legenda">O gasto soma todas as linhas, inclusive pausadas e zeradas —
-  conjunto parado com R$ 0,00 é informação, e tirá-lo erraria a soma do mês. Já
-  o configurado diário soma só o que está no ar.</p>
+  estrutura parada com R$ 0,00 é informação, e tirá-la erraria a soma do ciclo.
+  A coluna <b>Orçamento no Meta</b> não entra em conta nenhuma: o diário do
+  fechamento é o contratado dividido pelos dias do ciclo. Ela está aqui para
+  você ver o Meta setado em outro valor — e decidir o que fazer.</p>
 
 <div class="bloco">
   <span class="bloco-idx">04</span><span class="bloco-nome">Base interna</span>
   <span class="bloco-rule"></span>
 </div>
+{% comment %}
+O ciclo deduzido fica escrito aqui de propósito. Ele sai do intervalo do
+export, e a aplicação não tem como saber que o ciclo do cliente é outro — quem
+tem é o operador, e só se ele vir o que foi deduzido.
+{% endcomment %}
+<p class="legenda">O export vai de <b>{{ relatado_txt }}</b>, e é dele que sai
+  o ciclo deste fechamento: <b>{{ ciclo_txt }}</b>. Não há data a digitar —
+  para mudar o ciclo, mude o intervalo do export. Trocar a periodicidade
+  abaixo refaz o cálculo, não o arquivo.</p>
 <div class="campos">
   <div class="campo">
     <label for="{{ form.cliente.id_for_label }}">Cliente / unidade</label>
     {{ form.cliente }}{{ form.cliente.errors }}
-  </div>
-  <div class="campo">
-    <label for="{{ form.referencia.id_for_label }}">Data de hoje</label>
-    {{ form.referencia }}{{ form.referencia.errors }}
   </div>
   <div class="campo">
     <label for="{{ form.orcamento.id_for_label }}">Orçamento contratado</label>
@@ -155,8 +169,8 @@ convertido não passar por leitura.
 <div class="resumo-titulo">Fechamento</div>
 <dl class="resumo-lista">
   <div class="resumo-item"><dt>Contratado</dt>
-    <dd class="num">{{ contratado_txt }}/mês</dd></div>
-  <div class="resumo-item"><dt>Configurado</dt>
+    <dd class="num">{{ contratado_txt }}/{{ unidade_contratado }}</dd></div>
+  <div class="resumo-item"><dt>Diário</dt>
     <dd class="num">{{ configurado_txt }}/dia</dd></div>
   <div class="resumo-item"><dt>Gasto</dt>
     <dd class="num">{{ gasto_txt }}</dd></div>

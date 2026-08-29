@@ -108,27 +108,50 @@ quando acaba o que dizer. Quem cumpre a faixa à risca é a redação da IA.
 
 ## Análise de Verba
 
-Fechamento mensal de verba: o **contratado** contra o **configurado** e o **já
-gasto**, com projeção de fechamento. Orçamento não é métrica, é configuração —
-ele só existe na tabela do Gerenciador, e no nível em que foi definido:
-`[CBO]` guarda o valor na campanha, `[ABO]` no conjunto de anúncios. Por isso
-a coleta são **dois** exports do preset `VERBA` (ver `docs/GUIA_VERBA.md`), e
-por isso o cruzamento entre eles é **por ID**: nome de campanha é renomeado no
-meio do mês e o merge por nome perderia linhas sem avisar.
+Fechamento de verba: o **contratado** contra o **já gasto**, com projeção de
+fechamento. Orçamento não é métrica, é configuração — ele só existe na tabela do
+Gerenciador, e por isso a coleta é um export do preset `VERBA` (ver
+`docs/GUIA_VERBA.md`), não o export de desempenho.
 
-A aplicação aceita um arquivo só quando a conta é 100% `[CBO]`, e avisa
-nominalmente quando encontra `[ABO]` sem o export de conjunto para resolvê-la.
-O nível de cada arquivo é deduzido das colunas — a ordem de envio não importa.
+**Um arquivo, do nível em que a conta está montada.** `[CBO]` guarda o
+orçamento na campanha, `[ABO]` no conjunto de anúncios — a estrutura é
+declarada na tela e conferida contra as colunas do arquivo, porque exportar a
+aba errada soma o gasto no nível errado sem reclamar de nada.
 
-Três campos são digitados, porque nenhuma planilha os traz: **cliente /
-unidade**, **orçamento contratado** (mensal ou diário, o app converte) e **data
-de hoje** (que define o mês analisado e quantos dias já encerraram). Na tela 02
-eles continuam editáveis: corrigir qualquer um refaz todos os números sem
-reenviar planilha, porque a sessão guarda as linhas cruas dos dois exports.
+Dois campos são digitados, porque nenhuma planilha os traz: **cliente /
+unidade** e **orçamento contratado**, por mês, por quinzena ou por semana. O
+equivalente diário não é digitado: R$ 300/semana são R$ 43/dia porque a semana
+tem 7 dias, e R$ 1.800/mês são R$ 58/dia num mês de 31 — quem sabe esse número
+é o motor, que conhece o tamanho do ciclo. Dois campos que podiam discordar
+viraram um campo e uma divisão.
+
+### A mensagem do cliente
+
+Quatro números com rótulo explícito e um veredito, e **sem saudação de
+horário**: "Bom dia" numa mensagem que sai às sete da noite mente na primeira
+palavra, e a hora do envio não é decidida pela aplicação.
+
+```
+Passando o fechamento de verba pra confirmar 👇
+
+*Contratado:* R$ 1.800/mês
+*Configurado:* R$ 58/dia
+*Gasto de 30/07 a 28/08:* R$ 1.778
+*Fechamento previsto:* R$ 1.837
+
+O ritmo está alinhado com o contratado e o mês deve fechar no valor combinado.
+Podemos seguir assim?
+```
+
+O gasto traz as **duas** pontas do período. "Gasto até 28/08" não dizia desde
+quando, e num ciclo que começa no dia 30 o cliente não tem como adivinhar.
+
+Na tela 02 tudo continua editável: corrigir refaz os números sem reenviar
+planilha, porque a sessão guarda as linhas cruas do export.
 
 A saída são dois blocos com botão de copiar — a mensagem para o grupo do
-cliente e a análise interna do desvio — mais a tabela de conferência campanha a
-campanha. **Não há PDF nesta frente**: o entregável é uma mensagem colada num
+cliente e a análise interna do desvio — mais a tabela de conferência estrutura a
+estrutura. **Não há PDF nesta frente**: o entregável é uma mensagem colada num
 grupo.
 
 O cálculo é determinístico (`relatorios/fechamento_verba.py`), sem rede e sem
@@ -138,6 +161,30 @@ texto — ele recebe apenas os números já calculados, nunca as planilhas, e a
 resposta é recusada se passar de 10 linhas, não terminar em pergunta ou citar
 métrica de performance.
 
+### O ciclo vem do arquivo
+
+O preset `VERBA` inclui `Início dos relatórios` e `Encerramento dos relatórios`,
+então o export declara o próprio recorte — e é dele que sai o ciclo inteiro. O
+ciclo **começa onde o relatório começa** e tem o tamanho da periodicidade: 7
+dias (semana), 15 (quinzena), ou até a véspera do mesmo dia no mês seguinte.
+
+Isso existe para o cliente que entra no meio do mês. Quem contrata no dia 30 tem
+um mês que vai de 30/07 a 29/08, e medi-lo contra o mês do calendário mistura
+dois ciclos num número só. Pela mesma razão a semana não começa mais
+obrigatoriamente na segunda: começa onde o export começa.
+
+Não há campo de data na tela — o arquivo responde. Em troca, a aplicação passa a
+confiar no intervalo escolhido no Gerenciador: exportar "Últimos 7 dias" para um
+cliente mensal cria um ciclo que começa sete dias atrás, e nenhuma conta acusa
+isso. As duas defesas que restam:
+
+1. **O ciclo deduzido fica escrito na tela 02.** A aplicação não tem como saber
+   que o ciclo do cliente é outro; o operador tem, e só se vir o que foi
+   deduzido.
+2. **Export que cobre mais de um ciclo é recusado em vermelho.** Trinta dias num
+   cliente semanal somam quatro fechamentos num número só — foi o que gerou um
+   desvio de +508% na tela.
+
 ### O denominador do ritmo
 
 O número que essa frente existe para acertar é por quantos dias se divide o
@@ -146,8 +193,8 @@ encerrados no lugar dos dias de veiculação transforma entrega normal em
 subentrega crítica — troca "esperar" por "investigar leilão". Duas correções
 sobre a fórmula literal, e as duas mudam número:
 
-- **trava no dia 1º do mês** — campanha contínua que subiu em março daria
-  170+ dias veiculados e diluiria o ritmo até a projeção virar ficção;
+- **trava no primeiro dia do ciclo** — campanha contínua que subiu em março
+  daria 170+ dias veiculados e diluiria o ritmo até a projeção virar ficção;
 - **só campanhas que gastaram** — quem não entra no numerador não pode
   esticar o denominador.
 
@@ -321,10 +368,11 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   payload da IA leva só os números do fechamento — a proibição da mensagem
   ("sem CPM, CTR, CPA, resultados") não depende de ninguém lembrar dela.
 - No fechamento de verba, **o gasto soma todas as linhas** — inclusive
-  pausadas e zeradas, porque conjunto parado com R$ 0,00 é informação e
-  removê-lo erraria a soma do mês —, enquanto **o configurado diário soma só o
-  que está no ar**. Campanha desligada zera o configurado mesmo com conjuntos
-  ativos dentro: conjunto no ar sob campanha desligada não entrega.
+  pausadas e zeradas, porque estrutura parada com R$ 0,00 é informação e
+  removê-la erraria a soma do ciclo. O **orçamento** do export não entra em
+  conta nenhuma: o diário é o contratado dividido pelos dias do ciclo. Ele
+  segue na tabela de conferência porque é o que denuncia o Meta setado em
+  outro valor.
 - Orçamento **vitalício** vira equivalente diário dividido pelo período em que
   vale (`Início` → `Término`). Sem data de término, cai nos dias do mês e a
   tela avisa que aquele número é conversão, não leitura.

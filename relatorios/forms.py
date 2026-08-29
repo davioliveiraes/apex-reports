@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from datetime import date
-
 from django import forms
 
 from . import metricas
@@ -233,17 +231,51 @@ class RevisaoIndicadorForm(_ComCampanhas, _ComUnidades):
 # Análise de Verba
 # ----------------------------------------------------------------------
 class _BaseInterna(forms.Form):
-    """Os três campos que nenhuma planilha traz.
+    """Os dois campos que nenhuma planilha traz.
 
     O Gerenciador sabe o que foi configurado e o que foi gasto; ele não sabe o
-    que foi **contratado** — isso é combinado fora dele. Sem esses campos o
-    fechamento não tem contra o que comparar, e é por isso que eles são
-    digitados a cada envio em vez de lidos.
+    que foi **contratado** — isso é combinado fora dele. Sem isso o fechamento
+    não tem contra o que comparar, e é por isso que é digitado a cada envio em
+    vez de lido.
+
+    Eram três. A "data de hoje" saiu em 29/08/2026: o export declara o próprio
+    recorte (`Início dos relatórios` / `Encerramento dos relatórios`), e ler a
+    data do arquivo é mais confiável do que pedi-la a quem talvez tenha
+    exportado ontem. Campo que o arquivo responde é campo que o operador pode
+    errar.
     """
 
+    # Os dois ciclos de fechamento, e nada mais. "Por dia" existiu até
+    # 29/08/2026 e saiu: o diário nunca foi um contrato, é uma DIVISÃO —
+    # R$ 300/semana são R$ 43/dia porque a semana tem 7 dias. Quem sabe esse
+    # número é o motor, que conhece o tamanho do ciclo; pedi-lo ao operador
+    # criava dois campos que podiam discordar um do outro.
     MENSAL = "mensal"
-    DIARIO = "diario"
-    PERIODICIDADES = [(MENSAL, "por mês"), (DIARIO, "por dia")]
+    QUINZENAL = "quinzenal"
+    SEMANAL = "semanal"
+    PERIODICIDADES = [(MENSAL, "por mês"), (QUINZENAL, "por quinzena"),
+                      (SEMANAL, "por semana")]
+
+    # Onde o orçamento da conta está montado. Não é preferência: decide qual
+    # aba do Gerenciador exportar, porque é no nível do orçamento que estão as
+    # estruturas que o fechamento lista.
+    CBO = "cbo"
+    ABO = "abo"
+    ESTRUTURAS = [(CBO, "CBO — orçamento na campanha"),
+                  (ABO, "ABO — orçamento no conjunto")]
+
+    estrutura = forms.ChoiceField(
+        label="Estrutura da conta", choices=ESTRUTURAS, initial=CBO,
+        widget=forms.RadioSelect,
+        help_text="CBO envia o export da aba Campanhas; ABO, o da aba "
+                  "Conjuntos de anúncios.",
+    )
+
+    def nivel(self):
+        """O nível do export que este envio traz."""
+        from .parser_verba import NIVEL_CAMPANHA, NIVEL_CONJUNTO
+        return (NIVEL_CONJUNTO if self.cleaned_data["estrutura"] == self.ABO
+                else NIVEL_CAMPANHA)
 
     cliente = forms.CharField(
         label="Cliente / unidade", max_length=120,
@@ -262,14 +294,9 @@ class _BaseInterna(forms.Form):
     periodicidade = forms.ChoiceField(
         label="Esse valor é", choices=PERIODICIDADES, initial=MENSAL,
         widget=forms.RadioSelect,
-        help_text="R$ 990/mês e R$ 33/dia são o mesmo contrato — o app converte.",
-    )
-    # `format` explícito pelo mesmo motivo da listagem: o input nativo de data
-    # só entende ISO, e a locale pt-BR renderizaria o inicial como dd/mm/aaaa.
-    referencia = forms.DateField(
-        label="Data de hoje", initial=date.today,
-        widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
-        help_text="Define o mês analisado e quantos dias já encerraram.",
+        help_text="O diário sai daqui sozinho — o contratado dividido pelos "
+                  "dias do ciclo: R$ 300/semana são R$ 43/dia; R$ 1.800/mês, "
+                  "R$ 58/dia num mês de 31.",
     )
 
     def clean_orcamento(self):
@@ -283,43 +310,43 @@ class _BaseInterna(forms.Form):
         return valor
 
     def contratado(self):
-        """`(mensal, diário)` — só um dos dois vem preenchido; o outro é
-        derivado em `fechamento_verba.calcular`, que sabe os dias do mês."""
-        valor = self.cleaned_data["orcamento"]
-        if self.cleaned_data["periodicidade"] == self.MENSAL:
-            return valor, None
-        return None, valor
+        """`(valor do ciclo, ciclo)`.
+
+        O equivalente diário é derivado em `fechamento_verba.calcular`, que é
+        quem sabe quantos dias o ciclo tem — 28 a 31 no mês, 7 na semana.
+        """
+        return self.cleaned_data["orcamento"], self.cleaned_data["periodicidade"]
 
 
 class VerbaUploadForm(_BaseInterna):
-    """Tela 01 da verba: a base interna + os exports do preset VERBA."""
+    """Tela 01 da verba: a base interna + UM export do preset VERBA.
 
-    MAX_ARQUIVOS = 2
+    Eram dois arquivos até 29/08/2026, e a razão era o orçamento: `[CBO]`
+    guarda o valor na campanha, `[ABO]` no conjunto, e o app não sabia de
+    antemão qual era o caso. Duas coisas mudaram isso — o diário passou a vir
+    do contrato (o orçamento da planilha não decide mais número nenhum), e a
+    estrutura passou a ser declarada em vez de deduzida. Sobrou um arquivo: o
+    do nível em que a conta está montada.
+    """
 
-    arquivos = MultipleFileField(
-        label="Exports do preset VERBA (.xlsx)",
-        widget=MultipleFileInput(attrs={"accept": ".xlsx", "multiple": True}),
-        help_text="Um por nível: campanha e conjunto de anúncios. Conta 100% "
-                  "CBO fecha só com o de campanha.",
+    MAX_BYTES = 10 * 1024 * 1024
+
+    arquivo = forms.FileField(
+        label="Export do preset VERBA (.xlsx)",
+        widget=forms.ClearableFileInput(attrs={"accept": ".xlsx"}),
+        help_text="Da aba Campanhas se a conta é CBO; da aba Conjuntos de "
+                  "anúncios se é ABO.",
     )
 
-    def clean_arquivos(self):
-        arquivos = self.cleaned_data["arquivos"]
-        if len(arquivos) > self.MAX_ARQUIVOS:
+    def clean_arquivo(self):
+        f = self.cleaned_data["arquivo"]
+        if not f.name.lower().endswith(".xlsx"):
             raise forms.ValidationError(
-                "O fechamento de verba usa no máximo 2 arquivos — um de "
-                f"campanha e um de conjunto de anúncios (você enviou "
-                f"{len(arquivos)})."
-            )
-        for f in arquivos:
-            if not f.name.lower().endswith(".xlsx"):
-                raise forms.ValidationError(
-                    f'"{f.name}" não é um .xlsx — envie apenas arquivos '
-                    "exportados do Gerenciador de Anúncios."
-                )
-            if f.size > 10 * 1024 * 1024:
-                raise forms.ValidationError(f'"{f.name}" está acima de 10 MB.')
-        return arquivos
+                f'"{f.name}" não é um .xlsx — envie o arquivo exportado do '
+                "Gerenciador de Anúncios.")
+        if f.size > self.MAX_BYTES:
+            raise forms.ValidationError(f'"{f.name}" está acima de 10 MB.')
+        return f
 
 
 class VerbaBaseForm(_BaseInterna):
