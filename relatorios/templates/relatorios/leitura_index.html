@@ -1,0 +1,165 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex — Leitura Rápida{% endblock %}
+{% block topo_sub %}Leitura do período{% endblock %}
+{% block nome_etapa1 %}Importar export{% endblock %}
+{% block nome_etapa2 %}Copiar a mensagem{% endblock %}
+{% block form_extra %}enctype="multipart/form-data"{% endblock %}
+
+{% block conteudo %}
+<h1>Leitura rápida do período</h1>
+<p class="sub">Um export de desempenho, uma conta — e a leitura do mês pronta
+  para colar no grupo do cliente.</p>
+
+{% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
+
+<div class="bloco">
+  <span class="bloco-idx">01</span><span class="bloco-nome">Cliente</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="campos">
+  <div class="campo">
+    <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
+    {{ form.cliente }}
+    <span class="ajuda">{{ form.cliente.help_text }}</span>
+    {{ form.cliente.errors }}
+  </div>
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Export de desempenho</span>
+  <span class="bloco-rule"></span>
+</div>
+
+{% comment %}
+Uma zona de arraste para um arquivo só — sem lista de anexos, sem reordenar e
+sem nome de conta. É a diferença que justifica esta frente existir ao lado do
+painel de desempenho: lá o operador monta um relatório, aqui ele responde uma
+mensagem.
+{% endcomment %}
+<div class="dropzone" id="dropzone" tabindex="0" role="button"
+     aria-label="Selecionar o .xlsx do relatório">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
+    <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
+  </svg>
+  <span class="dropzone-txt" id="dropzone-txt">
+    <strong>Arraste o .xlsx aqui</strong> ou clique para escolher</span>
+  <span class="dropzone-meta">uma conta · 10 MB</span>
+  {{ form.arquivo }}
+</div>
+{{ form.arquivo.errors }}
+
+<p class="legenda">É o mesmo arquivo da Análise de Desempenho — se você já gerou
+  o PDF do mês, pode reaproveitar o export sem voltar ao Gerenciador. O que
+  muda é a saída: lá um relatório em páginas, aqui um texto de WhatsApp.</p>
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Resumo do envio</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Frente</dt><dd>Leitura rápida</dd></div>
+  <div class="resumo-item"><dt>Anexo</dt><dd class="num" id="rs-anexo">nenhum</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>Mensagem de WhatsApp</dd></div>
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">Pré-requisitos</div>
+<div class="checks">
+  <div class="check falta" id="ck-cliente"><i>!</i><span>Informe o cliente</span></div>
+  <div class="check falta" id="ck-arquivo"><i>!</i><span>Envie um export .xlsx</span></div>
+</div>
+
+<div class="acao">
+  <button class="botao" type="submit" id="btn-enviar" disabled>
+    <span id="btn-rotulo">Ler o período</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  <p class="acao-nota">A classificação sai da faixa de custo estimada para
+    varejo local. Sem meta combinada informada, é a melhor referência que a
+    planilha sozinha permite.</p>
+  <div class="status">
+    <span class="status-eixo" aria-hidden="true"></span>
+    <span class="status-txt" id="status-txt">Nenhum anexo — arraste o .xlsx para começar</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // A menor versão do painel de anexos que existe no projeto: um arquivo, sem
+  // lista e sem remover. O <input> nativo já guarda a escolha; aqui só se
+  // reflete o estado dele na tela.
+  const dz = document.getElementById('dropzone');
+  const input = dz.querySelector('input[type=file]');
+  const txt = document.getElementById('dropzone-txt');
+  const btn = document.getElementById('btn-enviar');
+  const btnRotulo = document.getElementById('btn-rotulo');
+  const statusTxt = document.getElementById('status-txt');
+  const statusEixo = document.querySelector('.status-eixo');
+  const rsAnexo = document.getElementById('rs-anexo');
+  const ckCliente = document.getElementById('ck-cliente');
+  const ckArquivo = document.getElementById('ck-arquivo');
+  const inputCliente = document.getElementById('{{ form.cliente.auto_id }}');
+
+  const tamanho = b => b < 1024 * 1024
+    ? `${(b / 1024).toFixed(0)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+
+  function marcar(check, ok, texto) {
+    check.classList.toggle('falta', !ok);
+    check.querySelector('i').textContent = ok ? '✓' : '!';
+    check.querySelector('span').textContent = texto;
+  }
+
+  function avaliar() {
+    const f = input.files[0];
+    const okCliente = inputCliente.value.trim() !== '';
+
+    txt.innerHTML = f
+      ? `<strong>${f.name}</strong> · ${tamanho(f.size)}`
+      : '<strong>Arraste o .xlsx aqui</strong> ou clique para escolher';
+    rsAnexo.textContent = f ? tamanho(f.size) : 'nenhum';
+
+    marcar(ckCliente, okCliente,
+      okCliente ? 'Cliente preenchido' : 'Informe o cliente');
+    marcar(ckArquivo, !!f, f ? 'Export pronto para leitura'
+                             : 'Envie um export .xlsx');
+
+    btn.disabled = !(f && okCliente);
+    statusEixo.classList.toggle('ativo', !btn.disabled);
+    statusTxt.textContent = !f ? 'Nenhum anexo — arraste o .xlsx para começar'
+      : btn.disabled ? 'Falta o nome do cliente'
+      : 'Pronto para ler o período';
+  }
+
+  inputCliente.addEventListener('input', avaliar);
+  input.addEventListener('change', avaliar);
+  dz.addEventListener('click', () => input.click());
+  dz.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
+  ['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.add('arrastando'); }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.remove('arrastando'); }));
+  dz.addEventListener('drop', e => {
+    const dt = new DataTransfer();
+    if (e.dataTransfer.files[0]) dt.items.add(e.dataTransfer.files[0]);
+    input.files = dt.files;
+    avaliar();
+  });
+
+  document.getElementById('form-painel').addEventListener('submit', () => {
+    if (btn.disabled) return;
+    btn.classList.add('carregando');
+    btnRotulo.textContent = 'Lendo a planilha…';
+    btn.disabled = true;
+    statusEixo.classList.add('ativo');
+    statusTxt.textContent = 'Lendo a planilha…';
+  });
+
+  avaliar();
+</script>
+{% endblock %}

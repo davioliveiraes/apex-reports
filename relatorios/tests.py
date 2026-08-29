@@ -2883,7 +2883,7 @@ class CabecalhoTest(TestCase):
 
 class SuperficieExpostaTest(TestCase):
     """
-    A aplicação publica cinco rotas, e nada mais.
+    A aplicação publica sete rotas, e nada mais.
 
     O `/admin` do projeto recém-criado sobreviveu até aqui sem ter o que
     administrar — não existe um único modelo. Na prática era um segundo
@@ -2898,6 +2898,7 @@ class SuperficieExpostaTest(TestCase):
         from apex_reports.urls import urlpatterns
         self.assertEqual([str(p.pattern) for p in urlpatterns],
                          ["", "desempenho/", "desempenho/revisao/",
+                          "leitura/", "leitura/mensagem/",
                           "verba/", "verba/fechamento/"])
 
     def test_so_ficam_instalados_os_apps_usados(self):

@@ -329,3 +329,43 @@ class VerbaBaseForm(_BaseInterna):
     reenviar planilha — as linhas dos dois exports ficam na sessão, no mesmo
     espírito do *Aplicar seleção* dos relatórios de desempenho.
     """
+
+
+# ----------------------------------------------------------------------
+# Leitura Rápida
+# ----------------------------------------------------------------------
+class LeituraUploadForm(forms.Form):
+    """A tela inteira da Leitura Rápida: um nome e um arquivo.
+
+    Deliberadamente menor que o painel de desempenho, que lê o mesmo export.
+    Lá os campos existem porque há quatro modos, até vinte anexos e um PDF a
+    batizar; aqui a saída é uma mensagem para colar num grupo, e cada campo a
+    mais é um segundo a mais entre "abri a planilha" e "mandei a leitura".
+
+    Nem perfil de negócio nem meta de CPA aparecem: a classificação usa a faixa
+    estimada do perfil padrão, e é isso que a tela declara na lateral em vez de
+    fingir uma precisão que não tem.
+    """
+
+    MAX_BYTES = 10 * 1024 * 1024
+
+    cliente = forms.CharField(
+        label="Cliente / unidade", max_length=120,
+        widget=forms.TextInput(attrs={"placeholder": "Ex.: Rei do Celular"}),
+        help_text="Identifica a leitura na tela; não entra na mensagem.",
+    )
+    arquivo = forms.FileField(
+        label="Export de desempenho (.xlsx)",
+        widget=forms.ClearableFileInput(attrs={"accept": ".xlsx"}),
+        help_text="O mesmo arquivo da Análise de Desempenho — uma conta.",
+    )
+
+    def clean_arquivo(self):
+        f = self.cleaned_data["arquivo"]
+        if not f.name.lower().endswith(".xlsx"):
+            raise forms.ValidationError(
+                f'"{f.name}" não é um .xlsx — envie o arquivo exportado do '
+                "Gerenciador de Anúncios.")
+        if f.size > self.MAX_BYTES:
+            raise forms.ValidationError(f'"{f.name}" está acima de 10 MB.')
+        return f

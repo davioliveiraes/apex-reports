@@ -1,15 +1,19 @@
 # Relatórios Apex (Meta Ads)
 
 Aplicação Django que lê exports **.xlsx** do Meta Ads Manager. A raiz oferece
-duas frentes, porque são exports diferentes respondendo perguntas diferentes:
+três frentes, porque são perguntas diferentes com entregas diferentes:
 
 | Frente | Pergunta | Export | Saída |
 | --- | --- | --- | --- |
+| **Leitura Rápida** | "O que eu mando no grupo agora?" | preset de desempenho | mensagem de WhatsApp |
 | **Análise de Desempenho** | "Como foi o mês?" | preset de desempenho | PDF |
 | **Análise de Verba** | "Vai fechar no combinado?" | preset `VERBA` | mensagem de WhatsApp |
 
-Misturá-las numa tela só faria enviar a planilha errada — as duas abrem sem
-reclamar, e o erro só apareceria no número.
+As duas primeiras lêem o **mesmo arquivo** e diferem só no formato da entrega —
+é isso que garante que o PDF e a mensagem nunca contem o mesmo mês com números
+diferentes: os dois saem de `consolidar`. A verba lê outro export, e misturá-la
+com as outras faria enviar a planilha errada: as três abrem sem reclamar, e o
+erro só apareceria no número.
 
 ## Análise de Desempenho
 O painel oferece quatro modos:
@@ -58,6 +62,49 @@ veiculação** (todas / ativas / inativas) que só o Indicador Único oferecia.
 Os dois recortavam a mesma planilha por critérios diferentes; o status é
 decisão interna da agência e o operador já o enxerga na tabela, enquanto o
 produto é o que o cliente reconhece.
+
+## Leitura Rápida
+
+A leitura do período escrita para o cliente, a partir de **um** export de
+desempenho e do nome da conta. Sem modos, sem seleção de campanha e sem PDF: o
+entregável é um texto de WhatsApp, e o caminho inteiro é subir o arquivo,
+conferir e copiar.
+
+A mensagem segue o formato do prompt de Análise de Período (v2): duas linhas de
+cabeçalho (período e classificação em **ÓTIMO / BOM / ATENÇÃO**), três
+parágrafos — cenário geral, comparação interna, conclusão — e a pergunta de
+conversão que cruza os contatos gerados com as vendas fechadas. Se houver sinal
+de desgaste de criativo, entra também o pedido de material novo.
+
+Quem escreve é o mesmo motor de regras da Análise do Período
+(`relatorios/analysis/`), num destino novo: `mensagem.py`. A classificação é a
+que `rules.avaliar` já dava, e a comparação interna sai das campanhas do
+próprio arquivo. Um botão opcional pede ao modelo outra redação do mesmo
+período, com o prompt v2 na íntegra.
+
+**O texto é editável na tela**, e essa é a única diferença de interface para a
+frente de verba. A mensagem cita praça pelo nome, e o nome sai do padrão de
+nomenclatura das campanhas — que está em caixa alta e sem acento. "Jundiai"
+vira "Jundiaí" à mão antes de copiar; travar o texto empurraria a correção para
+depois de colar, que é onde ela passa batido.
+
+### O que o motor não faz
+
+Três omissões deliberadas, todas verificadas em teste:
+
+- **não compara com período anterior** — o export é um arquivo só, do intervalo
+  inteiro. Nenhuma frase diz que algo subiu, caiu ou melhorou;
+- **não inventa causa** — o único diagnóstico que sai é o desgaste de criativo,
+  e o gatilho é declarado: frequência saturada, ou frequência elevada com CTR
+  baixo. O prompt fala em "frequência em alta" e "CTR em queda", mas tendência
+  precisa de série no tempo e o export não tem eixo de tempo;
+- **não nomeia campanha como ela se chama na conta** — do nome sobra só o que
+  distingue aquela campanha das outras do arquivo. Estrutura (`ABO`/`CBO`) e
+  data nunca entram: são operação interna da agência.
+
+O texto do motor fica em torno de 150 a 200 palavras, abaixo das 200 a 260 que
+o prompt pede. É de propósito: ele escreve o que os dados sustentam e para
+quando acaba o que dizer. Quem cumpre a faixa à risca é a redação da IA.
 
 ## Análise de Verba
 
@@ -232,8 +279,23 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
 - `relatorios/templates/relatorios/pdf_relatorio.html` — template do PDF
   individual/consolidado; `pdf_listagem.html` — listagem;
   `pdf_indicador.html` — indicador único
-- `relatorios/views.py` — home das duas frentes, painel de modos →
+- `relatorios/views.py` — home das três frentes, painel de modos →
   (revisão →) PDF
+- `relatorios/analysis/mensagem.py` — **redator da Leitura Rápida**: o terceiro
+  destino da mesma `Avaliacao` (o PDF e o WhatsApp rotulado são os outros
+  dois), no formato do prompt de Análise de Período v2 — cabeçalho, três
+  parágrafos e a pergunta de conversão. Puro: recebe a avaliação, as métricas e
+  as frentes já rotuladas, e devolve texto
+- `relatorios/analysis/numeros.py` — os formatadores pt-BR (`moeda`,
+  `inteiro`, `decimal`, `percentual`), usados por `templates.py` e por
+  `mensagem.py`. Contrato diferente do `parser_xlsx._fmt_*`: ali `None` vira
+  "—", que é a célula vazia de uma tabela; aqui vira zero, porque quem chama já
+  decidiu que a frase existe
+- `relatorios/leitura_rapida.py` — a ponte entre o export lido e a mensagem:
+  reduz o `consolidar` ao que cabe na sessão, traduz o nome cru da campanha no
+  nome que o cliente reconhece e monta o resumo da tela
+- `relatorios/views_leitura.py` — as duas telas da leitura rápida
+- `relatorios/tests_leitura.py` — testes da frente (rótulo, mensagem, telas e IA)
 - `relatorios/parser_verba.py` — leitura do preset `VERBA` e cruzamento dos
   dois níveis por ID. Separado do parser de desempenho porque as colunas
   **colidem**: `Início` aqui é a data de configuração da campanha; lá, o
@@ -250,6 +312,10 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
 - `docs/exemplo_*.pdf` — PDFs de exemplo (individual, consolidado, 20 unidades)
 
 ## Observações
+- **Desempenho e Leitura Rápida nunca discordam sobre o mesmo mês.** As duas
+  passam por `parser_xlsx.consolidar`, e a mensagem lê os mesmos `_num` que o
+  PDF imprime. Não é reuso por economia: é o que impede o cliente de receber um
+  relatório e uma mensagem com custos por resultado diferentes.
 - **A frente de verba não lê métrica de performance, e isso é estrutural.** A
   predefinição `VERBA` não exporta esses campos, o parser não os mapeia e o
   payload da IA leva só os números do fechamento — a proibição da mensagem

@@ -29,6 +29,30 @@ ROTULOS = {
 
 PADRAO = "Resultados"
 
+# O mesmo indicador, em prosa. `ROTULOS` é rótulo de COLUNA — "Conversas
+# Iniciadas" encabeça uma tabela, mas dentro de uma frase escrita para o
+# cliente o que cabe é "229 conversas" e "R$ 21,01 por conversa". Os dois
+# vivem juntos aqui porque são a mesma decisão: como este resultado se chama
+# para quem não é gestor de tráfego.
+#
+# Chaveado pelo rótulo, e não pelo código cru, para não repetir o trabalho de
+# casar as variações de escrita que `rotulo()` já faz.
+#
+# O terceiro campo é o gênero, e não é preciosismo: a frase que fecha a
+# mensagem de WhatsApp pergunta "quantas DAS 229 conversas" ou "quantos DOS 45
+# leads", e errar a contração é o tipo de detalhe que denuncia texto de robô
+# na primeira linha que o cliente lê.
+TERMOS = {
+    "Conversas Iniciadas": ("conversa", "conversas", "f"),
+    "Leads": ("lead", "leads", "m"),
+    "Cliques no Link": ("clique no link", "cliques no link", "m"),
+    "Visualizações da Página": ("visita à página", "visitas à página", "f"),
+    "Envolvimento com a Publicação": ("interação", "interações", "f"),
+    "Reproduções de Vídeo (ThruPlay)": ("reprodução de vídeo",
+                                        "reproduções de vídeo", "f"),
+    PADRAO: ("resultado", "resultados", "m"),
+}
+
 # Mesmo objetivo aparece com nomes diferentes conforme a versão e o idioma do
 # export ("Conversas por mensagem iniciadas", "messaging_conversation_started").
 # Casado por trecho, na ordem — o primeiro que bater vence, então o mais
@@ -97,6 +121,16 @@ def eh_conversa(indicador):
     """True quando o resultado é conversa iniciada — muda o texto da análise
     ("3 conversas" em vez de "3 resultados") e o rótulo do funil."""
     return "convers" in _norm(indicador) or "mensag" in _norm(indicador)
+
+
+def termos(indicador):
+    """`(singular, plural, gênero)` em prosa para este indicador.
+
+    Indicador sem termo mapeado cai em "resultado/resultados" — genérico, mas
+    nunca errado. É o mesmo princípio de `rotulo()`: preferir a palavra neutra
+    a arriscar um nome que não descreve o que aconteceu.
+    """
+    return TERMOS.get(rotulo(indicador, avisar=False), TERMOS[PADRAO])
 
 
 def dominante(registros, campo="indicador", resultados="resultados",

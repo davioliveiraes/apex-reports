@@ -140,6 +140,72 @@ def chave_grupo_campanha(nome):
     return str(nome or "").strip() or GRUPO_SEM_NOME
 
 
+# Tokens que NUNCA nomeiam uma campanha numa frase escrita para o cliente.
+# Estrutura de conta é operação interna da agência (a mesma regra que proíbe
+# "pausar" e "duplicar" no texto); data é o que o cabeçalho já informa.
+_TOKENS_ESTRUTURA = frozenset(("abo", "cbo", "adv", "advantage", "asc", "asc+"))
+_TOKEN_DATA = re.compile(r"^\d{1,2}[a-z]{3}\d{2,4}$|^\d{1,2}[-/.]\d{2,4}$|^\d{2,8}$")
+
+# Conectivos que o `.title()` do Python capitaliza e o português não: "Rei Do
+# Celular" denuncia o script que escreveu a frase.
+_MINUSCULAS = frozenset(("de", "do", "da", "dos", "das", "e", "em", "no", "na"))
+
+
+def rotulo_campanha(nome, comuns=()):
+    """Como esta campanha se chama dentro de uma frase escrita para o cliente.
+
+    O nome cru (`[LEADS][CELULAR-BOLETO][SALTO][ABO][13JUL26]`) nunca sai como
+    veio: colchetes e nomenclatura interna são da agência, não do cliente. Do
+    nome sobra só o que **distingue** esta campanha das outras da mesma conta,
+    que é justamente o que uma comparação precisa nomear — normalmente a praça
+    ou o produto.
+
+    `comuns` são os tokens presentes em TODAS as campanhas da conta (ver
+    `tokens_comuns`): eles não distinguem nada e por isso saem. Se a remoção
+    não deixar nada de pé — as duas campanhas diferem só na data, digamos —, o
+    rótulo volta a considerar os tokens comuns, porque um nome repetido ainda
+    é melhor do que nenhum.
+
+    O acento não tem como voltar: "JUNDIAI" vira "Jundiai", e é por isso que a
+    mensagem da Leitura Rápida é editável na tela antes de ser copiada.
+    """
+    tokens = [t.strip() for t in _TOKENS_DO_NOME.findall(str(nome or "")) if t.strip()]
+    if not tokens:
+        return str(nome or "").strip()
+
+    def util(lista, ignorar):
+        return [t for t in lista
+                if _norm(t) not in _TOKENS_ESTRUTURA
+                and not _TOKEN_DATA.match(_norm(t))
+                and _norm(t) not in ignorar]
+
+    escolhidos = (util(tokens, {_norm(c) for c in comuns})
+                  or util(tokens, set())
+                  or tokens)
+    return " ".join(_capitalizar(t) for t in escolhidos)
+
+
+def _capitalizar(token):
+    """"CELULAR-BOLETO" -> "Celular-Boleto"; "REI DO CELULAR" -> "Rei do Celular"."""
+    palavras = token.title().split()
+    return " ".join(p if i == 0 or p.lower() not in _MINUSCULAS else p.lower()
+                    for i, p in enumerate(palavras))
+
+
+def tokens_comuns(nomes):
+    """Tokens que aparecem em todos estes nomes de campanha.
+
+    São o cabeçalho repetido do padrão de nomenclatura — objetivo e marca, em
+    geral. Só há "comum" havendo mais de um nome: com uma campanha só, tudo é
+    comum e o rótulo ficaria vazio.
+    """
+    conjuntos = [{_norm(t) for t in _TOKENS_DO_NOME.findall(str(n or ""))}
+                 for n in nomes if str(n or "").strip()]
+    if len(conjuntos) < 2:
+        return set()
+    return set.intersection(*conjuntos)
+
+
 def grupos_de_campanha(registros):
     """Grupos presentes nestes registros, na ordem em que aparecem:
     `[{"chave": ..., "campanhas": [nomes]}]`."""

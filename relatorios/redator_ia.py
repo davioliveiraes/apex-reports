@@ -939,3 +939,164 @@ def _sem_acento(texto):
     baixo = texto.lower()
     return "".join(c for c in unicodedata.normalize("NFD", baixo)
                    if unicodedata.category(c) != "Mn")
+
+
+# ----------------------------------------------------------------------
+# Leitura Rápida — a mensagem de período pelo prompt v2
+# ----------------------------------------------------------------------
+# Quarta chamada do projeto. Diferente das outras três, esta NÃO é o padrão da
+# tela: o motor (`analysis/mensagem.py`) já entregou o texto antes de qualquer
+# clique, e o que a IA faz aqui é outra redação do mesmo período — mais solta,
+# porque quem escreve não está preso a um catálogo de frases.
+#
+# O relatório que ela recebe é o mesmo `montar_payload` da Análise do Período:
+# são os mesmos números, do mesmo export. Duas telas contarem o mesmo mês com
+# totais diferentes seria o pior defeito possível numa ferramenta de relatório.
+ESFORCO_LEITURA = "high"
+
+# O texto tem ~260 palavras, mas o teto cobre também o raciocínio anterior à
+# primeira letra — estourá-lo devolve resposta VAZIA, não cortada (ver
+# MAX_TOKENS). Metade do teto da análise do PDF, que escreve o dobro.
+MAX_TOKENS_LEITURA = 6000
+
+# Texto do operador (PROMPT — ANÁLISE DE PERÍODO v2), na íntegra e sem edição
+# nossa. Mesma regra do PROMPT_OPERADOR: mexer aqui é mexer no produto.
+PROMPT_LEITURA = """Atue como gestor de tráfego pago sênior, especialista em Meta Ads.
+
+Vou anexar um relatório com as métricas do período. Entregue SOMENTE a leitura do período escrita diretamente para o cliente.
+
+## REGRAS
+
+- Analise exclusivamente os dados do relatório. Não invente causas, metas ou resultados.
+- Sem tabela, sem lista de métricas, sem repetir todos os números.
+- Priorize: investimento, quantidade de resultados e custo por resultado.
+- Use alcance, CTR, CPC, frequência ou impressões apenas quando explicarem o cenário.
+- Destaque melhor e pior desempenho por cidade, campanha, conjunto ou anúncio somente quando houver essa divisão.
+- Se houver período anterior, cite apenas a comparação mais importante.
+- Não cite pausa, duplicação, aprendizado ou status de campanha.
+- Não prometa resultados futuros.
+- Linguagem simples, profissional e transparente. Evite jargão técnico.
+- Não repita o mesmo número em mais de um parágrafo.
+
+## CLASSIFICAÇÃO (escolha UMA)
+
+- *ÓTIMO* — boa eficiência, custo saudável e/ou evolução relevante.
+- *BOM* — desempenho consistente, com pontos que ainda podem ganhar eficiência.
+- *ATENÇÃO* — perda de eficiência, custo elevado ou queda de resultados.
+
+A classificação considera o conjunto dos dados, nunca uma métrica isolada.
+
+## FORMATO DA RESPOSTA
+
+*Período analisado: [data inicial] a [data final]*
+
+*Leitura do período: [ÓTIMO / BOM / ATENÇÃO]*
+
+**Parágrafo 1 — cenário geral:** investimento, resultados gerados e custo médio por resultado, explicando de forma simples o que isso representa.
+
+**Parágrafo 2 — comparação interna:** melhor desempenho e principal ponto de atenção, sustentados por números.
+
+**Parágrafo 3 — conclusão:** o que os números indicam sobre a operação, se há concentração de bons resultados ou diferença relevante entre praças/campanhas, e o que merece maior acompanhamento no próximo ciclo. Sem virar plano de ação detalhado.
+
+**Encerramento — pergunta de conversão (sempre incluir):**
+
+Feche com uma pergunta educada para cruzar os leads gerados com as vendas concretizadas. Use o número de resultados do período. Exemplo de construção:
+
+"Para fecharmos a leitura do período, você consegue nos informar quantas das [X] conversas geradas se transformaram em venda? Esse dado nos ajuda a direcionar o investimento para o que realmente converte."
+
+## REGRA CONDICIONAL — FADIGA DE CRIATIVO
+
+Se o relatório apresentar sinais de fadiga (frequência elevada ou em alta, CTR em queda, custo por resultado subindo ao longo do período), inclua no terceiro parágrafo a leitura como possível causa e adicione o pedido abaixo, de forma educada:
+
+"Os dados indicam que pode haver fadiga do criativo. Precisamos adicionar anúncios com novas imagens ou vídeos para ajudar a reengajar os públicos e melhorar o desempenho. Você consegue nos enviar novos materiais para produzirmos as próximas variações?"
+
+Se não houver esses sinais no relatório, não mencione fadiga de criativo.
+
+## TAMANHO
+
+Três parágrafos de 3 a 4 linhas (formato WhatsApp), entre 200 e 260 palavras, sem contar o encerramento.
+
+## RELATÓRIO
+
+Analise o relatório anexado."""
+
+# O prompt v2 fala em "frequência em alta", "CTR em queda" e "custo subindo ao
+# longo do período" — três tendências. O export é o TOTAL do intervalo e não
+# tem eixo de tempo, então isso precisa ser dito: sem o aviso o modelo
+# inventaria a curva a partir de um número só, que é exatamente a alucinação
+# que `dados_ausentes` existe para impedir.
+_REGRAS_DE_ENTRADA_LEITURA = REGRAS_DE_ENTRADA + """
+
+## SOBRE A REGRA DE FADIGA
+
+O relatório é o total do período: não há série por dia, então não existe "em
+alta" nem "em queda" para observar. O que dá para ler é o nível da frequência
+e do CTR no intervalo inteiro. Só levante fadiga de criativo com base nesses
+níveis — nunca com base numa tendência, porque tendência não está no relatório.
+
+## SOBRE O TAMANHO
+
+O limite de 200 a 260 palavras vale para os três parágrafos de análise. As duas
+linhas de cabeçalho, o encerramento e o eventual pedido de criativos ficam fora
+da contagem."""
+
+# Marcação que o WhatsApp não renderiza e o prompt proíbe: título de markdown,
+# item de lista e cano de tabela. O `*` sozinho fica de fora da lista — ele é o
+# negrito das duas linhas de cabeçalho, que o próprio formato pede.
+_MARCACAO_PROIBIDA = re.compile(r"^[ \t]*(#{1,6} |[-+\u2022] |\d+\. |\|)",
+                                re.MULTILINE)
+
+
+def gerar_leitura_periodo(dados):
+    """A leitura do período escrita pelo modelo, pronta para o WhatsApp.
+
+    Levanta `ErroDeIA` — a tela mostra o aviso e o texto do motor continua no
+    lugar, que é o mesmo contrato das outras três chamadas.
+    """
+    if not disponivel():
+        raise ErroDeIA("Nenhuma chave de API configurada: defina OPENAI_API_KEY "
+                       "no ambiente (em produção, /etc/apex-reports/env).",
+                       "chave")
+    bruto = _chamar(
+        [{"role": "system",
+           "content": PROMPT_LEITURA + _REGRAS_DE_ENTRADA_LEITURA},
+         {"role": "user", "content": json.dumps(montar_payload(dados),
+                                                 ensure_ascii=False, indent=1)}],
+        max_tokens=MAX_TOKENS_LEITURA, esforco=ESFORCO_LEITURA)
+    return _validar_leitura(bruto)
+
+
+def _validar_leitura(texto):
+    """A resposta, ou `ErroDeIA` dizendo por que ela foi recusada.
+
+    Recusar não custa nada: a mensagem do motor está na tela desde antes do
+    clique e continua depois dele. Por isso as checagens são as do FORMATO, e
+    não as do conteúdo — julgar a análise por expressão regular seria pedir a
+    uma regex que revise um gestor de tráfego.
+    """
+    limpo = _CERCA_JSON.sub("", (texto or "").strip()).strip()
+    if not limpo:
+        raise ErroDeIA("O modelo devolveu uma leitura vazia.", "formato")
+
+    if not any(c in limpo for c in ("ÓTIMO", "BOM", "ATENÇÃO")):
+        raise ErroDeIA(
+            "A leitura veio sem a linha de classificação (ÓTIMO, BOM ou "
+            "ATENÇÃO). Mantido o texto do motor.", "formato")
+
+    achado = _MARCACAO_PROIBIDA.search(limpo)
+    if achado:
+        raise ErroDeIA(
+            "A leitura veio com marcação que o WhatsApp não renderiza "
+            f"({achado.group().strip()!r} abrindo uma linha) — o formato pede "
+            "texto corrido, sem título nem lista. Mantido o texto do motor.",
+            "formato")
+
+    # A pergunta está NO último parágrafo, não necessariamente na última
+    # letra: o próprio exemplo do prompt fecha com "Esse dado nos ajuda a
+    # direcionar o investimento…" depois da interrogação. Exigir `endswith`
+    # recusaria a resposta que segue o gabarito à risca.
+    if "?" not in _blocos(limpo)[-1]:
+        raise ErroDeIA(
+            "A leitura não terminou com a pergunta de conversão, que o formato "
+            "manda sempre incluir. Mantido o texto do motor.", "formato")
+    return limpo

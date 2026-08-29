@@ -1,0 +1,192 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex — Leitura do período{% endblock %}
+{% block topo_sub %}Leitura do período{% endblock %}
+{% block form_id %}form-leitura{% endblock %}
+{% block nome_etapa1 %}Importar export{% endblock %}
+{% block nome_etapa2 %}Copiar a mensagem{% endblock %}
+{% block cls_etapa1 %}concluida{% endblock %}
+{% block cls_etapa2 %}ativa{% endblock %}
+
+{% block conteudo %}
+<h1>{{ cliente }}</h1>
+<p class="sub">{% if periodo %}{{ periodo }}{% else %}Período não informado no
+  export{% endif %} · {{ frentes }} campanha{{ frentes|pluralize:"s" }} no
+  relatório</p>
+
+{% if erro_ia %}
+<div class="{% if erro_ia_definitivo %}erro{% else %}aviso{% endif %}">
+  {{ erro_ia }}
+</div>
+{% endif %}
+{% if texto_ia_gerado %}<div class="aviso">Leitura reescrita pela IA. O texto do cálculo continua a um clique de distância.</div>{% endif %}
+{% if restaurado %}<div class="aviso">De volta ao texto do cálculo.</div>{% endif %}
+{% if sem_periodo %}
+<div class="aviso">O export não trouxe as datas do relatório, então a mensagem
+  sai sem a linha de período. Escreva o intervalo à mão antes de enviar — o
+  cliente precisa saber a que mês a leitura se refere.</div>
+{% endif %}
+
+{% comment %}
+O veredito é a resposta antes do texto: quem abre esta tela quer saber "como
+foi o mês?" e o selo diz isso de longe. Os três números ao lado são exatamente
+os que o prompt manda priorizar — investimento, resultados e custo por
+resultado —, na mesma ordem em que aparecem no primeiro parágrafo.
+{% endcomment %}
+<div class="veredito {{ tom }}">
+  <div class="veredito-selo">
+    <span class="veredito-rot">Leitura do período</span>
+    <strong>{{ classificacao }}</strong>
+  </div>
+  <dl class="veredito-nums">
+    <div><dt>Investimento</dt><dd>{{ investimento_txt }}</dd></div>
+    <div><dt>{{ termo_plural|capfirst }}</dt><dd>{{ resultados_txt }}</dd></div>
+    <div><dt>Custo por {{ termo_singular }}</dt><dd>{{ cpa_txt }}</dd></div>
+  </dl>
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">01</span><span class="bloco-nome">Mensagem para o cliente</span>
+  <span class="bloco-rule"></span>
+</div>
+{% comment %}
+Editável, e não um <pre> como no fechamento de verba. A diferença é que esta
+mensagem cita nome de praça, e o nome sai do padrão de nomenclatura em CAIXA
+ALTA e sem acento — "Jundiai" precisa virar "Jundiaí" na mão. Travar o texto
+obrigaria a corrigir depois de colar, que é onde o erro passa batido.
+{% endcomment %}
+<div class="saida">
+  <div class="saida-cabeca">
+    <b>WhatsApp</b>
+    <span>{% if do_motor %}do cálculo · editável{% else %}reescrita pela IA · editável{% endif %}</span>
+    <button type="button" class="copiar" data-alvo="txt-leitura">Copiar</button>
+  </div>
+  <textarea class="saida-texto saida-edit" id="txt-leitura" name="texto"
+            spellcheck="true" aria-label="Leitura do período">{{ texto }}</textarea>
+</div>
+<p class="legenda">Confira os nomes de praça antes de enviar: eles saem do padrão
+  de nomenclatura das campanhas, que não tem acento. O texto é livre — editar
+  aqui não desfaz nada do cálculo.</p>
+
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Conferência</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">{{ frentes }} frente{{ frentes|pluralize:"s" }}</span>
+</div>
+{% comment %}
+As mesmas frentes que a mensagem compara, na mesma ordem — do contato mais
+barato ao mais caro. É aqui que o operador discorda do app: se o melhor e o
+pior citados no texto não forem os desta tabela, o erro está no rótulo, não na
+conta.
+{% endcomment %}
+{% if frentes %}
+<div class="tabela-rolagem">
+  <table>
+    <thead>
+      <tr><th>Frente</th><th>{{ termo_plural|capfirst }}</th>
+        <th>Investimento</th><th>Custo</th></tr>
+    </thead>
+    <tbody>
+      {% for f in frentes_tabela %}
+      <tr>
+        <td>{{ f.rotulo }}</td>
+        <td>{{ f.resultados_txt }}</td>
+        <td>{{ f.investimento_txt }}</td>
+        <td>{{ f.cpa_txt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="legenda">O export não trouxe nome de campanha, então não há frentes a
+  comparar — a mensagem fica só com a leitura do conjunto.</p>
+{% endif %}
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Do período</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Investimento</dt>
+    <dd class="num">{{ investimento_txt }}</dd></div>
+  <div class="resumo-item"><dt>{{ termo_plural|capfirst }}</dt>
+    <dd class="num">{{ resultados_txt }}</dd></div>
+  <div class="resumo-item"><dt>Custo médio</dt>
+    <dd class="num">{{ cpa_txt }}</dd></div>
+  <div class="resumo-item"><dt>Frequência</dt>
+    <dd class="num">{{ frequencia_txt }}</dd></div>
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">O que a mensagem pede</div>
+<div class="checks">
+  <div class="check"><i>✓</i>
+    <span>Cruzar {{ resultados_txt }} {{ termo_plural }} com as vendas
+      fechadas</span></div>
+  <div class="check{% if tem_fadiga %} falta{% endif %}">
+    <i>{% if tem_fadiga %}!{% else %}✓{% endif %}</i>
+    <span>{% if tem_fadiga %}Criativos novos — a frequência indica desgaste
+      {% else %}Sem sinal de desgaste de criativo{% endif %}</span></div>
+</div>
+
+<div class="acao">
+  {% if ia_disponivel %}
+  <button class="botao" type="submit" name="leitura_ia" value="1">
+    <span>Reescrever com IA</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  <p class="acao-nota">A mensagem acima já está pronta. A IA escreve outra
+    redação do mesmo período, com o seu prompt — ela recebe os números do
+    relatório, nunca a planilha.</p>
+  {% endif %}
+  {% if not do_motor %}
+  <button class="botao botao-sec" type="submit" name="voltar_ao_motor" value="1">
+    <span>Voltar ao texto do cálculo</span>
+  </button>
+  {% endif %}
+  <div class="status">
+    <span class="status-eixo ativo" aria-hidden="true"></span>
+    <span class="status-txt">Leitura pronta para copiar</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Mesmo botão do fechamento de verba, com uma diferença: aqui o alvo é um
+  // <textarea>, e o que se copia é o que está NELE agora — inclusive as
+  // correções que o operador acabou de digitar.
+  document.querySelectorAll('.copiar').forEach(botao => {
+    botao.addEventListener('click', async () => {
+      const campo = document.getElementById(botao.dataset.alvo);
+      try {
+        await navigator.clipboard.writeText(campo.value);
+      } catch (e) {
+        // clipboard exige contexto seguro; sem HTTPS resta selecionar o texto
+        // e deixar o operador terminar no teclado.
+        campo.focus();
+        campo.select();
+        botao.textContent = 'Ctrl+C';
+        return;
+      }
+      botao.textContent = 'Copiado';
+      botao.classList.add('feito');
+      setTimeout(() => {
+        botao.textContent = 'Copiar';
+        botao.classList.remove('feito');
+      }, 2000);
+    });
+  });
+
+  // O textarea cresce com o texto: a leitura tem ~15 linhas e uma barra de
+  // rolagem interna esconderia metade do que precisa ser conferido.
+  const campo = document.getElementById('txt-leitura');
+  const ajustar = () => {
+    campo.style.height = 'auto';
+    campo.style.height = `${campo.scrollHeight + 2}px`;
+  };
+  campo.addEventListener('input', ajustar);
+  ajustar();
+</script>
+{% endblock %}

@@ -51,6 +51,12 @@ neutro, que é também o rótulo da coluna na tabela logo acima no PDF.
 from . import contexto as ctx
 from . import rules
 from .benchmarks import ATENCAO, BOM, OTIMO, REF_GRUPO, REF_META
+# Os formatadores moraram aqui até a Leitura Rápida passar a escrever os
+# mesmos números nas suas próprias frases. Continuam com o nome privado de
+# sempre para não mexer nas dezenas de chamadas deste arquivo.
+from .numeros import decimal as _decimal, inteiro as _inteiro  # noqa: F401
+from .numeros import moeda as _moeda, percentual as _percentual  # noqa: F401
+from .numeros import pt_br as _pt_br  # noqa: F401
 
 PDF, WHATSAPP = "pdf", "whatsapp"
 
@@ -979,24 +985,3 @@ def _formatar(texto, destino):
         for tag, marca in (("<b>", "*"), ("</b>", "*"), ("<i>", "_"), ("</i>", "_")):
             texto = texto.replace(tag, marca)
     return texto
-
-
-def _pt_br(texto):
-    """1,234.56 -> 1.234,56"""
-    return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
-
-
-def _moeda(valor):
-    return "R$ " + _pt_br(f"{float(valor or 0):,.2f}")
-
-
-def _decimal(valor):
-    return f"{float(valor or 0):.2f}".replace(".", ",")
-
-
-def _percentual(valor):
-    return f"{float(valor or 0):.2f}".replace(".", ",") + "%"
-
-
-def _inteiro(valor):
-    return _pt_br(f"{int(float(valor or 0)):,d}")

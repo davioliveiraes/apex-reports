@@ -426,10 +426,10 @@
      fixar num aside, e com o conteúdo curto que tem sobrava 60% de vazio na
      tela. Aqui é uma coluna centrada, e a escolha ocupa o meio do campo. */
   .miolo-home{flex:1;overflow:auto;display:flex;flex-direction:column;
-    justify-content:center;padding:48px 32px}
+    justify-content:center;padding:clamp(20px,4vh,44px) 32px}
   .home-caixa{width:100%;max-width:780px;margin:0 auto}
-  .frentes{display:flex;flex-direction:column;gap:14px;margin:28px 0 22px}
-  .frente{position:relative;display:block;padding:22px 24px;background:var(--riser);
+  .frentes{display:flex;flex-direction:column;gap:12px;margin:20px 0 0}
+  .frente{position:relative;display:block;padding:17px 22px;background:var(--riser);
     border:1px solid var(--edge);border-radius:var(--r-lg);text-decoration:none;
     overflow:hidden;transition:border-color .16s,background .16s,transform .16s}
   .frente:hover{border-color:var(--apex);background:var(--apex-wash);
@@ -440,18 +440,21 @@
   /* A pergunta que a frente responde vem ANTES do nome dela: é assim que o
      operador escolhe — ele chega com uma dúvida, não com um substantivo. */
   .frente-pergunta{display:block;font:600 11px/1 var(--mono);letter-spacing:.1em;
-    text-transform:uppercase;color:var(--apex);margin-bottom:10px}
-  .frente-nome{display:flex;align-items:center;gap:12px}
+    text-transform:uppercase;color:var(--apex);margin-bottom:8px}
+  .frente-nome{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
   .frente-nome strong{font:800 21px/1.2 var(--sans);color:var(--bright);
     letter-spacing:-.02em}
-  .frente-seta{margin-left:auto;flex-shrink:0;width:20px;height:20px;
+  .frente-seta{flex-shrink:0;width:20px;height:20px;
     color:var(--faint);transition:color .16s,transform .16s}
   .frente:hover .frente-seta{color:var(--apex);transform:translateX(4px)}
-  .frente-desc{display:block;margin-top:9px;font:13.5px/1.6 var(--sans);
+  .frente-desc{display:block;margin-top:8px;font:13.5px/1.6 var(--sans);
     color:var(--faint)}
-  /* Rodapé do card: entrada → saída, o par que de fato distingue as frentes. */
-  .frente-fluxo{display:flex;align-items:center;gap:10px;margin-top:16px;
-    padding-top:14px;border-top:1px solid var(--edge)}
+  /* Entrada → saída, o par que de fato distingue as frentes. Já foi um rodapé
+     com divisória; subiu para a linha do nome quando a home passou a ter três
+     cartões e o rodapé sozinho custava 70px por cartão — 210px, o suficiente
+     para empurrar a escolha para fora da tela num notebook. Aqui ele não
+     perde nada: continua sendo a legenda do nome, ao lado dele. */
+  .frente-fluxo{display:flex;align-items:center;gap:10px;margin-left:auto}
   .frente-fluxo span{font:600 11px/1.4 var(--mono);color:var(--read);
     background:var(--sunken);border:1px solid var(--edge);
     border-radius:var(--r-chip);padding:4px 9px}
@@ -477,6 +480,53 @@
   .copiar:hover{border-color:var(--apex);color:var(--bright)}
   .copiar.feito{border-color:var(--pace);color:var(--pace)}
   .saida.interna .saida-cabeca b{color:var(--drift)}
+
+  /* O mesmo invólucro, com o texto editável: a leitura do período cita nome
+     de praça, e o padrão de nomenclatura não tem acento — "Jundiai" vira
+     "Jundiaí" na mão antes de colar.
+
+     E em fonte de texto, não na monoespaçada do bloco de verba. Lá são oito
+     linhas de "rótulo: valor", que a mono alinha; aqui são 200 palavras de
+     prosa que o operador precisa RELER caçando o acento que falta, e ler
+     prosa em mono é mais lento. É também como o cliente vai ver a mensagem
+     do outro lado. */
+  .saida-edit{display:block;width:100%;min-height:0;border:0;border-radius:0;
+    font:14.5px/1.75 var(--sans);color:var(--bright);resize:none;
+    overflow:hidden}
+  .saida-edit:hover{border:0;background:var(--riser)}
+  .saida-edit:focus{border:0;outline:none;box-shadow:inset 0 0 0 1px var(--apex)}
+
+  /* ==================================================================== */
+  /* VEREDITO — a assinatura da leitura rápida                            */
+  /* ==================================================================== */
+  /* Esta frente responde "como foi o mês?", e o selo é a resposta antes de
+     qualquer texto. Os três números ao lado são os que o prompt manda
+     priorizar, na ordem em que o primeiro parágrafo os escreve. */
+  .veredito{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;
+    border:1px solid var(--edge);border-radius:var(--r-lg);overflow:hidden;
+    margin:0 0 26px;background:var(--slab)}
+  .veredito-selo{display:flex;flex-direction:column;justify-content:center;
+    gap:7px;padding:18px 24px;min-width:190px;
+    border-right:1px solid var(--edge)}
+  .veredito-rot{font:600 10px/1 var(--mono);letter-spacing:.14em;
+    text-transform:uppercase;color:var(--faint)}
+  .veredito-selo strong{font:800 26px/1 var(--sans);letter-spacing:-.01em;
+    color:var(--bright)}
+  .veredito.otimo .veredito-selo{background:linear-gradient(180deg,
+    rgba(76,159,112,.12),transparent)}
+  .veredito.otimo .veredito-selo strong{color:var(--pace)}
+  .veredito.atencao .veredito-selo{background:var(--apex-wash)}
+  .veredito.atencao .veredito-selo strong{color:var(--apex-lit)}
+  /* BOM não ganha cor: é o meio da escada, e pintá-lo de verde ou de âmbar
+     apagaria a diferença entre "saudável" e "acima do esperado". */
+  .veredito-nums{display:flex;flex:1;flex-wrap:wrap;margin:0;
+    background:var(--sunken)}
+  .veredito-nums > div{flex:1;min-width:130px;padding:18px 22px;
+    border-left:1px solid var(--edge-soft)}
+  .veredito-nums > div:first-child{border-left:0}
+  .veredito-nums dt{font:12px/1.3 var(--sans);color:var(--faint);
+    margin-bottom:6px}
+  .veredito-nums dd{margin:0;font:700 17px/1.2 var(--mono);color:var(--bright)}
 
   /* ==================================================================== */
   /* TRILHO DE FECHAMENTO — a assinatura da frente de verba               */
@@ -540,6 +590,16 @@
     .trabalho{overflow:visible}
     .miolo-home{padding:32px 22px}
   }
+  /* Janela baixa (notebook com barra de favoritos, ou navegador não
+     maximizado): a home aperta o respiro vertical em vez de empurrar o
+     terceiro cartão para fora. É a única frente que se importa — as outras
+     telas rolam como documento e sempre roleram. Limite medido: abaixo disto
+     os 526px de conteúdo mais o padrão de respiro não cabem. */
+  @media (max-height:700px){
+    .miolo-home{padding-top:16px;padding-bottom:16px}
+    .frentes{gap:10px;margin-top:14px}
+    .frente{padding:14px 20px}
+  }
   @media (max-width:720px){
     .campos{grid-template-columns:1fr}
     .anexos-head,.anexo{grid-template-columns:32px 1fr 68px 32px}
@@ -549,6 +609,8 @@
     h1{font-size:22px}
     .kpis{grid-template-columns:1fr}
     .frente-nome strong{font-size:18px}
+    .frente-fluxo{margin-left:0;width:100%;margin-top:12px;padding-top:11px;
+      border-top:1px solid var(--edge)}
     /* Em 390px cabem logo, marca e os dois chips, mas sem folga: o rótulo da
        etapa sai e fica só o número, que é o que se lê de relance. Medido —
        `scrollWidth` continua igual à viewport nas duas versões; isto é
