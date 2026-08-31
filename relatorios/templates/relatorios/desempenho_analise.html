@@ -7,6 +7,45 @@
 {% block cls_etapa1 %}concluida{% endblock %}
 {% block cls_etapa2 %}ativa{% endblock %}
 
+{% block estilos %}
+  /* Esta frente tem uma conferência larga. O teto global de 1080px deixava
+     uma faixa vazia entre o conteúdo e a sidebar em monitores desktop. */
+  #form-desempenho{--aside-w:340px;--leitura:1360px}
+  #form-desempenho .trabalho{padding-inline:clamp(24px,2.5vw,42px)}
+  #form-desempenho .kpis{
+    grid-template-columns:repeat(5,minmax(0,1fr));gap:12px
+  }
+  #form-desempenho .desempenho-texto-grid{
+    display:grid;grid-template-columns:minmax(0,1.85fr) minmax(260px,1fr);
+    gap:18px;align-items:start
+  }
+  #form-desempenho .desempenho-saida{margin-bottom:0;box-shadow:var(--sombra)}
+  #form-desempenho .desempenho-saida .saida-cabeca{padding:12px 16px}
+  #form-desempenho .desempenho-saida .saida-edit{
+    padding:20px 22px;line-height:1.72
+  }
+  #form-desempenho .desempenho-texto-nota{
+    margin:0;padding:15px 16px;border:1px solid var(--edge);
+    border-left:2px solid var(--apex);border-radius:var(--r);
+    background:var(--slab);color:var(--faint);font:12.5px/1.6 var(--sans)
+  }
+  #form-desempenho .desempenho-texto-nota b{
+    display:block;margin-bottom:6px;color:var(--ink);font-size:12px;
+    letter-spacing:.08em;text-transform:uppercase
+  }
+  #form-desempenho .desempenho-texto-nota p{margin:0}
+  @media (max-width:1200px){
+    #form-desempenho{--aside-w:320px;--leitura:1180px}
+    #form-desempenho .kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+    #form-desempenho .desempenho-texto-grid{grid-template-columns:1fr}
+  }
+  @media (max-width:720px){
+    #form-desempenho .trabalho{padding-inline:18px}
+    #form-desempenho .kpis{grid-template-columns:1fr}
+    #form-desempenho .desempenho-saida .saida-edit{padding:17px 18px}
+  }
+{% endblock %}
+
 {% block conteudo %}
 <h1>{{ cliente }}</h1>
 <p class="sub">{% if periodo %}{{ periodo }}{% else %}Período não informado no
@@ -17,8 +56,7 @@
   <span class="erro-corpo">{{ erro_ia }}</span>
 </div>
 {% endif %}
-{% if texto_ia_gerado %}<div class="aviso"><span class="erro-corpo">Texto
-  reescrito pela IA. O do cálculo continua a um clique de distância.</span></div>{% endif %}
+{% if texto_ia_gerado %}<div class="aviso"><span class="erro-corpo">Nova versão gerada com IA.</span></div>{% endif %}
 {% if restaurado %}<div class="aviso"><span class="erro-corpo">De volta ao
   texto do cálculo.</span></div>{% endif %}
 
@@ -63,23 +101,27 @@ enquanto não existir faixa de referência calibrada para este preset; dar um
   <span class="bloco-rule"></span>
 </div>
 {% comment %}
-Editável, como a mensagem da verba não é: este texto pode citar nome de
-conjunto, e o nome sai do padrão de nomenclatura em CAIXA ALTA e sem acento.
-Travá-lo obrigaria a corrigir depois de colar, que é onde o erro passa batido.
+Editável para o ajuste final do operador, mas já sai sem nomenclatura técnica.
+O nome cru pertence à conferência abaixo; texto do cliente fala da campanha.
 {% endcomment %}
-<div class="saida">
-  <div class="saida-cabeca">
-    <b>WhatsApp</b>
-    <span>{% if do_motor %}da análise · editável{% else %}reescrita pela IA · editável{% endif %}</span>
-    <button type="button" class="copiar" data-alvo="txt-desempenho">Copiar texto</button>
+<div class="desempenho-texto-grid">
+  <div class="saida desempenho-saida">
+    <div class="saida-cabeca">
+      <b>WhatsApp</b>
+      <span>{% if do_motor %}da análise · editável{% else %}reescrita pela IA · editável{% endif %}</span>
+      <button type="button" class="copiar" data-alvo="txt-desempenho">Copiar texto</button>
+    </div>
+    <textarea class="saida-texto saida-edit" id="txt-desempenho" name="texto"
+              spellcheck="true" aria-label="Análise de desempenho">{{ texto }}</textarea>
   </div>
-  <textarea class="saida-texto saida-edit" id="txt-desempenho" name="texto"
-            spellcheck="true" aria-label="Análise de desempenho">{{ texto }}</textarea>
+  <aside class="desempenho-texto-nota" aria-label="Cuidados antes de copiar">
+    <b>Antes de copiar</b>
+    <p>O texto trata só do que está marcado acima e não afirma causa: a
+      frequência é relatada como frequência, não como diagnóstico de
+      criativo. O nome técnico da campanha fica nesta tela e não vai para o
+      cliente — editar o texto aqui não desfaz nada do cálculo.</p>
+  </aside>
 </div>
-<p class="legenda">O texto trata só do que está marcado acima e não afirma
-  causa: a frequência é relatada como frequência, não como diagnóstico de
-  criativo. O nome técnico da campanha fica nesta tela e não vai para o
-  cliente — editar o texto aqui não desfaz nada do cálculo.</p>
 
 <div class="bloco">
   <span class="bloco-idx">{% if tem_selecao %}04{% else %}03{% endif %}</span>

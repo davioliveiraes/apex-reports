@@ -13,6 +13,7 @@ import io
 import json
 
 from django.test import SimpleTestCase, TestCase
+from django.utils.html import strip_tags
 from openpyxl import Workbook
 
 from relatorios import analise_desempenho as ad
@@ -307,6 +308,38 @@ class AgregacaoDeVariosConjuntosTest(SimpleTestCase):
             conjunto(), conjunto(nome="[LEADS][B][V1]", veiculacao="paused")])
         self.assertEqual((ag["n_conjuntos"], ag["n_ativos"]), (2, 1))
 
+    def test_sem_coluna_de_veiculacao_infere_ativo_pelo_indicador(self):
+        linha = conjunto(veiculacao=None)
+        ag = ad.consolidar([linha])
+        self.assertTrue(ag["conjuntos"][0]["ativa"])
+        self.assertEqual(ag["n_ativos"], 1)
+
+    def test_indicador_vazio_sem_veiculacao_vira_desativado(self):
+        linha = conjunto(veiculacao=None, resultados=0, conversas=0, novos=0)
+        linha["indicador"] = None
+        ag = ad.consolidar([linha])
+        self.assertFalse(ag["conjuntos"][0]["ativa"])
+        self.assertEqual(ag["n_ativos"], 0)
+
+    def test_status_explicito_continua_soberano_sobre_o_indicador(self):
+        linha = conjunto(veiculacao="paused")
+        self.assertTrue(linha["indicador"])
+        ag = ad.consolidar([linha])
+        self.assertFalse(ag["conjuntos"][0]["ativa"])
+
+    def test_conferencia_exibe_status_binario_em_portugues(self):
+        from relatorios.views_desempenho import _para_tela
+        ativa_sem_coluna = conjunto(veiculacao=None)
+        inativa_sem_coluna = conjunto(
+            nome="Campanha inativa", veiculacao=None, resultados=0,
+            conversas=0, novos=0)
+        inativa_sem_coluna["indicador"] = None
+        linhas = _para_tela(ad.consolidar(
+            [ativa_sem_coluna, inativa_sem_coluna]))
+        por_nome = {linha["nome"]: linha["veiculacao"] for linha in linhas}
+        self.assertEqual(por_nome[ativa_sem_coluna["conjunto"]], "Ativo")
+        self.assertEqual(por_nome["Campanha inativa"], "Desativado")
+
 
 def selecionadas(linhas, chaves=None):
     """As linhas que sobram da seleção, na mesma ordem da view.
@@ -482,8 +515,13 @@ class TextoDoClienteTest(SimpleTestCase):
             with self.subTest(ausente=ausente):
                 self.assertNotIn(ausente, self.texto.lower())
 
-    def test_tem_tres_paragrafos_com_um_conjunto_so(self):
-        self.assertEqual(len(self.texto.split("\n\n")), 3)
+    def test_comeca_com_titulo_curto_para_whatsapp(self):
+        self.assertTrue(self.texto.startswith("*Desempenho*\n\n"))
+
+    def test_tem_titulo_e_tres_paragrafos_com_uma_campanha_so(self):
+        blocos = self.texto.split("\n\n")
+        self.assertEqual(blocos[0], "*Desempenho*")
+        self.assertEqual(len(blocos[1:]), 3)
 
     def test_nao_e_longo(self):
         self.assertLess(len(self.texto.split()), 180)
@@ -637,10 +675,20 @@ class FluxoDesempenhoTest(TestCase):
                 self.assertIn(valor, html)
 
     def test_a_tela_traz_o_texto_num_campo_copiavel(self):
-        html = self._enviar().content.decode()
+        r = self._enviar()
+        html = r.content.decode()
         self.assertIn('id="txt-desempenho"', html)
         self.assertIn('data-alvo="txt-desempenho"', html)
         self.assertIn("Copiar texto", html)
+        self.assertTrue(r.context["texto"].startswith("*Desempenho*\n\n"))
+
+    def test_o_layout_utiliza_so_classes_especificas_de_desempenho(self):
+        html = self._enviar().content.decode()
+        self.assertIn('id="form-desempenho"', html)
+        self.assertIn('class="desempenho-texto-grid"', html)
+        self.assertIn('class="saida desempenho-saida"', html)
+        self.assertIn('class="desempenho-texto-nota"', html)
+        self.assertIn("#form-desempenho .desempenho-texto-grid", html)
 
     def test_a_conferencia_mostra_o_nome_cru(self):
         """A interface mostra o nome que existe no Gerenciador — é por ele que
@@ -651,13 +699,17 @@ class FluxoDesempenhoTest(TestCase):
         self.assertIn("[ADV+][AUTO][LEADS][V1]", html)
         self.assertNotIn("[ADV+]", r.context["texto"])
 
+    def test_a_conferencia_traduz_veiculacao_ativa(self):
+        r = self._enviar()
+        self.assertContains(r, ">Ativo<")
+
     @staticmethod
     def _sem_estilo(html):
         """O HTML sem o <style>, que é inline e traz "Gerar PDF" num
         comentário de CSS — o teste precisa olhar o que é renderizado, não o
         que está escrito na folha de estilo."""
         antes, _, resto = html.partition("<style>")
-        return antes + resto.partition("</style>")[2]
+        return strip_tags(antes + resto.partition("</style>")[2])
 
     def test_nao_ha_pdf_em_lugar_nenhum_do_fluxo(self):
         """A §10 e a §16: a saída desta frente é texto."""
@@ -734,6 +786,11 @@ class PayloadDaIATest(TestCase):
         from relatorios.views_desempenho import _payload
         return _payload(ad.consolidar(selecionadas(linhas, chaves)))
 
+    def _mensagem(self, linhas, chaves=None):
+        from relatorios.views_desempenho import _mensagem_usuario_ia
+        payload = self._payload(linhas, chaves)
+        return _mensagem_usuario_ia("*Desempenho*\n\nTexto seguro.", payload)
+
     def test_leva_as_metricas_da_campanha_selecionada(self):
         dados = self._payload([campanha(
             resultados=557, custo=2.68, alcance=25865, impressoes=122901,
@@ -757,8 +814,10 @@ class PayloadDaIATest(TestCase):
         for i, linhas in enumerate(casos):
             with self.subTest(caso=i):
                 bruto = json.dumps(self._payload(linhas), ensure_ascii=False)
+                mensagem = self._mensagem(linhas)
                 for lixo in ("None", "null", "NaN", "nan", "undefined"):
                     self.assertNotIn(lixo, bruto)
+                    self.assertNotIn(lixo, mensagem)
 
     def test_metrica_ausente_sai_do_payload(self):
         dados = self._payload([campanha(novos=0)])
@@ -778,16 +837,44 @@ class PayloadDaIATest(TestCase):
         self.assertNotIn("morta", bruto)
         self.assertNotIn("campanhas", bruto)
 
-    def test_o_prompt_proibe_falar_em_conjuntos(self):
+    def test_o_system_prompt_define_o_novo_contrato_consultivo(self):
         from relatorios import redator_ia
         prompt = redator_ia.PROMPT_REESCRITA_DESEMPENHO
+        self.assertIn("linha exata `*Desempenho*`", prompt)
+        self.assertIn("exatamente quatro parágrafos", prompt)
+        self.assertIn("Não use nem repita números ou métricas nesse parágrafo", prompt)
         self.assertIn("Nunca fale em conjunto", prompt)
-        self.assertIn("EXCLUSIVAMENTE ao que o operador marcou", prompt)
-        # A seleção virou múltipla, e o modelo não pode "corrigir" o número
-        # gramatical do motor — nem para o singular, nem para o plural.
-        self.assertIn("Mantenha o número gramatical", prompt)
-        self.assertIn("Não exponha o nome técnico", prompt)
-        self.assertIn("Não altere nenhum número", prompt)
+        self.assertIn("Nunca altere, recalcule, substitua, invente, omita", prompt)
+        self.assertIn("sem inventar causalidade", prompt)
+        self.assertIn("ação de teste para o próximo ciclo", prompt)
+        self.assertIn("Não peça novos criativos em toda resposta", prompt)
+        self.assertIn("não recebe o XLSX", prompt)
+        self.assertIn("português do Brasil", prompt)
+        self.assertIn("retorne apenas o texto final", prompt)
+        self.assertNotIn("mesmo número de parágrafos", prompt)
+
+    def test_o_user_prompt_leva_dados_estruturados_e_o_texto_como_referencia(self):
+        mensagem = self._mensagem([campanha(
+            resultados=557, custo=2.68, alcance=25865, impressoes=122901,
+            cpm=12.16, novos=387)])
+        for campo in ("PERÍODO", "RESULTADO PRINCIPAL", "TIPO DE RESULTADO",
+                      "CUSTO POR RESULTADO", "CONVERSAS INICIADAS",
+                      "CUSTO POR CONVERSA", "NOVOS CONTATOS",
+                      "PERCENTUAL DE NOVOS CONTATOS", "ALCANCE",
+                      "IMPRESSÕES", "FREQUÊNCIA", "CPM"):
+            with self.subTest(campo=campo):
+                self.assertIn(campo, mensagem)
+        self.assertIn("DADOS E FATOS VALIDADOS", mensagem)
+        self.assertIn("TEXTO DETERMINÍSTICO — REFERÊNCIA FACTUAL ADICIONAL",
+                      mensagem)
+        self.assertIn("*Desempenho*\n\nTexto seguro.", mensagem)
+        self.assertIn("fonte principal", mensagem)
+        self.assertIn("quarto parágrafo consultivo", mensagem)
+
+    def test_o_user_prompt_remove_a_metrica_ausente(self):
+        mensagem = self._mensagem([campanha(novos=0)])
+        self.assertNotIn("\nNOVOS CONTATOS\n", mensagem)
+        self.assertNotIn("PERCENTUAL DE NOVOS CONTATOS", mensagem)
 
 
 class CasoDeReferenciaTest(SimpleTestCase):
@@ -825,9 +912,11 @@ class CasoDeReferenciaTest(SimpleTestCase):
             with self.subTest(proibido=proibido):
                 self.assertNotIn(proibido.lower(), texto.lower())
 
-    def test_tem_tres_paragrafos_e_e_curto(self):
+    def test_tem_titulo_tres_paragrafos_e_e_curto(self):
         texto = self._texto()
-        self.assertEqual(len(texto.split("\n\n")), 3)
+        blocos = texto.split("\n\n")
+        self.assertEqual(blocos[0], "*Desempenho*")
+        self.assertEqual(len(blocos[1:]), 3)
         self.assertLess(len(texto.split()), 140)
 
     def test_nao_diagnostica_causa(self):

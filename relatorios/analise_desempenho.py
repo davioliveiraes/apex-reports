@@ -200,6 +200,15 @@ def _conjunto(linha, indice):
     else:
         investimento = 0.0
 
+    veiculacao = str(linha.get("veiculacao") or "").strip()
+    # O export no nível de campanha não traz a coluna de veiculação. Nesse
+    # caso, o próprio Meta só preenche `Indicador de resultados` na linha que
+    # teve o resultado configurado/entregue; as linhas inativas do arquivo de
+    # referência deixam o campo vazio. Um status explícito continua soberano:
+    # `paused` não vira ativo só porque há um indicador histórico.
+    indicador_preenchido = bool(str(linha.get("indicador") or "").strip())
+    esta_ativa = ativa(veiculacao) if veiculacao else indicador_preenchido
+
     return {
         # O nome CRU, como ele está na planilha — é por ele que o operador
         # acha a linha no Gerenciador. Lê as duas colunas porque o preset sai
@@ -212,8 +221,8 @@ def _conjunto(linha, indice):
         # que sobre várias linhas, e o texto continua no singular.
         "campanha": str(linha.get("campanha") or "").strip(),
         "rotulo": rotulo_da_linha(linha, indice),
-        "veiculacao": linha.get("veiculacao") or "",
-        "ativa": ativa(linha.get("veiculacao")),
+        "veiculacao": veiculacao,
+        "ativa": esta_ativa,
         "resultados": resultados,
         "custo_resultado": (float(custo) if custo is not None
                             else (investimento / resultados
@@ -257,17 +266,18 @@ def voz(agregado):
 def redigir(agregado):
     """A leitura das campanhas marcadas, pronta para colar no WhatsApp.
 
-    Três parágrafos, sempre os mesmos: o que foi produzido, como a entrega
-    aconteceu, e o que se lê disso. Sem comparação entre campanhas — o que
-    ficou marcado entra somado, e o que ficou de fora não entra nem como pano
-    de fundo.
+    Um título curto e três parágrafos, sempre os mesmos: o que foi produzido,
+    como a entrega aconteceu, e o que se lê disso. Sem comparação entre
+    campanhas — o que ficou marcado entra somado, e o que ficou de fora não
+    entra nem como pano de fundo.
 
     A campanha nunca é chamada pelo nome. `[LEADS][CELULAR-BOLETO][BRAGANCA]`
     é a nossa nomenclatura interna e não diz nada a quem recebe a mensagem; o
     nome fica na tela, onde o operador confere o que está lendo.
     """
-    return "\n\n".join(p for p in (_resultado(agregado), _entrega(agregado),
-                                    _leitura(agregado)) if p)
+    paragrafos = (_resultado(agregado), _entrega(agregado),
+                  _leitura(agregado))
+    return "\n\n".join(("*Desempenho*", *(p for p in paragrafos if p)))
 
 
 def _resultado(ag):

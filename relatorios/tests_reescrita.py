@@ -21,6 +21,17 @@ from relatorios import redator_ia
 from relatorios.tests_desempenho import planilha
 
 
+NOVA_DESEMPENHO = """*Desempenho*
+
+No intervalo de 30/07/2026 a 28/08/2026, o principal resultado da campanha foi a geração de 393 conversas, com custo médio de R$ 4,52 por contato iniciado.
+
+A entrega chegou a 22.498 pessoas por meio de 100.012 impressões, com frequência de 4,45 e CPM de R$ 17,78. Dentro do volume observado, 288 vieram de novos contatos, participação equivalente a 73%.
+
+A leitura do período combina continuidade na geração de oportunidades e presença relevante de pessoas que ainda não haviam iniciado contato. A recorrência da exposição permanece como o principal ponto para acompanhar ao lado da evolução do custo.
+
+Para este momento, o cenário é positivo e indica continuidade no trabalho de mídia. Vamos observar se esse comportamento se mantém nas próximas leituras e ajustar a comunicação caso apareça uma mudança relevante."""
+
+
 class GuardaDosNumerosTest(SimpleTestCase):
     """A checagem que transforma "não invente dado" em garantia.
 
@@ -180,26 +191,111 @@ class ReescritaNasTelasTest(TestCase):
 
     def test_a_reescrita_substitui_o_texto_na_tela(self):
         destino = self._abrir("/desempenho/")
-        nova = "Outra redação: 393 conversas a R$ 4,52 no período."
-        with mock.patch.object(redator_ia, "_chamar", return_value=nova):
+        with mock.patch.object(redator_ia, "_chamar",
+                               return_value=NOVA_DESEMPENHO):
             with mock.patch.object(redator_ia, "disponivel",
                                    return_value=True):
                 r = self.client.post(destino, {"desempenho_ia": "1"})
         self.assertContains(r, "reescrita pela IA")
-        self.assertIn(nova, r.content.decode())
+        self.assertContains(r, "Nova versão gerada com IA.")
+        self.assertIn(NOVA_DESEMPENHO, r.content.decode())
+
+    def test_desempenho_envia_system_e_user_prompts_especificos(self):
+        destino = self._abrir("/desempenho/")
+        with mock.patch.object(redator_ia, "_chamar",
+                               return_value=NOVA_DESEMPENHO) as chamar:
+            with mock.patch.object(redator_ia, "disponivel", return_value=True):
+                self.client.post(destino, {"desempenho_ia": "1"})
+        mensagens = chamar.call_args[0][0]
+        self.assertEqual(mensagens[0]["content"],
+                         redator_ia.PROMPT_REESCRITA_DESEMPENHO)
+        usuario = mensagens[1]["content"]
+        self.assertIn("DADOS E FATOS VALIDADOS", usuario)
+        self.assertIn("RESULTADO PRINCIPAL\n393", usuario)
+        self.assertIn("ALCANCE\n22.498", usuario)
+        self.assertIn("TEXTO DETERMINÍSTICO — REFERÊNCIA FACTUAL", usuario)
+        self.assertIn("quarto parágrafo consultivo", usuario)
+        self.assertNotIn("texto_atual", usuario)
+        self.assertNotIn("numeros_do_periodo", usuario)
 
     def test_voltar_ao_motor_desfaz_num_clique(self):
         """Sem isto, desfazer uma reescrita de que o operador não gostou
         exigiria reenviar o arquivo."""
         destino = self._abrir("/desempenho/")
-        nova = "Outra redação: 393 conversas a R$ 4,52 no período."
-        with mock.patch.object(redator_ia, "_chamar", return_value=nova):
+        with mock.patch.object(redator_ia, "_chamar",
+                               return_value=NOVA_DESEMPENHO):
             with mock.patch.object(redator_ia, "disponivel",
                                    return_value=True):
                 self.client.post(destino, {"desempenho_ia": "1"})
                 r = self.client.post(destino, {"voltar_ao_motor": "1"})
         self.assertContains(r, "De volta ao")
-        self.assertNotIn(nova, r.content.decode())
+        self.assertNotIn(NOVA_DESEMPENHO, r.content.decode())
+
+    def test_desempenho_recusa_reescrita_sem_o_titulo(self):
+        destino = self._abrir("/desempenho/")
+        sem_titulo = NOVA_DESEMPENHO.removeprefix("*Desempenho*\n\n")
+        with mock.patch.object(redator_ia, "_chamar", return_value=sem_titulo):
+            with mock.patch.object(redator_ia, "disponivel", return_value=True):
+                r = self.client.post(destino, {"desempenho_ia": "1"})
+        self.assertContains(r, "não começou com *Desempenho*")
+        self.assertTrue(r.context["texto"].startswith("*Desempenho*\n\n"))
+
+    def test_desempenho_recusa_reescrita_que_omite_numero(self):
+        destino = self._abrir("/desempenho/")
+        sem_alcance = NOVA_DESEMPENHO.replace("22.498", "o público alcançado")
+        with mock.patch.object(redator_ia, "_chamar", return_value=sem_alcance):
+            with mock.patch.object(redator_ia, "disponivel", return_value=True):
+                r = self.client.post(destino, {"desempenho_ia": "1"})
+        self.assertContains(r, "omitiu número do cálculo")
+        self.assertIn("22.498", r.context["texto"])
+
+    def test_desempenho_recusa_reescrita_que_fala_em_conjunto(self):
+        destino = self._abrir("/desempenho/")
+        com_conjunto = NOVA_DESEMPENHO.replace("a campanha", "o conjunto", 1)
+        with mock.patch.object(redator_ia, "_chamar",
+                               return_value=com_conjunto) as chamar:
+            with mock.patch.object(redator_ia, "disponivel", return_value=True):
+                r = self.client.post(destino, {"desempenho_ia": "1"})
+        self.assertEqual(chamar.call_count, 2)
+        self.assertContains(r, "citou conjunto")
+        self.assertNotIn("o conjunto", r.context["texto"].lower())
+
+    def test_primeiro_clique_refaz_resposta_invalida_sem_aplicar_selecao(self):
+        destino = self._abrir("/desempenho/")
+        self.assertNotIn("campanhas", self.client.session["desempenho_apex"])
+        invalida = NOVA_DESEMPENHO.replace("a campanha", "o conjunto", 1)
+        with mock.patch.object(redator_ia, "_chamar",
+                               side_effect=[invalida,
+                                            NOVA_DESEMPENHO]) as chamar:
+            with mock.patch.object(redator_ia, "disponivel", return_value=True):
+                r = self.client.post(destino, {"desempenho_ia": "1"})
+        self.assertEqual(chamar.call_count, 2)
+        self.assertContains(r, "Nova versão gerada com IA.")
+        self.assertEqual(r.context["texto"], NOVA_DESEMPENHO)
+        reforco = chamar.call_args_list[1][0][0][1]["content"]
+        self.assertIn("CORREÇÃO OBRIGATÓRIA", reforco)
+
+    def test_desempenho_exige_quatro_paragrafos_depois_do_titulo(self):
+        destino = self._abrir("/desempenho/")
+        sem_quarto = "\n\n".join(NOVA_DESEMPENHO.split("\n\n")[:-1])
+        with mock.patch.object(redator_ia, "_chamar", return_value=sem_quarto):
+            with mock.patch.object(redator_ia, "disponivel", return_value=True):
+                r = self.client.post(destino, {"desempenho_ia": "1"})
+        self.assertContains(r, "não veio com os quatro parágrafos")
+        self.assertNotIn(sem_quarto, r.context["texto"])
+
+    def test_desempenho_exige_ultimo_paragrafo_sem_numeros(self):
+        destino = self._abrir("/desempenho/")
+        blocos = NOVA_DESEMPENHO.split("\n\n")
+        blocos[-1] = ("Para este momento, vamos acompanhar as 393 conversas "
+                      "nas próximas leituras.")
+        com_metrica_no_fim = "\n\n".join(blocos)
+        with mock.patch.object(redator_ia, "_chamar",
+                               return_value=com_metrica_no_fim):
+            with mock.patch.object(redator_ia, "disponivel", return_value=True):
+                r = self.client.post(destino, {"desempenho_ia": "1"})
+        self.assertContains(r, "último parágrafo repetiu números")
+        self.assertNotIn(com_metrica_no_fim, r.context["texto"])
 
     def test_falha_da_ia_preserva_o_texto_do_motor(self):
         """O texto do cálculo é refeito a cada renderização — ele nunca saiu
@@ -329,6 +425,24 @@ class SuperficieDaReescritaTest(SimpleTestCase):
             fonte = io.open(modulo.__file__, encoding="utf-8").read()
             with self.subTest(modulo=modulo.__name__):
                 self.assertIn(prompt, fonte)
+
+    def test_so_desempenho_monta_mensagem_usuario_especifica(self):
+        from relatorios import (views_desempenho, views_leitura,
+                                views_rastreamento, views_verba)
+        desempenho = io.open(views_desempenho.__file__, encoding="utf-8").read()
+        self.assertIn("mensagem_usuario=", desempenho)
+        for modulo in (views_leitura, views_rastreamento, views_verba):
+            fonte = io.open(modulo.__file__, encoding="utf-8").read()
+            with self.subTest(modulo=modulo.__name__):
+                self.assertNotIn("mensagem_usuario=", fonte)
+
+    def test_outros_prompts_nao_herdam_o_contrato_de_quatro_paragrafos(self):
+        for prompt in (redator_ia.PROMPT_REESCRITA_LEITURA,
+                       redator_ia.PROMPT_REESCRITA_RASTREAMENTO,
+                       redator_ia.PROMPT_REESCRITA_VERBA):
+            with self.subTest(prompt=prompt[:40]):
+                self.assertNotIn("PARÁGRAFO 4", prompt)
+                self.assertIn("REGRAS ABSOLUTAS", prompt)
 
     def test_a_reescrita_nunca_recebe_o_arquivo(self):
         """O modelo não recebe o que ele poderia inventar: só os números que
