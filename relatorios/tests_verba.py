@@ -297,25 +297,34 @@ class DenominadorDoRitmoTest(SimpleTestCase):
     """O número que decide entre "esperar" e "investigar leilão"."""
 
     def test_o_caso_rei_do_celular(self):
-        # Guia, agosto/2026: campanha no ar desde 17/08, conferência em 25/08,
-        # R$ 990/mês contratados. Dividir por dias veiculados dá subentrega
-        # leve; por dias encerrados, subentrega crítica. Mesma planilha.
+        """Campanha no ar desde 17/08 num export de 01/08 a 24/08.
+
+        O desvio compara o gasto com o previsto dos 24 dias apurados — e dá
+        -39%, porque a campanha só rodou 8 deles. O número é esse mesmo: o
+        cliente pagou por um período em que a entrega não aconteceu.
+
+        Quem impede a leitura errada é o denominador do ritmo. `ritmo_real`
+        divide por dias VEICULADOS, não por dias apurados, e é ele que mostra
+        que enquanto rodou a campanha gastou acima do contratado. Sem essa
+        divisão, "gastou pouco" e "rodou pouco" viram a mesma frase.
+        """
         calc = fv.calcular([_estrutura(466.75, 58.0, "2026-08-17")],
                            contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
-        self.assertEqual(calc["dias_encerrados"], 24)
+        self.assertEqual(calc["dias_apurados"], 24)
         self.assertEqual(calc["dias_veiculados"], 8)
-        self.assertAlmostEqual(calc["desvio_pct"], -11.6, places=1)
+        self.assertAlmostEqual(calc["desvio_pct"], -39.1, places=1)
 
-        errado = 466.75 / calc["dias_encerrados"]
-        projecao_errada = 466.75 + errado * calc["dias_restantes"]
-        self.assertAlmostEqual(projecao_errada / 990 - 1, -0.391, places=3)
+        # R$ 58/dia enquanto rodou, contra os R$ 32/dia do contrato.
+        self.assertAlmostEqual(calc["ritmo_real"], 466.75 / 8, places=2)
+        self.assertGreater(calc["taxa_escoamento"], 150)
+        self.assertTrue(calc["periodo_parcial"])
 
     def test_campanha_de_mes_anterior_trava_no_dia_primeiro(self):
         # Sem a trava seriam 170+ dias veiculados, e o ritmo sairia diluído.
         calc = fv.calcular([_estrutura(760.0, 32.0, "2026-03-05")],
                            contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
         self.assertEqual(calc["dias_veiculados"], 24)
-        self.assertFalse(calc["ciclo_parcial"])
+        self.assertFalse(calc["periodo_parcial"])
 
     def test_campanha_sem_gasto_nao_estica_o_denominador(self):
         # A que gastou subiu dia 17; a que nunca gastou está no ar desde o dia
@@ -335,7 +344,7 @@ class DenominadorDoRitmoTest(SimpleTestCase):
                            contratado_ciclo=930.0,
                            inicio_relatorio=date(2026, 8, 1),
                            termino_relatorio=date(2026, 8, 1))
-        self.assertEqual(calc["dias_encerrados"], 1)
+        self.assertEqual(calc["dias_apurados"], 1)
         self.assertEqual(calc["dias_veiculados"], 1)
 
 
@@ -350,20 +359,35 @@ class DiasDoMesTest(SimpleTestCase):
     def test_o_contratado_diario_sai_dos_dias_reais(self):
         calc = fv.calcular([_estrutura(0.0, 0.0, "2026-02-01")],
                            contratado_ciclo=280.0, **_export(date(2026, 2, 15)))
-        self.assertEqual(calc["dias_do_ciclo"], 28)
+        self.assertEqual(calc["dias_do_contrato"], 28)
         self.assertEqual(calc["contratado_diario"], 10.0)
 
-    def test_o_diario_e_o_ciclo_dividido_pelos_dias_do_ciclo(self):
+    def test_o_diario_e_o_contratado_dividido_pelos_dias_do_contrato(self):
         calc = fv.calcular([_estrutura(0.0, 0.0, "2026-08-01")],
                            contratado_ciclo=990.0, **_export(date(2026, 8, 15)))
         self.assertAlmostEqual(calc["contratado_diario"], 990.0 / 31, 4)
+        self.assertEqual(calc["dias_do_contrato"], 31)
 
-    def test_o_diario_nunca_e_digitado(self):
-        """Havia dois campos que podiam discordar — mensal e diário. O diário
-        virou divisão, e a divergência deixou de existir por construção."""
+    def test_so_um_numero_do_contratado_e_digitado(self):
+        """Havia dois campos que podiam discordar — mensal e diário. Hoje há
+        um campo e uma unidade: o outro número é sempre derivado, e a
+        divergência não tem por onde entrar.
+
+        "Por dia" voltou em 31/08/2026 como unidade, e não como segundo campo.
+        O teste é justamente que a volta não trouxe o defeito junto.
+        """
         self.assertNotIn("contratado_diario", fv.calcular.__code__.co_varnames)
-        self.assertNotIn("diario", [c[0] for c in
-                                    forms.VerbaBaseForm.PERIODICIDADES])
+        campos = [c for c in forms.VerbaUploadForm().fields
+                  if "orcamento" in c or "diario" in c or "contratado" in c]
+        self.assertEqual(campos, ["orcamento"])
+
+    def test_o_diario_digitado_nao_passa_por_divisao_nenhuma(self):
+        """A ponta invertida: com "por dia" o valor digitado JÁ É a diária."""
+        calc = fv.calcular([_estrutura(0.0, 0.0, "2026-08-01")],
+                           contratado_ciclo=150.0, periodo=fv.CICLO_DIARIO,
+                           **_export(date(2026, 8, 15)))
+        self.assertEqual(calc["contratado_diario"], 150.0)
+        self.assertEqual(calc["contratado_unidade"], 150.0)
 
 
 class StatusTest(SimpleTestCase):
@@ -391,22 +415,23 @@ class StatusTest(SimpleTestCase):
     def test_pouco_abaixo(self):
         calc = self._status(700.0)
         self.assertEqual(calc["status"], fv.STATUS_POUCO_ABAIXO)
-        self.assertIn("levemente abaixo", fv.frase_status(calc))
+        self.assertIn("um pouco abaixo do previsto", fv.frase_status(calc))
 
     def test_abaixo(self):
         calc = self._status(500.0)
         self.assertEqual(calc["status"], fv.STATUS_ABAIXO)
-        self.assertIn("verificando o motivo", fv.frase_status(calc))
+        self.assertIn("abaixo do previsto", fv.frase_status(calc))
 
-    def test_ciclo_parcial_substitui_as_demais(self):
-        # Mesmo gasto do caso "abaixo", mas com o mês incompleto: o desvio
-        # contra o contratado deixa de ser indicador válido.
+    def test_periodo_parcial_substitui_as_demais(self):
+        # Mesmo gasto do caso "abaixo", mas a campanha só rodou 8 dos 24 dias
+        # apurados: comparar o gasto com o previsto do período inteiro deixa
+        # de ser indicador válido, e a frase diz por quê.
         calc = self._status(500.0, inicio="2026-08-17")
         self.assertEqual(calc["status"], fv.STATUS_PARCIAL)
         frase = fv.frase_status(calc)
         self.assertIn("entraram no ar dia 17", frase)
-        self.assertIn("agosto fecha parcial", frase)
-        self.assertIn("8 dias de veiculação", frase)
+        self.assertIn("o período ficou parcial", frase)
+        self.assertIn("8 dias de veiculação dentro dos 24 apurados", frase)
 
 
 class OrigensTest(SimpleTestCase):
@@ -418,13 +443,13 @@ class OrigensTest(SimpleTestCase):
         self.assertEqual(calc["origens"], [])
         self.assertIn("Origem: nenhuma — ritmo alinhado", fv.analise(calc))
 
-    def test_ordem_ciclo_escoamento(self):
-        # Mês incompleto (subiu dia 17) e ritmo de R$ 62/dia sobre os R$ 32
-        # que o contrato pede: as duas disparam, nesta ordem.
+    def test_ordem_periodo_escoamento(self):
+        # Período incompleto (subiu dia 17) e ritmo de R$ 62/dia sobre os
+        # R$ 32 que o contrato pede: as duas disparam, nesta ordem.
         calc = fv.calcular([_estrutura(500.0, 40.0, "2026-08-17")],
                            contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
         rotulos = [o.split(" —")[0] for o in calc["origens"]]
-        self.assertEqual(rotulos, ["ciclo parcial", "escoamento"])
+        self.assertEqual(rotulos, ["período parcial", "escoamento"])
 
     def test_a_origem_configuracao_saiu_com_a_leitura_do_orcamento(self):
         """Ela comparava o diário setado no Meta com o diário contratado. Os
@@ -462,9 +487,11 @@ class MensagemTest(SimpleTestCase):
         linhas = [l for l in texto.splitlines() if l.strip()]
         self.assertLessEqual(len(linhas), 10)
         self.assertTrue(texto.rstrip().endswith("?"))
-        for rotulo in ("*Contratado:*", "*Configurado:*", "*Gasto de",
-                       "*Fechamento previsto:*"):
+        for rotulo in ("*Contratado:*", "*Equivale a:*", "*Período de",
+                       "*Previsto no período:*", "*Gasto:*"):
             self.assertIn(rotulo, texto)
+        # A projeção saiu com a janela futura: não sobra dia para projetar.
+        self.assertNotIn("Fechamento previsto", texto)
 
     def test_sem_saudacao_de_horario(self):
         """A mensagem pode sair de manhã, de tarde ou de noite, e a hora do
@@ -479,10 +506,12 @@ class MensagemTest(SimpleTestCase):
         self.assertEqual(fv.reais(990.0), "R$ 990")
         self.assertIn("*Contratado:* R$ 990/mês", fv.mensagem(self._calc()))
 
-    def test_o_gasto_traz_as_duas_pontas_do_periodo(self):
-        """"Gasto até 28/08" não dizia desde quando, e num ciclo que começa no
-        dia 30 o cliente não tem como adivinhar."""
-        self.assertIn("*Gasto de 01/08 a 24/08:*", fv.mensagem(self._calc()))
+    def test_o_periodo_traz_as_duas_pontas_e_a_contagem(self):
+        """"Gasto até 28/08" não dizia desde quando. E a contagem de dias é o
+        que deixa visível, para o cliente, que o fechamento fala do intervalo
+        que ele espera — é a única defesa contra um recorte mal escolhido."""
+        self.assertIn("*Período de 01/08 a 24/08:* 24 dias",
+                      fv.mensagem(self._calc()))
 
     def test_nenhuma_metrica_de_performance_na_mensagem(self):
         texto = fv.mensagem(self._calc()).lower()
@@ -494,12 +523,22 @@ class MensagemTest(SimpleTestCase):
                            **_export(date(2026, 8, 25)))
         self.assertIn("R$ [contratado]", fv.mensagem(calc))
 
-    def test_correcao_negativa_vira_frase_em_vez_de_diario_negativo(self):
+    def test_a_analise_diz_a_diferenca_em_reais(self):
+        """No lugar da antiga "Correção: R$ X/dia nos N dias restantes". Não
+        há dia restante para corrigir; o que o operador leva daqui é de quanto
+        foi a diferença, para decidir o ajuste do próximo período."""
         calc = fv.calcular([_estrutura(1200.0, 40.0, "2026-08-01")],
                            contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
         texto = fv.analise(calc)
-        self.assertIn("já ultrapassado em R$ 210", texto)
+        # R$ 1.200 gastos contra R$ 766 previstos em 24 dias.
+        self.assertIn("Diferença: R$ 434 acima do previsto no período", texto)
         self.assertNotIn("R$ -", texto)
+        self.assertNotIn("dias restantes", texto)
+
+    def test_a_diferenca_para_baixo_diz_abaixo(self):
+        calc = fv.calcular([_estrutura(600.0, 40.0, "2026-08-01")],
+                           contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
+        self.assertIn("Diferença: R$ 166 abaixo do previsto", fv.analise(calc))
 
     def test_analise_interna_cabe_em_seis_linhas(self):
         calc = fv.calcular([_estrutura(500.0, 60.0, "2026-08-17")],
@@ -558,24 +597,28 @@ class FluxoVerbaTest(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "marcou <b>CBO</b>", html=False)
 
-    def test_recalcular_nao_mexe_no_periodo_lido_do_arquivo(self):
-        """A base interna mudou; a janela do fechamento não. Ela vem do
-        export, e o export não foi reenviado."""
+    def test_a_tela_02_nao_edita_dado_nenhum(self):
+        """A base interna saiu em 30/08/2026. Contratado errado é um envio
+        errado, e o conserto é voltar e reenviar — não corrigir o número na
+        tela que já mostra a mensagem pronta para o cliente."""
         self._enviar()
-        r = self.client.post("/verba/fechamento/", {
-            "cliente": "Rei do Celular", "orcamento": "1.200,00",
-            "periodicidade": "mensal", "estrutura": "cbo"})
-        html = " ".join(r.content.decode().split())
-        self.assertIn("Números refeitos", html)
-        self.assertIn("24 de 31 dias encerrados", html)
-        self.assertIn("export de 01/08/2026 a 24/08/2026", html)
+        html = self.client.get("/verba/fechamento/").content.decode()
+        self.assertNotIn("Base interna", html)
+        self.assertNotIn('name="orcamento"', html)
+        self.assertNotIn('name="periodicidade"', html)
+        self.assertNotIn('name="recalcular"', html)
+        # O que a tela ainda diz: o período do export e o ciclo deduzido
+        # dele. Sem campo para conferir, essa informação é a única defesa
+        # contra um intervalo mal escolhido no Gerenciador.
+        self.assertIn("01/08/2026 a 24/08/2026", html)
+        self.assertIn("apura <b>exatamente</b> o intervalo do", html)
 
-    def test_recalcular_com_outro_contratado(self):
-        self._enviar()
-        r = self.client.post("/verba/fechamento/", {
-            "cliente": "Rei do Celular", "orcamento": "1.500,00",
-            "periodicidade": "mensal", "estrutura": "cbo"})
-        self.assertContains(r, "R$ 1.500/mês")
+    def test_outro_contratado_exige_reenviar(self):
+        """O caminho que sobrou, e é o certo: o contratado é uma declaração do
+        envio, não um campo da tela de saída."""
+        self._enviar(orcamento="1.500,00")
+        self.assertContains(self.client.get("/verba/fechamento/"),
+                            "R$ 1.500/mês")
 
     def test_os_blocos_de_saida_nao_trazem_metrica_de_performance(self):
         # Toda a garantia da frente de verba: o preset não traz esses campos e
@@ -601,12 +644,13 @@ class FluxoVerbaTest(TestCase):
 RESPOSTA_IA_VERBA = """Passando o fechamento pra você confirmar 👇
 
 *Contratado:* R$ 990/mês
-*Configurado:* R$ 28/dia
-*Gasto até 24/08:* R$ 740
-*Projeção de fechamento:* R$ 956
+*Equivale a:* R$ 32/dia
+*Período de 01/08 a 24/08:* 24 dias
+*Previsto no período:* R$ 766
+*Gasto:* R$ 740
 
-O ritmo está alinhado com o contratado e o mês deve fechar no valor combinado.
-Posso seguir assim até o fim do mês?"""
+O ritmo do período ficou alinhado com o contratado.
+Posso seguir assim?"""
 
 
 class MensagemVerbaIATest(TestCase):
@@ -617,11 +661,32 @@ class MensagemVerbaIATest(TestCase):
                                 contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
 
     def _gerar(self, resposta):
+        """A reescrita pelo caminho que a tela usa desde 30/08/2026.
+
+        A verba migrou para o `reescrever` comum às quatro frentes, com as
+        garantias dela passadas como parâmetro — dez linhas de teto, nenhuma
+        métrica de performance e a pergunta fechada no fim. Ganhou de brinde a
+        guarda dos números, que o caminho antigo não tinha.
+        """
+        original = fv.mensagem(self.calc, "Rei do Celular")
         with patch.object(redator_ia, "disponivel", return_value=True), \
              patch.object(redator_ia, "_chamar",
                           MagicMock(return_value=resposta)) as chamada:
-            return redator_ia.gerar_mensagem_verba(self.calc, "Rei do Celular"), \
-                chamada
+            return redator_ia.reescrever(
+                original,
+                redator_ia.numeros_do_fechamento(self.calc, "Rei do Celular"),
+                redator_ia.PROMPT_REESCRITA_VERBA,
+                proibidos=redator_ia.TERMOS_DE_PERFORMANCE,
+                max_linhas=redator_ia.LINHAS_MAXIMAS_VERBA,
+                termina_em_pergunta=True), chamada
+
+    def test_numero_trocado_pela_ia_e_recusado(self):
+        """A garantia que o caminho antigo não tinha: 28 no lugar de 32 passa
+        despercebido na leitura, e ia direto para o cliente."""
+        ruim = RESPOSTA_IA_VERBA.replace("R$ 32/dia", "R$ 28/dia")
+        with self.assertRaises(redator_ia.ErroDeIA) as ctx:
+            self._gerar(ruim)
+        self.assertIn("não está no cálculo", str(ctx.exception))
 
     def test_aceita_a_resposta_no_formato(self):
         texto, _ = self._gerar(RESPOSTA_IA_VERBA)
@@ -642,15 +707,16 @@ class MensagemVerbaIATest(TestCase):
             self._gerar(RESPOSTA_IA_VERBA + "\n" + "\n".join(
                 f"linha extra {i}" for i in range(6)))
         self.assertEqual(ctx.exception.motivo, "formato")
-        self.assertIn("Mantida a mensagem do cálculo", str(ctx.exception))
+        self.assertIn("Mantido o texto do cálculo", str(ctx.exception))
 
     def test_resposta_com_metrica_de_performance_e_recusada(self):
         ruim = RESPOSTA_IA_VERBA.replace(
-            "O ritmo está alinhado com o contratado",
-            "O CPM subiu e o ritmo está alinhado")
+            "O ritmo do período ficou alinhado",
+            "O CPM subiu e o ritmo do período ficou alinhado")
         with self.assertRaises(redator_ia.ErroDeIA) as ctx:
             self._gerar(ruim)
-        self.assertIn("métrica de performance", str(ctx.exception))
+        self.assertIn("cpm", str(ctx.exception))
+        self.assertIn("não usa", str(ctx.exception))
 
     def test_resposta_sem_pergunta_fechada_e_recusada(self):
         with self.assertRaises(redator_ia.ErroDeIA) as ctx:
@@ -664,7 +730,8 @@ class MensagemVerbaIATest(TestCase):
     def test_sem_chave_o_botao_nem_e_oferecido(self):
         with patch.object(redator_ia, "disponivel", return_value=False):
             with self.assertRaises(redator_ia.ErroDeIA) as ctx:
-                redator_ia.gerar_mensagem_verba(self.calc)
+                redator_ia.reescrever("x", {},
+                                      redator_ia.PROMPT_REESCRITA_VERBA)
         self.assertEqual(ctx.exception.motivo, "chave")
 
     def test_falha_da_ia_preserva_a_mensagem_do_motor(self):
@@ -674,7 +741,7 @@ class MensagemVerbaIATest(TestCase):
             "arquivo": _anexo("c.xlsx", CAMPANHAS)})
         erro = redator_ia.ErroDeIA("A conta está sem crédito.", "credito")
         with patch.object(redator_ia, "disponivel", return_value=True), \
-             patch.object(redator_ia, "gerar_mensagem_verba", side_effect=erro):
+             patch.object(redator_ia, "reescrever", side_effect=erro):
             r = self.client.post("/verba/fechamento/", {
                 "cliente": "Rei do Celular", "orcamento": "990,00",
                 "periodicidade": "mensal", "estrutura": "cbo",
@@ -685,28 +752,32 @@ class MensagemVerbaIATest(TestCase):
         # Motivo definitivo: o botão sai da tela junto com o aviso.
         self.assertNotIn("Reescrever com IA", html)
 
-    def test_texto_da_ia_vai_para_a_tela_e_e_descartado_ao_recalcular(self):
+    def test_texto_da_ia_vai_para_a_tela_e_volta_num_clique(self):
+        """Desfazer era efeito colateral do *Recalcular*, que saiu junto com a
+        base interna. Virou botão explícito — que é o que ela sempre foi."""
         base = {"cliente": "Rei do Celular", "orcamento": "990,00",
                 "periodicidade": "mensal", "estrutura": "cbo"}
         self.client.post("/verba/", dict(
             base, arquivo=_anexo("c.xlsx", CAMPANHAS)))
         with patch.object(redator_ia, "disponivel", return_value=True), \
-             patch.object(redator_ia, "gerar_mensagem_verba",
+             patch.object(redator_ia, "reescrever",
                           return_value=RESPOSTA_IA_VERBA):
-            r = self.client.post("/verba/fechamento/",
-                                 dict(base, mensagem_ia="1"))
+            r = self.client.post("/verba/fechamento/", {"mensagem_ia": "1"})
         self.assertIn("reescrita pela IA", r.content.decode())
 
-        # Recalcular refaz os números; o texto escrito sobre os anteriores sai.
-        r = self.client.post("/verba/fechamento/",
-                             dict(base, orcamento="1.200,00"))
+        r = self.client.post("/verba/fechamento/", {"voltar_ao_motor": "1"})
         html = r.content.decode()
         self.assertIn("do cálculo", html)
-        self.assertNotIn("Posso seguir assim até o fim do mês?", html)
+        self.assertNotIn(RESPOSTA_IA_VERBA.splitlines()[0], html)
 
 
-class TrilhoDeFechamentoTest(TestCase):
-    """O trilho: a pista escalada, e as posições em CSS que o pt-BR não estraga."""
+class TrilhoDoPeriodoTest(TestCase):
+    """O trilho: a pista escalada, e as posições em CSS que o pt-BR não estraga.
+
+    Eram três marcas — gasto, projeção e alvo. A projeção saiu em 31/08/2026
+    junto com a janela futura: sem dia restante não há o que projetar, e a
+    pista passou a comparar o gasto com o previsto dos dias apurados.
+    """
 
     def _fechar(self, gasto, orcamento="990,00"):
         campanhas = [dict(CAMPANHAS[0], gasto=gasto)]
@@ -721,50 +792,51 @@ class TrilhoDeFechamentoTest(TestCase):
         # `--gasto:74,75%` é CSS inválido — o navegador descarta em silêncio e
         # a barra fica vazia sem ninguém perceber.
         trilho = self._fechar(740.0).context["trilho"]
-        for chave in ("gasto", "projetado", "alvo"):
+        for chave in ("gasto", "alvo"):
             self.assertRegex(trilho[chave], r"^\d+\.\d\d%$")
-        self.assertNotIn(",", "".join(trilho[k] for k in ("gasto", "projetado", "alvo")))
+        self.assertNotIn(",", trilho["gasto"] + trilho["alvo"])
+
+    def test_a_projecao_saiu_da_pista(self):
+        self.assertNotIn("projetado", self._fechar(740.0).context["trilho"])
 
     def test_o_atributo_style_chega_intacto_no_html(self):
         html = self._fechar(740.0).content.decode()
-        self.assertRegex(html, r"--gasto:\d+\.\d\d%;--projetado:\d+\.\d\d%;--alvo:\d+\.\d\d%")
+        self.assertRegex(html, r"--gasto:\d+\.\d\d%;--projetado:0%;--alvo:\d+\.\d\d%")
 
     def test_dentro_do_combinado_o_alvo_fecha_a_pista(self):
-        # R$ 766 em 24 dias projeta ~R$ 989 contra R$ 990 contratados.
+        # R$ 766 é exatamente o previsto dos 24 dias apurados.
         trilho = self._fechar(766.0).context["trilho"]
         self.assertEqual(trilho["alvo"], "100.00%")
         self.assertEqual(trilho["tom"], "no-ritmo")
 
-    def test_projecao_que_estoura_empurra_o_alvo_para_dentro(self):
-        # A pista é escalada pela projeção, não pelo contratado: a barra
-        # precisa APARECER passando da marca, não ser cortada na borda.
+    def test_gasto_que_estoura_empurra_o_alvo_para_dentro(self):
+        # A pista é escalada pelo maior dos dois: a barra precisa APARECER
+        # passando da marca, não ser cortada na borda.
         trilho = self._fechar(1400.0).context["trilho"]
-        self.assertEqual(trilho["projetado"], "100.00%")
+        self.assertEqual(trilho["gasto"], "100.00%")
         self.assertLess(float(trilho["alvo"].rstrip("%")), 100)
         self.assertEqual(trilho["tom"], "fora")
 
-    def test_o_gasto_nunca_passa_do_projetado(self):
+    def test_o_gasto_nunca_passa_da_pista(self):
         trilho = self._fechar(740.0).context["trilho"]
-        self.assertLessEqual(float(trilho["gasto"].rstrip("%")),
-                             float(trilho["projetado"].rstrip("%")))
+        self.assertLessEqual(float(trilho["gasto"].rstrip("%")), 100.0)
 
     def test_sem_contratado_nao_ha_trilho(self):
         # Sem o combinado não existe marca contra a qual comparar, e uma pista
         # sem alvo diria menos que nenhuma.
-        calc = fv.calcular([_estrutura(740.0, 28.0, "2026-08-01")],
+        calc = fv.calcular([_estrutura(0.0, 28.0, "2026-08-01")],
                            **_export(date(2026, 8, 25)))
         from .views_verba import _trilho
-        calc["contratado_ciclo"] = None
-        calc["projecao_fechamento"] = 0.0
+        self.assertIsNone(calc["previsto_periodo"])
         self.assertIsNone(_trilho(calc))
 
 
 # ----------------------------------------------------------------------
-# Ciclo semanal
+# Contrato semanal
 # ----------------------------------------------------------------------
-# Cliente que fecha R$ 300 por semana. Não é o mesmo contrato dito de outro
-# jeito: é outra janela, e medi-lo contra o mês devolve um desvio que não fala
-# do que ele contratou. 29/08/2026 é um sábado — semana de 24/08 a 30/08.
+# Cliente que fecha R$ 300 por semana. A unidade muda a diária — R$ 43/dia em
+# vez dos R$ 10 que o mesmo valor daria dito "por mês" —, e é a diária que
+# multiplica os dias apurados. 29/08/2026 é um sábado.
 SABADO = date(2026, 8, 29)
 SEGUNDA = date(2026, 8, 24)
 DOMINGO = date(2026, 8, 30)
@@ -782,103 +854,96 @@ def _semanal(gasto=251.0, orcamento=42.0, inicio="2026-08-24",
                        periodo=fv.CICLO_SEMANAL, **janela)
 
 
-class JanelaTest(SimpleTestCase):
-    """Onde o ciclo termina, dado onde ele começa.
+class DiasDoContratoTest(SimpleTestCase):
+    """Quantos dias tem UM ciclo do contrato — só para virar diária.
 
-    Onde ele COMEÇA não é decisão daqui desde 29/08/2026: é o `Início dos
-    relatórios` do export. A regra do calendário — dia 1º ao último do mês,
-    segunda a domingo — servia a quem contrata no dia 1º e mais ninguém.
+    Era `janela()`, e devolvia as duas pontas de uma janela futura sobre a
+    qual o gasto era projetado. Essa janela saiu em 31/08/2026: o que se apura
+    é o recorte do export. O que sobrou é a única coisa que a periodicidade
+    ainda decide — por quanto se divide o valor contratado.
     """
 
-    def test_a_semana_sao_sete_dias_a_partir_do_inicio(self):
-        inicio, fim, dias, _r = fv.janela(SEGUNDA, fv.CICLO_SEMANAL)
-        self.assertEqual((inicio, fim, dias), (SEGUNDA, DOMINGO, 7))
+    def test_a_janela_futura_nao_existe_mais(self):
+        self.assertFalse(hasattr(fv, "janela"))
 
-    def test_a_semana_pode_comecar_em_qualquer_dia(self):
-        """Cliente que fecha de quarta a terça tem uma semana de quarta a
-        terça. Não há mais convenção de segunda-feira."""
-        quarta = date(2026, 8, 26)
-        inicio, fim, dias, rotulo = fv.janela(quarta, fv.CICLO_SEMANAL)
-        self.assertEqual((inicio, fim, dias), (quarta, date(2026, 9, 1), 7))
-        self.assertEqual(rotulo, "a semana de 26/08 a 01/09")
+    def test_a_semana_sao_sete_dias(self):
+        self.assertEqual(fv.dias_do_contrato(SEGUNDA, fv.CICLO_SEMANAL), 7)
+
+    def test_a_quinzena_sao_quinze(self):
+        self.assertEqual(fv.dias_do_contrato(SEGUNDA, fv.CICLO_QUINZENAL), 15)
 
     def test_o_mes_do_dia_primeiro_e_o_mes_do_calendario(self):
-        inicio, fim, dias, rotulo = fv.janela(date(2026, 8, 1))
-        self.assertEqual((inicio, fim, dias, rotulo),
-                         (date(2026, 8, 1), date(2026, 8, 31), 31, "agosto"))
+        self.assertEqual(fv.dias_do_contrato(date(2026, 8, 1)), 31)
 
     def test_fevereiro_tambem(self):
-        _i, fim, dias, _r = fv.janela(date(2026, 2, 1))
-        self.assertEqual((fim, dias), (date(2026, 2, 28), 28))
+        self.assertEqual(fv.dias_do_contrato(date(2026, 2, 1)), 28)
 
-    def test_o_mes_de_quem_entra_no_meio_vai_ate_a_vespera(self):
-        """O caso que motivou a mudança: cliente que entra no dia 30 tem um
-        mês que vai do 30 ao 29."""
-        inicio, fim, dias, rotulo = fv.janela(date(2026, 7, 30))
-        self.assertEqual((inicio, fim, dias), (date(2026, 7, 30),
-                                               date(2026, 8, 29), 31))
-        self.assertEqual(rotulo, "o ciclo de 30/07 a 29/08")
+    def test_o_mes_de_quem_entra_no_meio_conta_do_dia_dele(self):
+        """Cliente que entra no dia 30 tem um mês que vai do 30 ao 29."""
+        self.assertEqual(fv.dias_do_contrato(date(2026, 7, 30)), 31)
 
-    def test_o_ciclo_atravessa_a_virada_do_ano(self):
-        _i, fim, dias, _r = fv.janela(date(2026, 12, 15))
-        self.assertEqual((fim, dias), (date(2027, 1, 14), 31))
+    def test_o_contrato_atravessa_a_virada_do_ano(self):
+        self.assertEqual(fv.dias_do_contrato(date(2026, 12, 15)), 31)
 
     def test_dia_que_nao_existe_no_mes_seguinte_encosta_no_ultimo(self):
-        """31/01 fecha em 27/02 porque o ciclo seguinte começa em 28/02 — o
+        """31/01 conta 28 dias porque o ciclo seguinte começaria em 28/02 — o
         mês de fevereiro não tem dia 31 para o contrato cair."""
-        _i, fim, dias, _r = fv.janela(date(2026, 1, 31))
-        self.assertEqual((fim, dias), (date(2026, 2, 27), 28))
+        self.assertEqual(fv.dias_do_contrato(date(2026, 1, 31)), 28)
+
+    def test_no_diario_a_divisao_nao_acontece(self):
+        """O valor digitado já é a diária; `dias_do_contrato` é ignorado."""
+        calc = fv.calcular([_estrutura(0.0, 0.0, "2026-08-24")],
+                           contratado_ciclo=50.0, periodo=fv.CICLO_DIARIO,
+                           inicio_relatorio=SEGUNDA, termino_relatorio=SEXTA)
+        self.assertEqual(calc["contratado_diario"], 50.0)
 
 
-class CicloSemanalTest(SimpleTestCase):
-    """R$ 300/semana — o caso que fez o motor deixar de ser mensal."""
+class ContratoSemanalTest(SimpleTestCase):
+    """R$ 300/semana — o caso que fez o motor deixar de ser mensal.
 
-    def test_o_ciclo_tem_sete_dias(self):
-        self.assertEqual(_semanal()["dias_do_ciclo"], 7)
-
-    def test_os_dias_encerrados_contam_da_segunda(self):
-        calc = _semanal()
-        self.assertEqual(calc["dias_encerrados"], 5)   # 24 a 28
-        self.assertEqual(calc["dias_restantes"], 2)    # 29 e 30
-
-    def test_export_de_um_dia_so_fecha_um_dia(self):
-        """O termo do relatório é INCLUSIVO: o dia que ele nomeia é um dia com
-        gasto medido, ao contrário do antigo "hoje", que ainda estava
-        correndo."""
-        calc = _semanal(termino_relatorio=SEGUNDA)
-        self.assertEqual(calc["dias_encerrados"], 1)
-        self.assertEqual(calc["dias_restantes"], 6)
+    A periodicidade não escolhe mais uma janela: ela só diz por quanto o
+    contratado é dividido para virar diária. O que se apura são os dias do
+    export, iguais para todo contrato.
+    """
 
     def test_o_diario_sai_de_sete_dias_e_nao_dos_dias_do_mes(self):
         self.assertAlmostEqual(_semanal()["contratado_diario"], 300 / 7, 2)
 
-    def test_sem_contratado_nao_ha_diario(self):
-        """Campo vazio não se inventa (seção 2 do prompt): sem o valor do
-        ciclo não há de onde tirar o diário."""
+    def test_os_dias_apurados_saem_do_export(self):
+        calc = _semanal()
+        self.assertEqual(calc["dias_apurados"], 5)   # 24 a 28
+        self.assertEqual(calc["dias_do_contrato"], 7)
+
+    def test_export_de_um_dia_so_apura_um_dia(self):
+        """O término do relatório é INCLUSIVO: o dia que ele nomeia é um dia
+        com gasto medido, ao contrário do antigo "hoje", que ainda corria."""
+        calc = _semanal(termino_relatorio=SEGUNDA)
+        self.assertEqual(calc["dias_apurados"], 1)
+
+    def test_o_previsto_e_a_diaria_vezes_os_dias_apurados(self):
+        # R$ 42,86/dia em 5 dias = R$ 214,29.
+        self.assertAlmostEqual(_semanal()["previsto_periodo"], 300 / 7 * 5, 2)
+
+    def test_sem_contratado_nao_ha_diario_nem_previsto(self):
+        """Campo vazio não se inventa (seção 2 do prompt)."""
         calc = fv.calcular([_estrutura(0.0, 42.0, "2026-08-24")],
                            **_export(SABADO, fv.CICLO_SEMANAL),
                            periodo=fv.CICLO_SEMANAL)
-        self.assertIsNone(calc["contratado_ciclo"])
+        self.assertIsNone(calc["contratado_unidade"])
         self.assertIsNone(calc["contratado_diario"])
+        self.assertIsNone(calc["previsto_periodo"])
 
-    def test_a_projecao_vai_ate_domingo(self):
-        # R$ 251 em 5 dias = R$ 50,20/dia; mais 2 dias = R$ 351,40.
-        self.assertAlmostEqual(_semanal()["projecao_fechamento"], 351.40, 2)
-
-    def test_o_mesmo_gasto_da_desvios_diferentes_nos_dois_ciclos(self):
-        """É o ponto inteiro da mudança: medir R$ 300/semana contra o mês
-        devolve um número que não fala do contrato do cliente."""
-        # Mesma planilha, mesmo dia, mesmo contratado. Muda só a janela: a
-        # semana projeta 2 dias à frente, o mês projeta 3 sobre um ritmo que
-        # foi medido nos mesmos 5 dias. Um pede ajuste leve, o outro pede
-        # ajuste — e só um dos dois é o contrato que existe.
+    def test_a_unidade_muda_o_desvio_do_mesmo_gasto(self):
+        """É o ponto inteiro do campo: o mesmo R$ 300 dito "por semana" e
+        "por mês" produz diárias diferentes, e o desvio segue a diária."""
         semanal = _semanal()["desvio_pct"]
         mensal = fv.calcular([_estrutura(251.0, 42.0, "2026-08-24")],
-                             contratado_ciclo=300.0, **{"inicio_relatorio": date(2026, 8, 1), "termino_relatorio": SEXTA})["desvio_pct"]
-        self.assertAlmostEqual(semanal, 17.13, 1)
-        self.assertAlmostEqual(mensal, 33.87, 1)
+                             contratado_ciclo=300.0,
+                             inicio_relatorio=SEGUNDA,
+                             termino_relatorio=SEXTA)["desvio_pct"]
+        self.assertAlmostEqual(semanal, 17.13, 1)     # 251 vs 214
+        self.assertAlmostEqual(mensal, 418.7, 1)      # 251 vs 48
         self.assertEqual(fv._status(semanal, False), fv.STATUS_ACIMA)
-        self.assertNotAlmostEqual(semanal, mensal, 0)
 
 
 class DenominadorNaSemanaTest(SimpleTestCase):
@@ -892,7 +957,7 @@ class DenominadorNaSemanaTest(SimpleTestCase):
     def test_campanha_que_subiu_no_meio_da_semana_conta_do_dia_dela(self):
         calc = _semanal(inicio="2026-08-27")
         self.assertEqual(calc["dias_veiculados"], 2)   # 27 e 28
-        self.assertTrue(calc["ciclo_parcial"])
+        self.assertTrue(calc["periodo_parcial"])
 
     def test_no_mes_a_trava_continua_sendo_o_dia_primeiro(self):
         calc = fv.calcular([_estrutura(251.0, 42.0, "2026-07-10")],
@@ -900,8 +965,14 @@ class DenominadorNaSemanaTest(SimpleTestCase):
         self.assertEqual(calc["inicio_veiculacao"], date(2026, 8, 1))
 
 
-class VocabularioDoCicloTest(SimpleTestCase):
-    """As frases falam do ciclo certo — com o artigo e a concordância certos."""
+class UnidadeDoContratadoTest(SimpleTestCase):
+    """As frases falam da unidade certa.
+
+    O vocabulário conjugado ("o mês"/"a semana"/"do mês cheio") saiu em
+    31/08/2026 junto com a janela futura: as frases que ele servia prometiam o
+    fechamento de um período que este arquivo não mede. Sobrou a unidade, que
+    é o que vem depois da barra em "R$ 990/mês".
+    """
 
     def test_a_mensagem_semanal_diz_por_semana(self):
         texto = fv.mensagem(_semanal())
@@ -913,46 +984,51 @@ class VocabularioDoCicloTest(SimpleTestCase):
                            contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
         self.assertIn("*Contratado:* R$ 990/mês", fv.mensagem(calc))
 
-    # R$ 214 em 5 dias projetam R$ 299,60 contra R$ 300 — dentro dos 3% que
-    # a seção 5 chama de alinhado.
+    def test_a_diaria_aparece_logo_abaixo(self):
+        """É ela que multiplica os dias apurados, então o cliente precisa
+        poder conferir a conta inteira na mensagem."""
+        self.assertIn("*Equivale a:* R$ 43/dia", fv.mensagem(_semanal()))
+
+    # R$ 214 em 5 dias contra R$ 214,29 previstos — dentro dos 3% que a
+    # seção 5 chama de alinhado.
     ALINHADA = {"gasto": 214.0, "orcamento": 43.0}
 
-    def test_a_pergunta_alinhada_e_curta_e_igual_em_todo_ciclo(self):
+    def test_a_pergunta_alinhada_e_curta_e_igual_em_toda_unidade(self):
         calc = _semanal(**self.ALINHADA)
         self.assertEqual(calc["status"], fv.STATUS_ALINHADO)
         self.assertEqual(fv.pergunta(calc), "Podemos seguir assim?")
 
-    def test_a_pergunta_do_ciclo_parcial_diz_ate_quando(self):
-        """Aqui o "até quando" importa: o ciclo não rodou inteiro, e seguir
-        assim significa seguir até o fim dele."""
-        self.assertIn("até o fim da semana",
-                      fv.pergunta(_semanal(inicio="2026-08-27")))
+    def test_nenhuma_pergunta_promete_o_fim_de_um_ciclo(self):
+        """"Podemos seguir assim até o fim da semana?" falava de dias que este
+        fechamento não mede."""
+        for status in fv.PERGUNTAS.values():
+            with self.subTest(status=status):
+                self.assertNotIn("até o fim", status)
 
-    def test_a_frase_alinhada_concorda_com_o_genero(self):
+    def test_nenhuma_frase_promete_fechamento_futuro(self):
+        for frase in fv.FRASES_STATUS.values():
+            with self.subTest(frase=frase[:30]):
+                self.assertNotIn("deve fechar", frase)
+                # As duas expressões do vocabulário conjugado que descreviam a
+                # janela futura. "diário cheio" é outra coisa e pode ficar.
+                self.assertNotIn("semana cheia", frase)
+                self.assertNotIn("mês cheio", frase)
+
+    def test_a_frase_alinhada_fala_do_periodo(self):
         calc = _semanal(**self.ALINHADA)
-        self.assertIn("a semana deve fechar", fv.frase_status(calc))
+        self.assertEqual(fv.frase_status(calc),
+                         "O ritmo do período ficou alinhado com o contratado.")
 
-    def test_o_ciclo_parcial_semanal_nomeia_a_semana_inteira(self):
+    def test_o_periodo_parcial_conta_os_dias_apurados(self):
         frase = fv.frase_status(_semanal(inicio="2026-08-27"))
-        self.assertIn("a semana de 24/08 a 30/08 fecha parcial", frase)
-        self.assertIn("em vez da semana cheia", frase)
-
-    def test_o_ciclo_parcial_mensal_continua_nomeando_o_mes(self):
-        calc = fv.calcular([_estrutura(466.75, 32.0, "2026-08-17")],
-                           contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
-        frase = fv.frase_status(calc)
-        self.assertIn("agosto fecha parcial", frase)
-        self.assertIn("em vez do mês cheio", frase)
-
-    def test_o_contratado_ultrapassado_fala_da_semana(self):
-        # Gasto acima do contratado, sem dias restantes para corrigir.
-        calc = _semanal(gasto=400.0, **_export(DOMINGO, fv.CICLO_SEMANAL))
-        self.assertIn("contratado da semana já ultrapassado", fv.analise(calc))
+        self.assertIn("entraram no ar dia 27", frase)
+        self.assertIn("2 dias de veiculação dentro dos 5 apurados", frase)
 
     def test_nenhuma_frase_do_catalogo_deixa_chave_por_formatar(self):
         """`{artigo}` cru na mensagem do cliente é o defeito que este teste
         existe para pegar."""
-        for periodo in (fv.CICLO_MENSAL, fv.CICLO_SEMANAL):
+        for periodo in (fv.CICLO_MENSAL, fv.CICLO_SEMANAL, fv.CICLO_QUINZENAL,
+                        fv.CICLO_DIARIO):
             for status in fv.FRASES_STATUS:
                 with self.subTest(periodo=periodo, status=status):
                     calc = dict(_semanal(inicio="2026-08-27"),
@@ -980,39 +1056,47 @@ class FluxoSemanalTest(TestCase):
             with self.subTest(rotulo=rotulo):
                 self.assertIn(rotulo, html)
 
-    def test_o_fechamento_semanal_sai_com_a_semana_na_tela(self):
+    def test_o_fechamento_semanal_sai_com_a_unidade_na_tela(self):
         self.assertRedirects(self._enviar(), "/verba/fechamento/")
         r = self.client.get("/verba/fechamento/")
         self.assertEqual(r.context["calc"]["periodo"], fv.CICLO_SEMANAL)
         self.assertEqual(r.context["unidade_contratado"], "semana")
         html = r.content.decode()
         self.assertIn("R$ 300/semana", html)
-        self.assertIn("A semana de 24/08 a 30/08", html)
-        self.assertIn("5 de 7 dias encerrados", " ".join(html.split()))
+        self.assertIn("O período de 24/08 a 28/08", html)
+        self.assertIn("5 dias apurados", " ".join(html.split()))
 
-    def test_o_ciclo_sobrevive_ao_recalcular(self):
+    def test_a_unidade_semanal_atravessa_o_fluxo(self):
         self._enviar()
-        r = self.client.post("/verba/fechamento/", {
-            "cliente": "Rei do Celular", "orcamento": "350,00",
-            "periodicidade": "semanal", "estrutura": "cbo"})
-        self.assertEqual(r.context["calc"]["contratado_ciclo"], 350.0)
-        self.assertEqual(r.context["calc"]["dias_do_ciclo"], 7)
+        calc = self.client.get("/verba/fechamento/").context["calc"]
+        self.assertEqual(calc["contratado_unidade"], 300.0)
+        self.assertEqual(calc["dias_do_contrato"], 7)
+        self.assertEqual(calc["dias_apurados"], 5)
 
-    def test_reabrir_a_tela_devolve_semanal_marcado(self):
+    def test_a_tela_02_escreve_o_intervalo_apurado(self):
+        """Não há campo para conferir, então o intervalo tem de estar escrito:
+        é a única defesa contra um recorte mal escolhido no Gerenciador."""
         self._enviar()
-        form = self.client.get("/verba/fechamento/").context["form"]
-        self.assertEqual(form.initial["periodicidade"], "semanal")
-        self.assertEqual(form.initial["orcamento"], "300,00")
+        html = self.client.get("/verba/fechamento/").content.decode()
+        self.assertIn("apura <b>exatamente</b> o intervalo do", html)
+        self.assertIn("reenvie", html)
 
-    def test_a_tela_nao_oferece_mais_por_dia(self):
-        """O diário virou divisão. Dois campos que podiam discordar viraram
-        um campo e uma conta."""
+    def test_a_tela_oferece_por_dia_como_unidade(self):
+        """O cliente que combina R$ 150/dia não deve ter que multiplicar por
+        31 antes de digitar — é a conta que esta frente existe para tirar da
+        mão do operador.
+
+        Continua havendo UM campo de valor: "por dia" é a unidade dele.
+        """
         html = self.client.get("/verba/").content.decode()
-        self.assertNotIn('value="diario"', html)
+        self.assertIn('value="diario"', html)
+        self.assertIn("por dia", html)
+        self.assertEqual(html.count('name="orcamento"'), 1)
 
     def test_sessao_sem_contratado_nao_derruba_a_tela(self):
-        """Sessão aberta antes desta mudança não tem `contratado_ciclo`. O
-        campo volta vazio para o operador redigitar — nunca um TypeError."""
+        """Sessão aberta antes de uma mudança de formato não tem
+        `contratado_ciclo`. A tela abre com o valor pendente — nunca um
+        TypeError."""
         self._enviar()
         sessao = self.client.session
         dados = sessao["verba_apex"]
@@ -1022,24 +1106,33 @@ class FluxoSemanalTest(TestCase):
         sessao.save()
         r = self.client.get("/verba/fechamento/")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.context["form"].initial["orcamento"], "")
 
 
 class PayloadSemanalIATest(TestCase):
     """A IA precisa saber a unidade: o gabarito do prompt escreve "/mês"."""
 
     def test_a_unidade_viaja_no_payload(self):
-        payload = redator_ia._payload_verba(_semanal(), "Rei do Celular")
+        payload = redator_ia.numeros_do_fechamento(_semanal(), "Rei do Celular")
         self.assertEqual(payload["unidade_do_contratado"], "semana")
         self.assertEqual(payload["contratado"], "R$ 300")
-        self.assertEqual(payload["periodo_analisado"], "a semana de 24/08 a 30/08")
+        self.assertEqual(payload["periodo_analisado"],
+                         "o período de 24/08 a 28/08")
+        self.assertEqual(payload["dias_apurados"], 5)
 
     def test_no_mensal_a_unidade_e_mes(self):
         calc = fv.calcular([_estrutura(740.0, 32.0, "2026-08-01")],
                            contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
-        payload = redator_ia._payload_verba(calc)
+        payload = redator_ia.numeros_do_fechamento(calc)
         self.assertEqual(payload["unidade_do_contratado"], "mês")
-        self.assertEqual(payload["periodo_analisado"], "agosto")
+        self.assertEqual(payload["periodo_analisado"],
+                         "o período de 01/08 a 24/08")
+
+    def test_o_payload_nao_leva_projecao_nenhuma(self):
+        """O que não chega ao modelo ele não tem como escrever."""
+        payload = redator_ia.numeros_do_fechamento(_semanal())
+        for chave in ("projecao_fechamento", "dias_restantes",
+                      "diario_corrigido"):
+            self.assertNotIn(chave, payload)
 
     def test_as_regras_de_entrada_avisam_que_a_unidade_muda(self):
         self.assertIn("unidade_do_contratado",
@@ -1049,54 +1142,37 @@ class PayloadSemanalIATest(TestCase):
 # ----------------------------------------------------------------------
 # O gasto que não cabe no ciclo
 # ----------------------------------------------------------------------
-class AlertaDePeriodoTest(SimpleTestCase):
-    """Export que cobre MAIS de um ciclo.
+class ExportMaiorQueOContratoTest(SimpleTestCase):
+    """O alerta de "export maior que o ciclo" saiu — e não faz falta.
 
-    As checagens de "começa antes" e "começa depois" saíram em 29/08/2026: o
-    ciclo passou a começar onde o relatório começa, então ele não tem como
-    começar fora de si mesmo. O que ainda dá para errar é o TAMANHO.
+    Ele existia porque o gasto de um intervalo era projetado sobre outro:
+    exportar o mês inteiro para um cliente semanal somava quatro ciclos num
+    número comparado contra uma semana, e a tela dava +508%. Com o previsto
+    acompanhando os dias apurados, exportar mais dias não erra número nenhum —
+    apura outro intervalo, e o intervalo está escrito na mensagem.
     """
 
-    def test_o_export_do_tamanho_do_ciclo_nao_levanta_suspeita(self):
-        self.assertIsNone(_semanal()["alerta_periodo"])
+    def test_o_alerta_nao_existe_mais(self):
+        self.assertFalse(hasattr(fv, "_alerta_periodo"))
+        self.assertNotIn("alerta_periodo", _semanal())
 
-    def test_o_mes_inteiro_num_fechamento_semanal_e_pego(self):
-        """O caso que gerou +508% na tela: começando em 24/08 a semana fecha
-        em 30/08, e o arquivo vai até 28/09."""
-        alerta = _semanal(termino_relatorio=date(2026, 9, 28))["alerta_periodo"]
-        self.assertIn("mais de uma semana", alerta)
-        self.assertIn("30/08", alerta)
+    def test_o_mes_inteiro_num_contrato_semanal_nao_distorce_o_desvio(self):
+        """R$ 43/dia contratados; 28 dias apurados preveem R$ 1.200. Gastar
+        R$ 1.204 nesses 28 dias é ritmo alinhado — e era +508% antes."""
+        calc = _semanal(gasto=1200.0, inicio="2026-08-01",
+                        inicio_relatorio=date(2026, 8, 1),
+                        termino_relatorio=date(2026, 8, 28))
+        self.assertEqual(calc["dias_apurados"], 28)
+        self.assertAlmostEqual(calc["previsto_periodo"], 300 / 7 * 28, 2)
+        self.assertLess(abs(calc["desvio_pct"]), 1)
+        self.assertEqual(calc["status"], fv.STATUS_ALINHADO)
 
-    def test_o_mensal_tambem_tem_teto(self):
-        calc = fv.calcular([_estrutura(1000.0, 32.0, "2026-08-01")],
-                           contratado_ciclo=990.0,
-                           inicio_relatorio=date(2026, 8, 1),
-                           termino_relatorio=date(2026, 9, 10))
-        self.assertIn("mais de um mês", calc["alerta_periodo"])
-        self.assertIn("31/08", calc["alerta_periodo"])
-
-    def test_o_ciclo_que_comeca_no_meio_do_mes_passa_limpo(self):
-        """Era exatamente o que a regra do calendário recusava: export de
-        30/07 a 28/08 para um cliente que entra no dia 30."""
-        calc = fv.calcular([_estrutura(1304.0, 32.0, "2026-07-30")],
-                           contratado_ciclo=990.0,
-                           inicio_relatorio=date(2026, 7, 30),
-                           termino_relatorio=date(2026, 8, 28))
-        self.assertIsNone(calc["alerta_periodo"])
-        self.assertEqual(calc["rotulo"], "o ciclo de 30/07 a 29/08")
-        self.assertEqual(calc["dias_encerrados"], 30)
-        self.assertEqual(calc["dias_restantes"], 1)
-
-    def test_o_alerta_diz_ate_quando_o_export_deveria_ir(self):
-        alerta = _semanal(termino_relatorio=date(2026, 9, 28))["alerta_periodo"]
-        self.assertIn("terminando em 30/08", alerta)
-
-    def test_o_alerta_fica_fora_da_analise_copiada(self):
-        """A análise interna é sobre a verba do cliente e é copiada inteira;
-        isto é sobre o arquivo enviado, e só interessa a quem está na tela."""
-        calc = _semanal(termino_relatorio=date(2026, 9, 28))
-        self.assertNotIn("export", fv.analise(calc))
-        self.assertNotIn("export", fv.mensagem(calc))
+    def test_o_intervalo_apurado_fica_escrito_na_mensagem(self):
+        """A defesa contra o recorte errado deixou de ser um alerta e virou o
+        próprio texto: quem lê vê de que dias o fechamento fala."""
+        texto = fv.mensagem(_semanal(inicio_relatorio=date(2026, 8, 1),
+                                     termino_relatorio=date(2026, 8, 28)))
+        self.assertIn("*Período de 01/08 a 28/08:* 28 dias", texto)
 
 
 class SemConfiguradoLidoTest(SimpleTestCase):
@@ -1122,16 +1198,17 @@ class SemConfiguradoLidoTest(SimpleTestCase):
         self.assertIn("R$ 43/dia", fv.mensagem(calc))
 
 
-class CicloNaTelaTest(TestCase):
-    """O ciclo é deduzido do arquivo, então precisa estar escrito na tela.
+class PeriodoNaTelaTest(TestCase):
+    """O período apurado é lido do arquivo, então precisa estar escrito.
 
-    Esta classe já mediu o contrário: o app dizia qual intervalo travar no
-    Gerenciador ("Este mês" / "Esta semana") e recusava o que não batesse. A
-    regra caiu em 29/08/2026 porque servia a quem contrata no dia 1º e mais
-    ninguém — cliente que entra no dia 30 tem um mês que vai do 30 ao 29.
+    Esta classe já mediu duas regras que caíram. A primeira dizia qual
+    intervalo travar no Gerenciador ("Este mês" / "Esta semana") e recusava o
+    que não batesse — servia a quem contrata no dia 1º e mais ninguém. A
+    segunda alertava quando o export cobria mais de um ciclo, e saiu em
+    31/08/2026 junto com o ciclo suposto.
 
-    O que sobrou de defesa é o operador VER o ciclo que foi deduzido. A
-    aplicação não tem como saber que o ciclo do cliente é outro.
+    O que sobrou de defesa é o operador VER o intervalo que foi lido. A
+    aplicação não tem como saber qual intervalo ele queria.
     """
 
     def _enviar(self, periodicidade="mensal", orcamento="990,00",
@@ -1143,7 +1220,7 @@ class CicloNaTelaTest(TestCase):
                 CAMPANHAS[0], orcamento="R$ 42,00 Diário",
                 inicio=relatorio[0], gasto=gasto)], relatorio=relatorio)})
 
-    def test_a_tela_de_envio_explica_que_o_intervalo_define_o_ciclo(self):
+    def test_a_tela_de_envio_explica_que_o_intervalo_define_o_periodo(self):
         html = self.client.get("/verba/").content.decode()
         self.assertIn("começando no dia em que", html)
         self.assertIn('id="aba-do-export"', html)
@@ -1153,45 +1230,27 @@ class CicloNaTelaTest(TestCase):
         self.assertIn("abo: 'Conjuntos de anúncios'", html)
         self.assertIn(">Campanhas</b>", html)
 
-    def test_a_tela_02_escreve_o_export_e_o_ciclo_deduzido(self):
+    def test_a_tela_02_escreve_o_intervalo_lido(self):
         self._enviar()
         r = self.client.get("/verba/fechamento/")
         self.assertEqual(r.context["relatado_txt"], "01/08/2026 a 24/08/2026")
-        self.assertEqual(r.context["ciclo_txt"], "01/08/2026 a 31/08/2026")
-        self.assertContains(r, "01/08/2026 a 31/08/2026")
+        self.assertContains(r, "01/08/2026 a 24/08/2026")
+        self.assertContains(r, "24 dias apurados")
 
-    def test_o_ciclo_de_quem_entra_no_meio_do_mes(self):
+    def test_o_periodo_de_quem_entra_no_meio_do_mes(self):
         self._enviar(relatorio=("2026-07-30", "2026-08-28"))
         r = self.client.get("/verba/fechamento/")
-        self.assertEqual(r.context["ciclo_txt"], "30/07/2026 a 29/08/2026")
-        self.assertContains(r, "O ciclo de 30/07 a 29/08")
-        self.assertNotContains(r, "mais de um mês")
+        self.assertContains(r, "O período de 30/07 a 28/08")
+        self.assertEqual(r.context["calc"]["dias_apurados"], 30)
 
-    def test_export_maior_que_o_ciclo_aparece_em_vermelho(self):
-        """Não é ressalva sobre o número: é a suspeita de que ele está errado,
-        e seguir com ele manda um valor errado para o cliente."""
+    def test_a_tela_nao_alarma_por_tamanho_de_export(self):
+        """O previsto acompanha os dias apurados: exportar mais dias apura
+        outro intervalo, não erra número nenhum."""
         self._enviar("semanal", orcamento="300,00",
                      relatorio=("2026-08-01", "2026-08-28"))
         html = self.client.get("/verba/fechamento/").content.decode()
-        self.assertIn("mais de uma semana", html)
-        self.assertIn('class="erro"', html)
-
-    def test_sem_suspeita_a_tela_nao_alarma(self):
-        self._enviar()
-        html = self.client.get("/verba/fechamento/").content.decode()
-        self.assertNotIn("mais de um mês", html)
-
-    def test_trocar_a_periodicidade_na_tela_02_revela_a_suspeita(self):
-        """Recalcular refaz os números, não a planilha: o mês exportado
-        continua sendo o mês depois de trocar para semanal. É o caminho mais
-        provável para o erro, porque não passa pelo Gerenciador."""
-        self._enviar()
-        self.assertNotContains(self.client.get("/verba/fechamento/"),
-                               "mais de uma semana")
-        r = self.client.post("/verba/fechamento/", {
-            "cliente": "Rei do Celular", "orcamento": "300,00",
-            "periodicidade": "semanal", "estrutura": "cbo"})
-        self.assertContains(r, "mais de uma semana")
+        self.assertNotIn("mais de uma semana", html)
+        self.assertNotIn('class="erro"', html)
 
 
 class PeriodoRelatadoTest(SimpleTestCase):
@@ -1256,7 +1315,7 @@ class SemPeriodoNoArquivoTest(TestCase):
         self.assertNotIn("Data de hoje", html)
         self.assertNotIn('name="referencia"', html)
 
-    def test_o_gasto_ate_marca_o_fim_do_export(self):
+    def test_o_periodo_apurado_e_o_do_export(self):
         """Antes marcava "ontem", contado a partir de uma data digitada — o
         que dava a data certa só quando o operador exportava e preenchia a
         tela no mesmo dia."""
@@ -1265,14 +1324,15 @@ class SemPeriodoNoArquivoTest(TestCase):
             "periodicidade": "mensal", "estrutura": "cbo",
             "arquivo": _anexo("c.xlsx", CAMPANHAS)})
         r = self.client.get("/verba/fechamento/")
-        self.assertIn("*Gasto de 01/08 a 24/08:*", r.context["mensagem"])
+        self.assertIn("*Período de 01/08 a 24/08:* 24 dias",
+                      r.context["mensagem"])
 
 
 # ----------------------------------------------------------------------
 # Quinzena
 # ----------------------------------------------------------------------
-class CicloQuinzenalTest(SimpleTestCase):
-    """O terceiro ciclo: 15 dias corridos a partir do início do export."""
+class ContratoQuinzenalTest(SimpleTestCase):
+    """A terceira unidade: o contratado dividido por 15."""
 
     def _quinzenal(self, gasto=700.0, contratado=900.0, de=date(2026, 8, 15),
                    ate=date(2026, 8, 26)):
@@ -1281,41 +1341,40 @@ class CicloQuinzenalTest(SimpleTestCase):
                            periodo=fv.CICLO_QUINZENAL,
                            inicio_relatorio=de, termino_relatorio=ate)
 
-    def test_a_quinzena_tem_quinze_dias(self):
-        inicio, fim, dias, rotulo = fv.janela(date(2026, 8, 15),
-                                              fv.CICLO_QUINZENAL)
-        self.assertEqual((inicio, fim, dias), (date(2026, 8, 15),
-                                               date(2026, 8, 29), 15))
-        self.assertEqual(rotulo, "a quinzena de 15/08 a 29/08")
-
-    def test_o_diario_e_o_contratado_dividido_por_quinze(self):
+    def test_a_quinzena_divide_por_quinze(self):
+        self.assertEqual(fv.dias_do_contrato(date(2026, 8, 15),
+                                             fv.CICLO_QUINZENAL), 15)
         self.assertEqual(self._quinzenal()["contratado_diario"], 60.0)
 
-    def test_os_dias_encerrados_contam_do_inicio_do_export(self):
+    def test_os_dias_apurados_saem_do_export(self):
         calc = self._quinzenal()
-        self.assertEqual(calc["dias_encerrados"], 12)   # 15 a 26
-        self.assertEqual(calc["dias_restantes"], 3)
+        self.assertEqual(calc["dias_apurados"], 12)   # 15 a 26
+        self.assertEqual(calc["previsto_periodo"], 60.0 * 12)
 
-    def test_a_mensagem_concorda_com_o_genero_da_quinzena(self):
+    def test_a_mensagem_diz_por_quinzena(self):
         calc = self._quinzenal()
         self.assertIn("*Contratado:* R$ 900/quinzena", fv.mensagem(calc))
-        self.assertIn("a quinzena deve fechar", fv.frase_status(calc))
+        self.assertIn("*Equivale a:* R$ 60/dia", fv.mensagem(calc))
 
-    def test_o_ciclo_parcial_da_quinzena_concorda_tambem(self):
-        # Campanha no ar desde 24/08 numa quinzena que começou em 15/08.
+    def test_o_periodo_parcial_da_quinzena(self):
+        # Campanha no ar desde 24/08 num export que começou em 15/08.
         calc = fv.calcular([_estrutura(200.0, 60.0, date(2026, 8, 24))],
                            contratado_ciclo=900.0, periodo=fv.CICLO_QUINZENAL,
                            inicio_relatorio=date(2026, 8, 15),
                            termino_relatorio=date(2026, 8, 26))
-        self.assertIn("em vez da quinzena cheia", fv.frase_status(calc))
+        self.assertIn("3 dias de veiculação dentro dos 12 apurados",
+                      fv.frase_status(calc))
 
-    def test_export_maior_que_a_quinzena_e_pego(self):
+    def test_export_maior_que_a_quinzena_apura_o_que_ele_traz(self):
+        """Era um alerta vermelho; virou aritmética. 27 dias apurados a
+        R$ 60/dia preveem R$ 1.620, e o desvio fala desses 27 dias."""
         calc = self._quinzenal(ate=date(2026, 9, 10))
-        self.assertIn("mais de uma quinzena", calc["alerta_periodo"])
+        self.assertEqual(calc["dias_apurados"], 27)
+        self.assertEqual(calc["previsto_periodo"], 60.0 * 27)
 
-    def test_a_tela_oferece_os_tres_ciclos(self):
-        self.assertEqual([c[0] for c in forms.VerbaBaseForm.PERIODICIDADES],
-                         ["mensal", "quinzenal", "semanal"])
+    def test_a_tela_oferece_as_quatro_unidades(self):
+        self.assertEqual([c[0] for c in forms.VerbaUploadForm.PERIODICIDADES],
+                         ["mensal", "quinzenal", "semanal", "diario"])
 
     def test_nenhuma_frase_do_catalogo_deixa_chave_por_formatar(self):
         for status in fv.FRASES_STATUS:
@@ -1324,3 +1383,198 @@ class CicloQuinzenalTest(SimpleTestCase):
                 for texto in (fv.frase_status(calc), fv.pergunta(calc)):
                     self.assertNotIn("{", texto)
                     self.assertNotIn("}", texto)
+
+
+class ContratoPorDiaTest(SimpleTestCase):
+    """R$ 150/dia — o valor digitado JÁ É a diária.
+
+    Existe desde 31/08/2026 porque a conta que o operador fazia à mão antes de
+    digitar (150 × 31) é exatamente a que esta frente existe para tirar da mão
+    dele. E com o período apurado colado no export, a diária virou o único
+    número do contrato que entra em conta: ela multiplica os dias do arquivo.
+    """
+
+    def _calc(self, gasto=361.0, diario=150.0, inicio="2026-08-28"):
+        return fv.calcular([_estrutura(gasto, 0.0, inicio)],
+                           contratado_ciclo=diario, periodo=fv.CICLO_DIARIO,
+                           inicio_relatorio=date(2026, 8, 28),
+                           termino_relatorio=date(2026, 8, 30))
+
+    def test_o_periodo_apurado_e_o_do_export(self):
+        """O caso da conta ILOC: export de três dias virava um ciclo suposto
+        de 31 e uma projeção de R$ 3.735 a partir de R$ 361 gastos."""
+        calc = self._calc()
+        self.assertEqual(calc["dias_apurados"], 3)
+        self.assertEqual(calc["previsto_periodo"], 450.0)
+        self.assertNotIn("projecao_fechamento", calc)
+
+    def test_o_diario_nao_passa_por_divisao(self):
+        self.assertEqual(self._calc()["contratado_diario"], 150.0)
+
+    def test_o_desvio_compara_o_gasto_com_o_previsto_dos_dias(self):
+        self.assertAlmostEqual(self._calc()["desvio_pct"], -19.8, places=1)
+
+    def test_a_mensagem_fala_na_unidade_combinada(self):
+        """Escrever "R$ 4.650/mês" para quem combinou R$ 150/dia é traduzir o
+        contrato do cliente para uma unidade que ele não usou."""
+        texto = fv.mensagem(self._calc())
+        self.assertIn("*Contratado:* R$ 150/dia", texto)
+        self.assertIn("*Período de 28/08 a 30/08:* 3 dias", texto)
+        self.assertIn("*Previsto no período:* R$ 450", texto)
+        self.assertIn("*Gasto:* R$ 361", texto)
+        self.assertNotIn("/mês", texto)
+
+    def test_o_contrato_ja_diario_nao_repete_a_linha_de_conversao(self):
+        """"Equivale a R$ 150/dia" abaixo de "Contratado R$ 150/dia" seria a
+        mesma linha duas vezes."""
+        self.assertNotIn("*Equivale a:*", fv.mensagem(self._calc()))
+
+    def test_o_contrato_mensal_traz_a_conversao(self):
+        texto = fv.mensagem(fv.calcular(
+            [_estrutura(740.0, 0.0, "2026-08-01")], contratado_ciclo=990.0,
+            **_export(date(2026, 8, 25))))
+        self.assertIn("*Contratado:* R$ 990/mês", texto)
+        self.assertIn("*Equivale a:* R$ 32/dia", texto)
+
+    def test_nenhuma_frase_deixa_chave_por_formatar(self):
+        for status in fv.FRASES_STATUS:
+            with self.subTest(status=status):
+                calc = dict(self._calc(), status=status)
+                for texto in (fv.frase_status(calc), fv.pergunta(calc)):
+                    self.assertNotIn("{", texto)
+
+    def test_a_ia_recebe_o_combinado_na_unidade_certa(self):
+        """O payload espelha a mensagem: um número que o modelo lê como
+        "/mês" viraria "/mês" na reescrita."""
+        payload = redator_ia.numeros_do_fechamento(self._calc(), "Cliente")
+        self.assertEqual(payload["contratado"], "R$ 150")
+        self.assertEqual(payload["unidade_do_contratado"], "dia")
+        self.assertIsNone(payload["equivale_por_dia"])
+        self.assertEqual(payload["previsto_no_periodo"], "R$ 450")
+        self.assertEqual(payload["dias_apurados"], 3)
+
+    def test_no_contrato_mensal_o_payload_traz_a_conversao(self):
+        payload = redator_ia.numeros_do_fechamento(fv.calcular(
+            [_estrutura(740.0, 0.0, "2026-08-01")], contratado_ciclo=990.0,
+            **_export(date(2026, 8, 25))))
+        self.assertEqual(payload["contratado"], "R$ 990")
+        self.assertEqual(payload["unidade_do_contratado"], "mês")
+        self.assertEqual(payload["equivale_por_dia"], "R$ 32")
+
+
+class FluxoPorDiaTest(TestCase):
+    """As duas telas com um contrato de R$ 150/dia."""
+
+    def _enviar(self):
+        return self.client.post("/verba/", {
+            "cliente": "Rei do Celular", "orcamento": "150,00",
+            "periodicidade": "diario", "estrutura": "cbo",
+            "arquivo": _anexo("campanhas.xlsx", CAMPANHAS)})
+
+    def test_o_envio_chega_ao_fechamento(self):
+        self.assertRedirects(self._enviar(), "/verba/fechamento/")
+
+    def test_a_mensagem_da_tela_traz_o_diario_combinado(self):
+        self._enviar()
+        html = self.client.get("/verba/fechamento/").content.decode()
+        self.assertIn("*Contratado:* R$ 150/dia", html)
+        self.assertIn("*Período de 01/08 a 24/08:* 24 dias", html)
+
+    def test_a_lateral_espelha_a_mensagem(self):
+        """Ler "Contratado R$ 4.650/mês" numa tela cujo contrato é diário
+        obriga a conferir de cabeça se 4.650 ÷ 31 dá 150."""
+        self._enviar()
+        r = self.client.get("/verba/fechamento/")
+        self.assertEqual([l["rotulo"] for l in r.context["combinado"]],
+                         ["Contratado", "Previsto"])
+        self.assertEqual(r.context["combinado"][0]["valor"], "R$ 150/dia")
+        self.assertEqual(r.context["combinado"][1]["valor"],
+                         "R$ 3.600 · 24 dias")
+
+    def test_o_trilho_e_escalado_pelo_previsto_do_periodo(self):
+        self._enviar()
+        r = self.client.get("/verba/fechamento/")
+        self.assertEqual(r.context["previsto_txt"], "R$ 3.600")
+
+    def test_no_mensal_a_lateral_traz_as_tres_linhas(self):
+        self.client.post("/verba/", {
+            "cliente": "Rei do Celular", "orcamento": "990,00",
+            "periodicidade": "mensal", "estrutura": "cbo",
+            "arquivo": _anexo("campanhas.xlsx", CAMPANHAS)})
+        r = self.client.get("/verba/fechamento/")
+        self.assertEqual([l["rotulo"] for l in r.context["combinado"]],
+                         ["Contratado", "Equivale a", "Previsto"])
+
+
+class DeQuemEAEntregaTest(SimpleTestCase):
+    """Subentrega não é falha da agência, e o texto não pode dizer que é.
+
+    A divisão de responsabilidade é literal: a agência CONFIGURA o orçamento;
+    quem decide quanto gastar por dia é o sistema de entrega do Meta, que
+    distribui pelo leilão e com frequência não consome o valor diário cheio.
+    Um orçamento de R$ 150/dia é um teto que a plataforma pode ou não
+    preencher.
+
+    As frases diziam "estou verificando o motivo antes de qualquer ajuste de
+    verba", e a pergunta era "te retorno ainda hoje com o motivo". Assim
+    escritas, admitiam um erro que não houve e prometiam uma apuração que não
+    tem o que apurar.
+    """
+
+    def _abaixo(self, gasto=500.0):
+        return fv.calcular([_estrutura(gasto, 32.0, "2026-08-01")],
+                           contratado_ciclo=990.0, **_export(date(2026, 8, 25)))
+
+    def test_a_frase_explica_o_mecanismo_da_plataforma(self):
+        frase = fv.frase_status(self._abaixo())
+        self.assertIn("O orçamento seguiu configurado", frase)
+        self.assertIn("entrega do Meta", frase)
+        self.assertIn("leilão", frase)
+
+    def test_nenhuma_frase_admite_falha_da_agencia(self):
+        """A varredura vale para as SEIS frases, não só para a de subentrega:
+        nenhuma banda de desvio é motivo para pedir desculpa."""
+        proibidos = ("verificando o motivo", "não conseguimos", "deixamos de",
+                     "houve um problema", "desculpa", "falha", "erro nosso",
+                     "vou apurar", "estou apurando")
+        for status, frase in fv.FRASES_STATUS.items():
+            for termo in proibidos:
+                with self.subTest(status=status, termo=termo):
+                    self.assertNotIn(termo, frase.lower())
+
+    def test_nenhuma_pergunta_promete_apurar_causa(self):
+        for status, pergunta in fv.PERGUNTAS.items():
+            with self.subTest(status=status):
+                self.assertNotIn("motivo", pergunta.lower())
+                self.assertNotIn("retorno", pergunta.lower())
+
+    def test_a_pergunta_da_subentrega_pede_seguir_com_o_diario(self):
+        """O que resta ao cliente decidir é continuar ou não com o mesmo
+        orçamento — não esperar uma explicação que já está na frase."""
+        calc = self._abaixo()
+        self.assertEqual(fv.pergunta(calc),
+                         "Podemos seguir com o mesmo diário configurado?")
+
+    def test_a_mensagem_inteira_fica_sem_tom_de_justificativa(self):
+        texto = fv.mensagem(self._abaixo(), "Conta - ILOC")
+        self.assertIn("O orçamento seguiu configurado", texto)
+        self.assertNotIn("verificando", texto)
+        self.assertTrue(texto.rstrip().endswith("?"))
+
+    def test_o_prompt_da_ia_carrega_o_mesmo_contexto(self):
+        """Sem isto, a reescrita reintroduz o tom que o motor tirou — o modelo
+        preenche a lacuna com o pedido de desculpa que ele viu mil vezes."""
+        prompt = redator_ia.PROMPT_REESCRITA_VERBA
+        self.assertIn("a agência CONFIGURA o orçamento", prompt)
+        self.assertIn("sistema de entrega do Meta", prompt)
+        self.assertIn("NÃO é falha da agência", prompt)
+        for proibido in ("não conseguimos gastar", "vou verificar o que houve",
+                         "peço desculpas"):
+            with self.subTest(proibido=proibido):
+                self.assertIn(proibido, prompt)
+
+    def test_o_lado_de_cima_tambem_e_da_plataforma(self):
+        """O Meta pode consumir mais que o diário num dia e compensar noutro —
+        o prompt diz isso para a reescrita não culpar ninguém do outro lado."""
+        self.assertIn("consumir mais que o diário em um dia",
+                      redator_ia.PROMPT_REESCRITA_VERBA)

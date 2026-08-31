@@ -1,0 +1,208 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex Acelera | Análise de Rastreamento{% endblock %}
+{% block topo_sub %}Análise de rastreamento{% endblock %}
+{% block nome_etapa1 %}Importar export{% endblock %}
+{% block nome_etapa2 %}Copiar o texto{% endblock %}
+{% block form_extra %}enctype="multipart/form-data"{% endblock %}
+
+{% block conteudo %}
+<h1>Análise de Rastreamento</h1>
+<p class="sub">Analise o caminho entre clique, destino, relevância e retenção
+  dos anúncios para identificar possíveis gargalos da campanha.</p>
+
+{% if erro %}
+<div class="erro">
+  <div class="erro-corpo">
+  {{ erro }}
+  {% comment %}
+  As duas listas lado a lado (§30): sozinha, "métricas insuficientes" manda o
+  operador adivinhar o que faltou. Com o que veio e o que era esperado, a
+  correção é uma ida ao personalizador de colunas.
+  {% endcomment %}
+  {% if esperadas %}
+  <div class="erro-colunas">
+    <div>
+      <b>Métricas encontradas</b>
+      {% if encontradas %}
+      <ul class="erro-lista">{% for m in encontradas %}<li>{{ m }}</li>{% endfor %}</ul>
+      {% else %}<p class="erro-vazio">nenhuma</p>{% endif %}
+    </div>
+    <div>
+      <b>Métricas esperadas</b>
+      <ul class="erro-lista">{% for m in esperadas %}<li>{{ m }}</li>{% endfor %}</ul>
+    </div>
+  </div>
+  {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="bloco">
+  <span class="bloco-idx">01</span><span class="bloco-nome">Cliente</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="campos">
+  <div class="campo">
+    <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
+    {{ form.cliente }}
+    <span class="ajuda">{{ form.cliente.help_text }}</span>
+    {{ form.cliente.errors }}
+  </div>
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Export do preset RASTREAMENTO</span>
+  <span class="bloco-rule"></span>
+</div>
+
+<div class="dropzone" id="dropzone" tabindex="0" role="button"
+     aria-label="Selecionar arquivo XLSX">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
+    <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
+  </svg>
+  <span class="dropzone-txt" id="dropzone-txt">
+    <strong>Selecionar arquivo XLSX</strong> ou arraste para cá</span>
+  <span class="dropzone-meta">anúncios · 10 MB</span>
+  {{ form.arquivo }}
+</div>
+{{ form.arquivo.errors }}
+
+<p class="legenda">Use o arquivo exportado do Meta Ads com o preset
+  RASTREAMENTO.</p>
+
+{% comment %}
+A lista é de suficiência, não de obrigatoriedade — e a tela precisa dizer isso
+antes do envio. Um anúncio de imagem não tem métrica de vídeo, uma campanha de
+WhatsApp não tem página de destino, e um anúncio novo não tem classificação de
+relevância. Nenhum dos três é motivo para o arquivo ser recusado.
+{% endcomment %}
+<details class="detalhe">
+  <summary>Quais métricas o preset pode ter</summary>
+  <p class="legenda">Aba <b>Anúncios</b> → <b>Colunas</b> →
+    <b>Personalizar colunas</b>. Basta o arquivo sustentar <b>um</b> dos
+    quatro blocos:</p>
+  <ul class="legenda-lista">
+    <li><b>Clique</b> — Cliques no link · Cliques no link únicos · CTR · CTR
+      único · CPC</li>
+    <li><b>Destino</b> — Visualizações da página de destino · Custo por
+      visualização</li>
+    <li><b>Relevância</b> — Classificação de qualidade · da taxa de
+      engajamento · da taxa de conversão</li>
+    <li><b>Retenção</b> — Reproduções de 3s · ThruPlays · Custo por ThruPlay ·
+      25% · 50% · 75% · 100%</li>
+  </ul>
+  <p class="legenda">Campanha de mensagem não tem página de destino e anúncio
+    de imagem não tem vídeo — nos dois casos o arquivo é lido normalmente, com
+    os blocos que ele sustenta.</p>
+</details>
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Resumo do envio</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Frente</dt><dd>Análise de Rastreamento</dd></div>
+  <div class="resumo-item"><dt>Preset</dt><dd>RASTREAMENTO</dd></div>
+  <div class="resumo-item"><dt>Anexo</dt><dd class="num" id="rs-anexo">nenhum</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>Texto para o cliente</dd></div>
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">Pré-requisitos</div>
+<div class="checks">
+  <div class="check falta" id="ck-cliente"><i>!</i><span>Informe o cliente</span></div>
+  <div class="check falta" id="ck-arquivo"><i>!</i><span>Envie o export .xlsx</span></div>
+</div>
+
+<div class="acao">
+  <button class="botao" type="submit" id="btn-enviar" disabled>
+    <span id="btn-rotulo">Ler planilhas</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  <p class="acao-nota">O diagnóstico compara os anúncios do próprio arquivo. O
+    período vem do export — não é preciso informar datas.</p>
+  <div class="status">
+    <span class="status-eixo" aria-hidden="true"></span>
+    <span class="status-txt" id="status-txt">Nenhum anexo — selecione o .xlsx para começar</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Um arquivo, sem lista e sem remover — o mesmo painel das outras frentes,
+  // com os rótulos desta.
+  const dz = document.getElementById('dropzone');
+  const input = dz.querySelector('input[type=file]');
+  const txt = document.getElementById('dropzone-txt');
+  const btn = document.getElementById('btn-enviar');
+  const btnRotulo = document.getElementById('btn-rotulo');
+  const statusTxt = document.getElementById('status-txt');
+  const statusEixo = document.querySelector('.status-eixo');
+  const rsAnexo = document.getElementById('rs-anexo');
+  const ckCliente = document.getElementById('ck-cliente');
+  const ckArquivo = document.getElementById('ck-arquivo');
+  const inputCliente = document.getElementById('{{ form.cliente.auto_id }}');
+
+  const tamanho = b => b < 1024 * 1024
+    ? `${(b / 1024).toFixed(0)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+
+  function marcar(check, ok, texto) {
+    check.classList.toggle('falta', !ok);
+    check.querySelector('i').textContent = ok ? '✓' : '!';
+    check.querySelector('span').textContent = texto;
+  }
+
+  function avaliar() {
+    const f = input.files[0];
+    const okCliente = inputCliente.value.trim() !== '';
+
+    txt.innerHTML = f
+      ? `<strong>${f.name}</strong> · ${tamanho(f.size)}`
+      : '<strong>Selecionar arquivo XLSX</strong> ou arraste para cá';
+    rsAnexo.textContent = f ? tamanho(f.size) : 'nenhum';
+
+    marcar(ckCliente, okCliente,
+      okCliente ? 'Cliente preenchido' : 'Informe o cliente');
+    marcar(ckArquivo, !!f, f ? 'Export pronto para diagnóstico'
+                             : 'Envie o export .xlsx');
+
+    btn.disabled = !(f && okCliente);
+    statusEixo.classList.toggle('ativo', !btn.disabled);
+    statusTxt.textContent = !f ? 'Nenhum anexo — selecione o .xlsx para começar'
+      : btn.disabled ? 'Falta o nome do cliente'
+      : 'Pronto para diagnosticar';
+  }
+
+  inputCliente.addEventListener('input', avaliar);
+  input.addEventListener('change', avaliar);
+  dz.addEventListener('click', () => input.click());
+  dz.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
+  ['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.add('arrastando'); }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.remove('arrastando'); }));
+  dz.addEventListener('drop', e => {
+    const dt = new DataTransfer();
+    if (e.dataTransfer.files[0]) dt.items.add(e.dataTransfer.files[0]);
+    input.files = dt.files;
+    avaliar();
+  });
+
+  document.getElementById('form-painel').addEventListener('submit', () => {
+    if (btn.disabled) return;
+    btn.classList.add('carregando');
+    btnRotulo.textContent = 'Lendo a planilha…';
+    btn.disabled = true;
+    statusEixo.classList.add('ativo');
+    statusTxt.textContent = 'Lendo a planilha…';
+  });
+
+  avaliar();
+</script>
+{% endblock %}

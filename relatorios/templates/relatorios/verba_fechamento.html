@@ -9,9 +9,9 @@
 
 {% block conteudo %}
 <h1>{{ cliente }}</h1>
-<p class="sub">{{ calc.rotulo|capfirst }} · {{ calc.dias_encerrados }} de
-  {{ calc.dias_do_ciclo }} dias encerrados · export de {{ relatado_txt }}
-  {% if calc.ciclo_parcial %}· {{ calc.dias_veiculados }} dias de veiculação{% endif %}</p>
+<p class="sub">{{ calc.rotulo|capfirst }} · {{ calc.dias_apurados }}
+  dia{{ calc.dias_apurados|pluralize:"s" }} apurado{{ calc.dias_apurados|pluralize:"s" }}
+  {% if calc.periodo_parcial %}· {{ calc.dias_veiculados }} de veiculação{% endif %}</p>
 
 {% if erro_ia %}
 <div class="{% if erro_ia_definitivo %}erro{% else %}aviso{% endif %}">
@@ -22,46 +22,52 @@
 {% for aviso in avisos %}<div class="aviso">{{ aviso }}</div>{% endfor %}
 {% if calc.divergencia_contratado %}<div class="aviso">{{ calc.divergencia_contratado }}</div>{% endif %}
 {% comment %}
-O gasto que não cabe no ciclo. Vem em vermelho, e não como aviso âmbar, porque
-não é uma ressalva sobre o número — é a suspeita de que o número está errado, e
-seguir com ele significa mandar um valor errado para o cliente.
+Quais campanhas entram no fechamento. Vem antes do trilho porque decide todos
+os números dele: conta que roda campanha fora do contrato — uma institucional,
+um teste pago à parte — tinha esse gasto entrando na projeção sem ter como
+sair.
+
+Aqui todas as caixas nascem marcadas, e é a diferença para as frentes de
+texto: campanha configurada que ainda não gastou continua fazendo parte do
+orçamento do ciclo, e desmarcá-la por conta própria mudaria o configurado sem
+ninguém pedir.
 {% endcomment %}
-{% if calc.alerta_periodo %}<div class="erro">{{ calc.alerta_periodo }}</div>{% endif %}
+{% include "relatorios/_campanhas_incluidas.html" with idx="01" nota="Refaz o fechamento só com o que estiver marcado, sem reenviar planilha. O que sair leva junto o gasto e o orçamento configurado dele." %}
 
 {% comment %}
-O trilho de fechamento. Esta frente existe para responder "vai fechar no
-combinado?", e o trilho é a resposta antes de qualquer texto: a pista é o mês,
-a barra cheia é o que já saiu, a hachura é o que a projeção acrescenta e o
-traço branco é o contratado. Projeção que passa da marca aparece passando —
-a pista é escalada pelo maior dos dois, não cortada no combinado.
+O trilho do período. A pista são os dias apurados, a barra cheia é o que saiu e
+o traço branco é o previsto para esses dias. Gasto que passa da marca aparece
+passando — a pista é escalada pelo maior dos dois, não cortada no previsto.
+
+A hachura de projeção saiu em 31/08/2026 junto com a janela futura: o período
+apurado é o recorte do export, e nele não sobra dia para projetar.
 {% endcomment %}
 {% if trilho %}
 <div class="trilho">
   <div class="trilho-topo">
-    <div class="trilho-valor">{{ projecao_txt }}<small>projeção de fechamento</small></div>
+    <div class="trilho-valor">{{ gasto_txt }}<small>gasto no período</small></div>
     <div class="trilho-desvio {{ trilho.tom }}">{{ desvio_txt }}</div>
   </div>
   <div class="pista" role="img"
-       aria-label="Gasto de {{ gasto_txt }} e projeção de {{ projecao_txt }} contra {{ contratado_txt }} contratados"
-       style="--gasto:{{ trilho.gasto }};--projetado:{{ trilho.projetado }};--alvo:{{ trilho.alvo }}">
-    <span class="pista-projetado"></span>
+       aria-label="Gasto de {{ gasto_txt }} contra {{ previsto_txt }} previstos no período"
+       style="--gasto:{{ trilho.gasto }};--projetado:0%;--alvo:{{ trilho.alvo }}">
     <span class="pista-gasto"></span>
     <span class="pista-alvo"></span>
   </div>
   <div class="trilho-pes">
-    <span>{{ calc.dias_encerrados }}/{{ calc.dias_do_ciclo }} dias</span>
-    <span>{{ calc.dias_restantes }} restantes</span>
+    <span>{{ calc.dias_apurados }} dia{{ calc.dias_apurados|pluralize:"s" }} apurado{{ calc.dias_apurados|pluralize:"s" }}</span>
+    <span>{{ calc.dias_veiculados }} de veiculação</span>
   </div>
   <div class="trilho-legenda">
     <span><i class="amostra-gasto"></i>Gasto {{ gasto_txt }}</span>
-    <span><i class="amostra-projetado"></i>A gastar no ritmo atual</span>
-    <span><i class="amostra-alvo"></i>Contratado {{ contratado_txt }}</span>
+    <span><i class="amostra-alvo"></i>Previsto {{ previsto_txt }}</span>
   </div>
 </div>
 {% endif %}
 
 <div class="bloco">
-  <span class="bloco-idx">01</span><span class="bloco-nome">Mensagem para o cliente</span>
+  <span class="bloco-idx">{% if tem_selecao %}02{% else %}01{% endif %}</span>
+  <span class="bloco-nome">Mensagem para o cliente</span>
   <span class="bloco-rule"></span>
 </div>
 <div class="saida">
@@ -74,7 +80,8 @@ a pista é escalada pelo maior dos dois, não cortada no combinado.
 </div>
 
 <div class="bloco">
-  <span class="bloco-idx">02</span><span class="bloco-nome">Análise do desvio</span>
+  <span class="bloco-idx">{% if tem_selecao %}03{% else %}02{% endif %}</span>
+  <span class="bloco-nome">Análise do desvio</span>
   <span class="bloco-rule"></span>
 </div>
 <div class="saida interna">
@@ -87,7 +94,8 @@ a pista é escalada pelo maior dos dois, não cortada no combinado.
 </div>
 
 <div class="bloco">
-  <span class="bloco-idx">03</span><span class="bloco-nome">Conferência</span>
+  <span class="bloco-idx">{% if tem_selecao %}04{% else %}03{% endif %}</span>
+  <span class="bloco-nome">Conferência</span>
   <span class="bloco-rule"></span>
   <span class="bloco-meta">{{ estruturas|length }}
     {% if nivel_conjunto %}conjunto{{ estruturas|pluralize:"s" }}
@@ -123,89 +131,79 @@ convertido não passar por leitura.
     </tbody>
   </table>
 </div>
-<p class="legenda">O gasto soma todas as linhas, inclusive pausadas e zeradas —
-  estrutura parada com R$ 0,00 é informação, e tirá-la erraria a soma do ciclo.
-  A coluna <b>Orçamento no Meta</b> não entra em conta nenhuma: o diário do
-  fechamento é o contratado dividido pelos dias do ciclo. Ela está aqui para
-  você ver o Meta setado em outro valor — e decidir o que fazer.</p>
-
-<div class="bloco">
-  <span class="bloco-idx">04</span><span class="bloco-nome">Base interna</span>
-  <span class="bloco-rule"></span>
-</div>
 {% comment %}
-O ciclo deduzido fica escrito aqui de propósito. Ele sai do intervalo do
-export, e a aplicação não tem como saber que o ciclo do cliente é outro — quem
-tem é o operador, e só se ele vir o que foi deduzido.
+O período apurado fica escrito de propósito. Ele É o intervalo do export, e a
+aplicação não tem como saber que o operador queria outro — quem tem é ele, e só
+se vir o que foi lido. Não há data a digitar em lugar nenhum desta frente.
 {% endcomment %}
-<p class="legenda">O export vai de <b>{{ relatado_txt }}</b>, e é dele que sai
-  o ciclo deste fechamento: <b>{{ ciclo_txt }}</b>. Não há data a digitar —
-  para mudar o ciclo, mude o intervalo do export. Trocar a periodicidade
-  abaixo refaz o cálculo, não o arquivo.</p>
-<div class="campos">
-  <div class="campo">
-    <label for="{{ form.cliente.id_for_label }}">Cliente / unidade</label>
-    {{ form.cliente }}{{ form.cliente.errors }}
-  </div>
-  <div class="campo">
-    <label for="{{ form.orcamento.id_for_label }}">Orçamento contratado</label>
-    {{ form.orcamento }}{{ form.orcamento.errors }}
-  </div>
-  <div class="campo">
-    <label>Esse valor é</label>
-    <div class="segmento">
-      {% for opcao in form.periodicidade %}
-      <label>{{ opcao.tag }}<span>{{ opcao.choice_label }}</span></label>
-      {% endfor %}
-    </div>
-    {{ form.periodicidade.errors }}
-  </div>
-</div>
-<p class="legenda">Corrigir aqui refaz todos os números — os dois exports já
-  estão em memória, não é preciso reenviar planilha.</p>
+<p class="legenda">Este fechamento apura <b>exatamente</b> o intervalo do
+  export: <b>{{ relatado_txt }}</b>, {{ calc.dias_apurados }}
+  dia{{ calc.dias_apurados|pluralize:"s" }}. Não há projeção nem ciclo suposto —
+  para apurar outro intervalo, mude o período do export e reenvie.</p>
+<p class="legenda">O gasto soma todas as linhas, inclusive pausadas e zeradas —
+  estrutura parada com R$ 0,00 é informação, e tirá-la erraria a soma do
+  período. A coluna <b>Orçamento no Meta</b> não entra em conta nenhuma: o
+  previsto sai da diária contratada multiplicada pelos dias apurados. Ela está
+  aqui para você ver o Meta setado em outro valor — e decidir o que fazer.</p>
+
 {% endblock %}
 
 {% block resumo %}
 <div class="resumo-titulo">Fechamento</div>
 <dl class="resumo-lista">
-  <div class="resumo-item"><dt>Contratado</dt>
-    <dd class="num">{{ contratado_txt }}/{{ unidade_contratado }}</dd></div>
-  <div class="resumo-item"><dt>Diário</dt>
-    <dd class="num">{{ configurado_txt }}/dia</dd></div>
+{% comment %}
+  O combinado na unidade em que foi combinado, a diária que sai dele e o
+  previsto dos dias apurados. A lista sai pronta da view (`_combinado`) porque
+  a linha do meio some no contrato já cotado por dia.
+  {% endcomment %}
+  {% for linha in combinado %}
+  <div class="resumo-item"><dt>{{ linha.rotulo }}</dt>
+    <dd class="num">{{ linha.valor }}</dd></div>
+  {% endfor %}
   <div class="resumo-item"><dt>Gasto</dt>
     <dd class="num">{{ gasto_txt }}</dd></div>
-  <div class="resumo-item"><dt>Projeção</dt>
-    <dd class="num">{{ projecao_txt }}</dd></div>
   <div class="resumo-item"><dt>Desvio</dt>
     <dd class="num">{{ desvio_txt }}</dd></div>
 </dl>
 
 <div class="resumo-titulo" style="margin:22px 0 12px">Denominador do ritmo</div>
 <div class="checks">
-  <div class="check{% if calc.ciclo_parcial %} falta{% endif %}">
-    <i>{% if calc.ciclo_parcial %}!{% else %}✓{% endif %}</i>
+  <div class="check{% if calc.periodo_parcial %} falta{% endif %}">
+    <i>{% if calc.periodo_parcial %}!{% else %}✓{% endif %}</i>
     <span>{{ calc.dias_veiculados }} dia{{ calc.dias_veiculados|pluralize:"s" }}
-      de veiculação, de {{ calc.dias_encerrados }} encerrado{{ calc.dias_encerrados|pluralize:"s" }}</span>
+      de veiculação, de {{ calc.dias_apurados }} apurado{{ calc.dias_apurados|pluralize:"s" }}</span>
   </div>
   <div class="check"><i>✓</i>
-    <span>Ritmo de {{ ritmo_txt }}/dia sobre
-      {{ calc.dias_restantes }} dia{{ calc.dias_restantes|pluralize:"s" }} restante{{ calc.dias_restantes|pluralize:"s" }}</span>
+    <span>Ritmo de {{ ritmo_txt }}/dia no período</span>
   </div>
 </div>
 
 <div class="acao">
-  <button class="botao" type="submit" name="recalcular" value="1">
-    <span>Recalcular</span>
+  {% if ia_disponivel %}
+  <button class="botao botao-ia" type="submit" name="mensagem_ia" value="1">
+    <span>Reescrever com IA</span>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
     </svg>
   </button>
-  {% if ia_disponivel %}
-  <p class="acao-nota">A mensagem acima já está pronta. A IA só reescreve o
-    mesmo texto — ela recebe os números calculados, nunca as planilhas.</p>
-  <button class="botao botao-sec botao-ia" type="submit" name="mensagem_ia" value="1">
-    <span>Reescrever com IA</span>
+  {% comment %}
+  O *Recalcular* e a base interna saíram juntos em 30/08/2026: esta tela deixou
+  de editar dado. Contratado errado é um envio errado, e o conserto é voltar e
+  reenviar — não corrigir o número na tela que já mostra a mensagem pronta.
+  {% endcomment %}
+  <p class="acao-nota">A mensagem acima já está pronta. A IA reescreve as
+    frases do mesmo fechamento — ela recebe os valores calculados, nunca as
+    planilhas, e uma resposta que altere ou invente qualquer número é
+    recusada. Contratado errado? Volte e reenvie.</p>
+  {% endif %}
+  {% if not do_motor %}
+  {% comment %}
+  Só depois de uma reescrita: desfazer precisa ser um clique, senão voltar à
+  mensagem do cálculo exigiria reenviar a planilha.
+  {% endcomment %}
+  <button class="botao botao-sec" type="submit" name="voltar_ao_motor" value="1">
+    <span>Voltar ao texto do cálculo</span>
   </button>
   {% endif %}
   <div class="status">

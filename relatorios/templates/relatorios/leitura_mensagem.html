@@ -1,165 +1,167 @@
 {% extends "relatorios/base.html" %}
-{% block title %}Apex — Leitura do período{% endblock %}
-{% block topo_sub %}Leitura do período{% endblock %}
+{% block title %}Apex Acelera | Leitura Rápida{% endblock %}
+{% block topo_sub %}Leitura rápida{% endblock %}
 {% block form_id %}form-leitura{% endblock %}
-{% block nome_etapa1 %}Importar export{% endblock %}
-{% block nome_etapa2 %}Copiar a mensagem{% endblock %}
+{% block nome_etapa1 %}Selecionar XLSX{% endblock %}
+{% block nome_etapa2 %}Copiar o texto{% endblock %}
 {% block cls_etapa1 %}concluida{% endblock %}
 {% block cls_etapa2 %}ativa{% endblock %}
 
 {% block conteudo %}
 <h1>{{ cliente }}</h1>
-<p class="sub">{% if periodo %}{{ periodo }}{% else %}Período não informado no
-  export{% endif %} · {{ frentes }} campanha{{ frentes|pluralize:"s" }} no
-  relatório</p>
+<p class="sub">{% if periodo_longo %}{{ periodo_longo }}{% else %}Período não
+  informado no export{% endif %}
+  {% comment %}
+  Campanha e conjunto não são a mesma coisa, e o preset sai das duas abas do
+  Gerenciador. Chamar de conjunto uma linha que é campanha era o defeito que a
+  Análise de Desempenho corrigiu antes desta frente.
+  {% endcomment %}
+  {% if n_campanhas %} · {{ n_campanhas }} campanha{{ n_campanhas|pluralize }}
+  {% elif n_conjuntos %} · {{ n_conjuntos }} conjunto{{ n_conjuntos|pluralize:"s" }}
+  {% endif %}</p>
+
+{% comment %}
+Número transcrito de imagem não tem a mesma garantia de número lido de célula
+— um dígito confundido entraria na mensagem do cliente com a mesma cara de um
+número conferido. O aviso é a única defesa que sobra depois da aritmética, e é
+por isso que ele fica ACIMA dos números, e não num rodapé.
+{% endcomment %}
+{% if da_imagem %}
+<div class="aviso"><span class="erro-corpo">Estes números foram
+  <b>transcritos do print</b>, não lidos de uma planilha. Confira os valores
+  abaixo contra o Gerenciador antes de enviar — principalmente o custo e o
+  período.</span></div>
+{% endif %}
+{% for a in avisos %}
+<div class="aviso"><span class="erro-corpo">{{ a }}</span></div>
+{% endfor %}
 
 {% if erro_ia %}
 <div class="{% if erro_ia_definitivo %}erro{% else %}aviso{% endif %}">
-  {{ erro_ia }}
+  <span class="erro-corpo">{{ erro_ia }}</span>
 </div>
 {% endif %}
-{% if texto_ia_gerado %}<div class="aviso">Leitura reescrita pela IA. O texto do cálculo continua a um clique de distância.</div>{% endif %}
-{% if restaurado %}<div class="aviso">De volta ao texto do cálculo.</div>{% endif %}
+{% if texto_ia_gerado %}<div class="aviso"><span class="erro-corpo">Texto
+  reescrito pela IA. O do cálculo continua a um clique de distância.</span></div>{% endif %}
+{% if restaurado %}<div class="aviso"><span class="erro-corpo">De volta ao
+  texto do cálculo.</span></div>{% endif %}
+
 {% if sem_periodo %}
-<div class="aviso">O export não trouxe as datas do relatório, então a mensagem
-  sai sem a linha de período. Escreva o intervalo à mão antes de enviar — o
-  cliente precisa saber a que mês a leitura se refere.</div>
+<div class="aviso">O export não trouxe as datas do relatório, então a leitura
+  sai sem a linha de período. Escreva o intervalo à mão antes de enviar.</div>
 {% endif %}
 
 {% comment %}
-O veredito é a resposta antes do texto: quem abre esta tela quer saber "como
-foi o mês?" e o selo diz isso de longe. Os três números ao lado são exatamente
-os que o prompt manda priorizar — investimento, resultados e custo por
-resultado —, na mesma ordem em que aparecem no primeiro parágrafo.
+A leitura rápida também recorta, e pelo mesmo motivo das outras frentes: três
+parágrafos sobre nove campanhas com oito paradas descrevem uma operação que
+não existe. O bloco só aparece com mais de um grupo no arquivo — e nunca numa
+leitura vinda de print, onde não há coluna de campanha para agrupar. É a única
+coisa a decidir nesta tela, e ela continua sendo a mais rápida das quatro.
 {% endcomment %}
-<div class="veredito {{ tom }}">
-  <div class="veredito-selo">
-    <span class="veredito-rot">Leitura do período</span>
-    <strong>{{ classificacao }}</strong>
-  </div>
-  <dl class="veredito-nums">
-    <div><dt>Investimento</dt><dd>{{ investimento_txt }}</dd></div>
-    <div><dt>{{ termo_plural|capfirst }}</dt><dd>{{ resultados_txt }}</dd></div>
-    <div><dt>Custo por {{ termo_singular }}</dt><dd>{{ cpa_txt }}</dd></div>
-  </dl>
+{% include "relatorios/_campanhas_incluidas.html" with idx="01" nota="Refaz a leitura só com o que estiver marcado, sem reenviar arquivo." %}
+
+{% comment %}
+Quatro números, não nove. A tela da Análise de Desempenho mostra o painel
+inteiro porque ali o operador confere antes de analisar; aqui ele confere
+antes de MANDAR, e o que ele precisa checar de relance é o que a mensagem
+cita. O resto está no arquivo, e a outra frente o mostra.
+
+Sem selo de classificação: `leitura.resumo.classificar` devolve None enquanto
+não houver faixa calibrada para este preset. O bloco aparece sozinho se um dia
+ela existir.
+{% endcomment %}
+<div class="kpis kpis-curto{% if da_imagem %} da-imagem{% endif %}">
+  {% for c in cartoes %}
+  <div class="kpi"><small>{{ c.rotulo }}</small><b>{{ c.valor }}</b></div>
+  {% endfor %}
 </div>
 
-<div class="bloco">
-  <span class="bloco-idx">01</span><span class="bloco-nome">Mensagem para o cliente</span>
-  <span class="bloco-rule"></span>
-</div>
 {% comment %}
-Editável, e não um <pre> como no fechamento de verba. A diferença é que esta
-mensagem cita nome de praça, e o nome sai do padrão de nomenclatura em CAIXA
-ALTA e sem acento — "Jundiai" precisa virar "Jundiaí" na mão. Travar o texto
-obrigaria a corrigir depois de colar, que é onde o erro passa batido.
+O texto é a tela. Ele vem antes da entrega e de qualquer outra coisa porque é
+o que o operador veio buscar — a leitura rápida existe para virar mensagem em
+segundos.
+
+Editável, como nas outras frentes de texto: a mensagem pode citar nome de
+conjunto, e o nome sai do padrão de nomenclatura em CAIXA ALTA e sem acento.
 {% endcomment %}
 <div class="saida">
   <div class="saida-cabeca">
     <b>WhatsApp</b>
     <span>{% if do_motor %}do cálculo · editável{% else %}reescrita pela IA · editável{% endif %}</span>
-    <button type="button" class="copiar" data-alvo="txt-leitura">Copiar</button>
+    <button type="button" class="copiar" data-alvo="txt-leitura">Copiar texto</button>
   </div>
   <textarea class="saida-texto saida-edit" id="txt-leitura" name="texto"
             spellcheck="true" aria-label="Leitura do período">{{ texto }}</textarea>
 </div>
-<p class="legenda">Confira os nomes de praça antes de enviar: eles saem do padrão
-  de nomenclatura das campanhas, que não tem acento. O texto é livre — editar
-  aqui não desfaz nada do cálculo.</p>
-
-<div class="bloco">
-  <span class="bloco-idx">02</span><span class="bloco-nome">Conferência</span>
-  <span class="bloco-rule"></span>
-  <span class="bloco-meta">{{ frentes }} frente{{ frentes|pluralize:"s" }}</span>
-</div>
-{% comment %}
-As mesmas frentes que a mensagem compara, na mesma ordem — do contato mais
-barato ao mais caro. É aqui que o operador discorda do app: se o melhor e o
-pior citados no texto não forem os desta tabela, o erro está no rótulo, não na
-conta.
-{% endcomment %}
-{% if frentes %}
-<div class="tabela-rolagem">
-  <table>
-    <thead>
-      <tr><th>Frente</th><th>{{ termo_plural|capfirst }}</th>
-        <th>Investimento</th><th>Custo</th></tr>
-    </thead>
-    <tbody>
-      {% for f in frentes_tabela %}
-      <tr>
-        <td>{{ f.rotulo }}</td>
-        <td>{{ f.resultados_txt }}</td>
-        <td>{{ f.investimento_txt }}</td>
-        <td>{{ f.cpa_txt }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% else %}
-<p class="legenda">O export não trouxe nome de campanha, então não há frentes a
-  comparar — a mensagem fica só com a leitura do conjunto.</p>
-{% endif %}
+<p class="legenda">A pergunta do fim é o que fecha o ciclo com a venda: o Meta
+  mostra o contato gerado, não o fechamento. Confira os nomes que aparecem no
+  texto antes de enviar — editar aqui não desfaz nada do cálculo.</p>
 {% endblock %}
 
 {% block resumo %}
-<div class="resumo-titulo">Do período</div>
+<div class="resumo-titulo">Origem</div>
 <dl class="resumo-lista">
-  <div class="resumo-item"><dt>Investimento</dt>
-    <dd class="num">{{ investimento_txt }}</dd></div>
-  <div class="resumo-item"><dt>{{ termo_plural|capfirst }}</dt>
-    <dd class="num">{{ resultados_txt }}</dd></div>
-  <div class="resumo-item"><dt>Custo médio</dt>
-    <dd class="num">{{ cpa_txt }}</dd></div>
-  <div class="resumo-item"><dt>Frequência</dt>
-    <dd class="num">{{ frequencia_txt }}</dd></div>
+  <div class="resumo-item"><dt>Números lidos de</dt>
+    <dd>{% if da_imagem %}Print (transcrito){% else %}Planilha (.xlsx){% endif %}</dd></div>
 </dl>
 
-<div class="resumo-titulo" style="margin:22px 0 12px">O que a mensagem pede</div>
-<div class="checks">
-  <div class="check"><i>✓</i>
-    <span>Cruzar {{ resultados_txt }} {{ termo_plural }} com as vendas
-      fechadas</span></div>
-  <div class="check{% if tem_fadiga %} falta{% endif %}">
-    <i>{% if tem_fadiga %}!{% else %}✓{% endif %}</i>
-    <span>{% if tem_fadiga %}Criativos novos — a frequência indica desgaste
-      {% else %}Sem sinal de desgaste de criativo{% endif %}</span></div>
-</div>
+{% if entrega %}
+<div class="resumo-titulo" style="margin:22px 0 12px">Entrega</div>
+<dl class="resumo-lista">
+  {% for e in entrega %}
+  <div class="resumo-item"><dt>{{ e.rotulo }}</dt>
+    <dd class="num">{{ e.valor }}</dd></div>
+  {% endfor %}
+</dl>
+{% endif %}
 
 <div class="acao">
+  {% comment %}
+  O CTA é copiar, e ele fica junto do texto — no cabeçalho da caixa, onde a
+  mão já está. Aqui embaixo sobra a saída (§28). Leitura Rápida não gera PDF.
+  {% endcomment %}
   {% if ia_disponivel %}
-  <button class="botao" type="submit" name="leitura_ia" value="1">
+  <button class="botao botao-ia" type="submit" name="leitura_ia" value="1">
     <span>Reescrever com IA</span>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
     </svg>
   </button>
-  <p class="acao-nota">A mensagem acima já está pronta. A IA escreve outra
-    redação do mesmo período, com o seu prompt — ela recebe os números do
-    relatório, nunca a planilha.</p>
+  <p class="acao-nota">O texto acima já está pronto. A IA reescreve as frases do mesmo período — ela recebe os números calculados, nunca o arquivo, e uma resposta que invente qualquer valor é recusada.</p>
   {% endif %}
   {% if not do_motor %}
+  {% comment %}
+  Só aparece DEPOIS de uma reescrita: desfazer precisa ser um clique, senão
+  voltar ao texto do cálculo exigiria reenviar o arquivo.
+  {% endcomment %}
   <button class="botao botao-sec" type="submit" name="voltar_ao_motor" value="1">
     <span>Voltar ao texto do cálculo</span>
   </button>
   {% endif %}
+  <a class="botao botao-sec" href="{% url 'leitura' %}">
+    <span>Nova leitura</span>
+  </a>
+  <p class="acao-nota">Precisa da leitura completa, com comparação entre
+    conjuntos e pontos de atenção? Use a Análise de Desempenho — é o mesmo
+    arquivo.</p>
   <div class="status">
     <span class="status-eixo ativo" aria-hidden="true"></span>
-    <span class="status-txt">Leitura pronta para copiar</span>
+    <span class="status-txt" id="status-txt">Leitura pronta para copiar</span>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  // Mesmo botão do fechamento de verba, com uma diferença: aqui o alvo é um
-  // <textarea>, e o que se copia é o que está NELE agora — inclusive as
-  // correções que o operador acabou de digitar.
+  // Mesmo botão das outras frentes: copia o que está no <textarea> AGORA,
+  // inclusive as correções que o operador acabou de digitar. O retorno é o
+  // próprio rótulo virando "Texto copiado" — sem alert (§28).
   document.querySelectorAll('.copiar').forEach(botao => {
+    const rotulo = botao.textContent;
     botao.addEventListener('click', async () => {
       const campo = document.getElementById(botao.dataset.alvo);
+      const aviso = document.getElementById('status-txt');
       try {
         await navigator.clipboard.writeText(campo.value);
       } catch (e) {
@@ -170,17 +172,19 @@ conta.
         botao.textContent = 'Ctrl+C';
         return;
       }
-      botao.textContent = 'Copiado';
+      botao.textContent = 'Texto copiado';
       botao.classList.add('feito');
+      if (aviso) aviso.textContent = 'Texto copiado';
       setTimeout(() => {
-        botao.textContent = 'Copiar';
+        botao.textContent = rotulo;
         botao.classList.remove('feito');
+        if (aviso) aviso.textContent = 'Leitura pronta para copiar';
       }, 2000);
     });
   });
 
-  // O textarea cresce com o texto: a leitura tem ~15 linhas e uma barra de
-  // rolagem interna esconderia metade do que precisa ser conferido.
+  // O textarea cresce com o texto: são três parágrafos e a pergunta, e uma
+  // barra de rolagem interna esconderia justamente o fim.
   const campo = document.getElementById('txt-leitura');
   const ajustar = () => {
     campo.style.height = 'auto';

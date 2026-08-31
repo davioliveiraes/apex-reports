@@ -846,9 +846,10 @@ Devolva SOMENTE a mensagem, no formato:
 Passando o fechamento de verba pra confirmar 👇
 
 *Contratado:* R$ [contratado]/[unidade_do_contratado]
-*Configurado:* R$ [configurado_diario]/dia
-*Gasto de [DD/MM] a [DD/MM]:* R$ [gasto]
-*Fechamento previsto:* R$ [projecao_fechamento]
+*Equivale a:* R$ [equivale_por_dia]/dia
+*Período de [DD/MM] a [DD/MM]:* [dias_apurados] dias
+*Previsto no período:* R$ [previsto_no_periodo]
+*Gasto:* R$ [gasto]
 
 [frase de status]
 [pergunta fechada]
@@ -878,23 +879,40 @@ a pergunta que encerram a mensagem.
 """
 
 
-def _payload_verba(calc, cliente=""):
-    """O fechamento como o modelo o recebe: números prontos e nada mais."""
+def numeros_do_fechamento(calc, cliente=""):
+    """O fechamento como o modelo o recebe: números prontos e nada mais.
+
+    Público desde 30/08/2026, quando a verba passou a usar o `reescrever`
+    comum às quatro frentes — é a view que monta o payload agora, como nas
+    outras três.
+    """
     return {
         "cliente": cliente,
         "periodo_analisado": calc["rotulo"],
-        "contratado": _verba.reais(calc["contratado_ciclo"]),
+        # O combinado como a mensagem o escreve: na unidade em que foi
+        # combinado, e sem a linha de conversão quando não há o que converter.
+        "contratado": _verba.reais(calc["contratado_unidade"]),
         # A unidade viaja junto porque ela MUDA: o gabarito do prompt escreve
-        # "/mês", mas o cliente que fecha por semana precisa ler "/semana".
-        "unidade_do_contratado": _verba.vocabulario(calc)["nome"],
-        "configurado_diario": _verba.reais(calc["contratado_diario"]),
-        "gasto_de": f"{calc['desde']:%d/%m}",
-        "gasto_ate": f"{calc['ate']:%d/%m}",
+        # "/mês", mas o cliente que fecha por semana precisa ler "/semana" e o
+        # que fecha por dia, "/dia".
+        "unidade_do_contratado": _verba.vocabulario(calc)["unidade"],
+        "equivale_por_dia": (None if _e_diario(calc)
+                             else _verba.reais(calc["contratado_diario"])),
+        # O período apurado é o recorte do export, e não há projeção: o que se
+        # compara é o gasto contra o previsto DESSES dias.
+        "periodo_de": f"{calc['desde']:%d/%m}",
+        "periodo_ate": f"{calc['ate']:%d/%m}",
+        "dias_apurados": calc["dias_apurados"],
+        "previsto_no_periodo": _verba.reais(calc["previsto_periodo"]),
         "gasto": _verba.reais(calc["gasto"]),
-        "projecao_fechamento": _verba.reais(calc["projecao_fechamento"]),
         "frase_de_status": _verba.frase_status(calc),
         "pergunta_fechada": _verba.pergunta(calc),
     }
+
+
+def _e_diario(calc):
+    """O contratado foi cotado por dia — ver `fechamento_verba.CICLO_DIARIO`."""
+    return calc.get("periodo") == _verba.CICLO_DIARIO
 
 
 def gerar_mensagem_verba(calc, cliente=""):
@@ -909,7 +927,7 @@ def gerar_mensagem_verba(calc, cliente=""):
                        "chave")
     bruto = _chamar(
         [{"role": "system", "content": PROMPT_VERBA + _REGRAS_DE_ENTRADA_VERBA},
-         {"role": "user", "content": json.dumps(_payload_verba(calc, cliente),
+         {"role": "user", "content": json.dumps(numeros_do_fechamento(calc, cliente),
                                                 ensure_ascii=False, indent=1)}],
         max_tokens=MAX_TOKENS_VERBA, esforco=ESFORCO_VERBA)
     return _validar_mensagem_verba(bruto)
@@ -1109,4 +1127,375 @@ def _validar_leitura(texto):
         raise ErroDeIA(
             "A leitura não terminou com a pergunta de conversão, que o formato "
             "manda sempre incluir. Mantido o texto do motor.", "formato")
+    return limpo
+
+
+# ----------------------------------------------------------------------
+# Leitura de print: extração de métricas por visão
+# ----------------------------------------------------------------------
+# O modelo aqui NÃO escreve nada e NÃO interpreta nada — ele transcreve. O
+# texto do cliente continua saindo do motor determinístico da Leitura Rápida,
+# sobre os números que esta função devolver. É a mesma divisão do resto do
+# projeto (o motor decide, a IA no máximo redige), levada um passo adiante:
+# aqui a IA nem redige, só lê o que está escrito na tela do Gerenciador.
+#
+# A diferença que importa em relação a uma planilha: um número lido de imagem
+# NÃO é um número verificado. Por isso o prompt proíbe estimar, exige `null`
+# para o que não estiver legível, e a camada de cima (`leitura/imagem.py`)
+# confere a coerência aritmética do que voltou antes de aceitar.
+PROMPT_EXTRACAO = """Você transcreve métricas de capturas de tela do \
+Gerenciador de Anúncios do Meta (Meta Ads Manager). Você NÃO analisa, NÃO \
+interpreta e NÃO comenta: apenas lê o que está escrito e devolve JSON.
+
+Devolva um JSON com esta forma exata:
+
+{"linhas": [{"conjunto": ..., "veiculacao": ..., "indicador": ...,
+"resultados": ..., "custo_resultado": ..., "alcance": ..., "impressoes": ...,
+"frequencia": ..., "cpm": ..., "conversas": ..., "custo_conversa": ...,
+"novos_contatos": ..., "inicio": ..., "termino": ...}]}
+
+Uma entrada em "linhas" por linha de campanha/conjunto/anúncio visível. Se a \
+imagem mostrar apenas totais da conta, devolva UMA entrada com esses totais e \
+"conjunto": null.
+
+REGRAS ABSOLUTAS:
+
+1. Use null para todo campo que não estiver claramente legível na imagem. \
+Nunca estime, nunca arredonde por conta própria, nunca complete um número \
+cortado ou borrado.
+2. Nunca calcule um campo a partir de outro. Se "CPM" não aparece escrito, \
+"cpm" é null — mesmo que dê para deduzir de impressões e valor gasto.
+3. Copie os números exatamente como aparecem, apenas removendo separador de \
+milhar, símbolo de moeda e o sinal de porcentagem. Use ponto como separador \
+decimal. "R$ 4,52" vira 4.52. "22.498" vira 22498.
+4. "indicador" é o texto do tipo de resultado como está na tela ("Conversas \
+por mensagem iniciadas", "Leads", "Cliques no link"). Não traduza e não \
+padronize.
+5. "inicio" e "termino" são o período do relatório em formato AAAA-MM-DD. Se \
+a tela mostrar "30 de jul de 2026 - 28 de ago de 2026", devolva \
+"2026-07-30" e "2026-08-28". Sem ano visível, use null.
+6. Se a imagem não for uma tela do Gerenciador de Anúncios, devolva \
+{"linhas": []}.
+7. Responda SOMENTE com o JSON, sem cercas de código e sem texto em volta."""
+
+# Extração é transcrição, não raciocínio: o esforço alto aqui só gastaria
+# tokens antes da primeira letra. O teto é folgado porque uma tela de vários
+# conjuntos vira várias entradas.
+ESFORCO_EXTRACAO = "low"
+MAX_TOKENS_EXTRACAO = 4000
+
+# Formatos que o operador realmente tira print. WebP entra porque é o que o
+# Chrome salva quando se copia uma imagem da tela.
+MIMES_DE_IMAGEM = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "webp": "image/webp",
+}
+
+
+def extrair_metricas_de_imagem(imagens):
+    """`{"linhas": [...]}` transcrito de uma ou mais capturas de tela.
+
+    `imagens` é uma lista de `(bytes, mime)`. Levanta `ErroDeIA` — a view
+    mostra a mensagem e o operador volta para a planilha, que não depende de
+    rede.
+    """
+    if not disponivel():
+        raise ErroDeIA(
+            "A leitura de print depende da IA e não há chave de API "
+            "configurada: defina OPENAI_API_KEY no ambiente (em produção, "
+            "/etc/apex-reports/env). O envio de .xlsx continua funcionando "
+            "sem chave.", "chave")
+
+    conteudo = [{"type": "text", "text":
+                 "Transcreva as métricas destas capturas de tela."}]
+    for dados, mime in imagens:
+        conteudo.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{_b64(dados)}"},
+        })
+
+    bruto = _chamar([{"role": "system", "content": PROMPT_EXTRACAO},
+                     {"role": "user", "content": conteudo}],
+                    max_tokens=MAX_TOKENS_EXTRACAO, esforco=ESFORCO_EXTRACAO)
+    return _json_da_extracao(bruto)
+
+
+def _b64(dados):
+    import base64
+    return base64.b64encode(dados).decode("ascii")
+
+
+def _json_da_extracao(bruto):
+    """O JSON da resposta, mesmo se o modelo tiver posto cercas em volta.
+
+    A regra 7 do prompt proíbe as cercas, mas confiar nisso seria transformar
+    uma desobediência de formatação em erro de leitura para o operador.
+    """
+    texto = (bruto or "").strip()
+    if texto.startswith("```"):
+        texto = texto.split("```")[1] if "```" in texto[3:] else texto[3:]
+        if texto.lstrip().lower().startswith("json"):
+            texto = texto.lstrip()[4:]
+    inicio, fim = texto.find("{"), texto.rfind("}")
+    if inicio == -1 or fim <= inicio:
+        raise ErroDeIA(
+            "A IA não devolveu os dados no formato esperado. Tente de novo ou "
+            "envie o .xlsx do preset DESEMPENHO.", "formato")
+    try:
+        dados = json.loads(texto[inicio:fim + 1])
+    except ValueError as e:
+        raise ErroDeIA(
+            "A IA devolveu uma resposta que não é JSON válido. Tente de novo "
+            "ou envie o .xlsx do preset DESEMPENHO.", "formato") from e
+    if not isinstance(dados, dict) or not isinstance(dados.get("linhas"), list):
+        raise ErroDeIA(
+            "A IA não devolveu a lista de linhas esperada. Tente de novo ou "
+            "envie o .xlsx do preset DESEMPENHO.", "formato")
+    return dados
+
+
+# ----------------------------------------------------------------------
+# Reescrita por IA — um prompt por análise
+# ----------------------------------------------------------------------
+# As regras são as mesmas nas quatro frentes: elas é que garantem que a
+# reescrita mexa nas frases e nunca nos dados. O que muda é a PARTE DE CIMA —
+# o que aquele texto específico está tentando fazer. Sem isso o modelo
+# reescreve bem uma coisa que ele não sabe o que é, e o resultado fica
+# igualmente bom para os quatro casos, que é outra forma de ficar genérico.
+_REGRAS_DA_REESCRITA = """
+
+REGRAS ABSOLUTAS, e elas valem acima de qualquer coisa dita acima:
+
+1. Não altere nenhum número. Todo valor do texto original aparece na sua
+versão com os mesmos dígitos e a mesma formatação ("R$ 4,52" continua
+"R$ 4,52", "22.498" continua "22.498", "73%" continua "73%").
+2. Não acrescente número nenhum. Não some, não calcule, não estime, não
+converta unidade, não cite percentual que não esteja no texto original. Se
+faltou um dado, ele faltou — escreva sem ele.
+3. Mantenha a estrutura: mesmo número de parágrafos, na mesma ordem, com o
+mesmo assunto em cada um. Linha de título entre asteriscos no original
+continua sendo a primeira linha da sua versão.
+4. Não invente causa. O texto original evita dizer POR QUE algo aconteceu —
+mantenha isso. Nada de "o criativo saturou", "o público está errado", "o
+atendimento falhou", "a concorrência aumentou".
+5. Não prometa resultado futuro, não faça promessa comercial e não sugira
+aumento de verba.
+6. Não use adjetivo que os números não sustentem. Sem "excelente", "ótimo",
+"expressivo", "sólido", "promissor" — a menos que o texto original os use.
+7. Formatação de WhatsApp e só ela: *negrito* com um asterisco de cada lado.
+Sem título markdown, sem lista com marcador, sem tabela, sem cerca de código,
+sem emoji que o original não tenha.
+8. Responda apenas com o texto final, sem comentário em volta e sem explicar o
+que você mudou."""
+
+PROMPT_REESCRITA_DESEMPENHO = """Você é um gestor de tráfego pago sênior \
+especializado em Meta Ads.
+
+Sua tarefa é reescrever uma análise de desempenho para ser enviada ao cliente \
+pelo WhatsApp. Você receberá números que já foram calculados e validados pela \
+aplicação.
+
+A análise é referente EXCLUSIVAMENTE ao que o operador marcou na tela. Você \
+não sabe quantas outras campanhas existem no arquivo, e não precisa saber.
+
+Os números que você recebe já vêm somados. Mantenha o número gramatical do \
+texto atual: se ele diz "a campanha", escreva no singular; se ele diz "as \
+campanhas selecionadas", escreva no plural. Nunca troque um pelo outro, e \
+nunca diga quantas são.
+
+Nunca fale em conjunto, conjuntos, conjunto de anúncios, quantidade de \
+conjuntos, outras campanhas, comparação entre conjuntos ou comparação entre \
+campanhas. Use "a campanha", "a campanha analisada", "no período", "a entrega \
+da campanha".
+
+Não exponha o nome técnico interno da campanha no texto do cliente.
+
+Analise somente estas três dimensões:
+
+1. RESULTADO — resultados/conversas e custo por resultado/conversa.
+2. ENTREGA — alcance, impressões, frequência e CPM.
+3. AQUISIÇÃO — conversas iniciadas, novos contatos e o percentual de novos.
+
+Estrutura: aproximadamente três parágrafos. Comece pelo resultado; depois a \
+entrega e os novos contatos; termine com uma leitura objetiva do período.
+
+Apresente cada métrica pelo nome dela: frequência é frequência, CPM é CPM, \
+custo por conversa é custo por conversa. Quando houver percentual de novos \
+contatos, destaque-o com naturalidade como a participação de contatos novos \
+no volume de conversas.
+
+Não classifique métrica como boa ou ruim — você não recebeu benchmark nenhum. \
+Não afirme saturação, criativo ruim, público ruim, problema de oferta, \
+problema de atendimento, necessidade de escalar nem necessidade de pausar: \
+essas métricas não comprovam nada disso sozinhas.
+
+Prefira expressões prudentes: merece acompanhamento, chama atenção, \
+apresentou, registrou, manteve, concentrou o volume no período, mostra maior \
+recorrência de exposição.""" + _REGRAS_DA_REESCRITA
+
+PROMPT_REESCRITA_RASTREAMENTO = """Atue como gestor de tráfego pago sênior \
+explicando ao cliente da agência, no WhatsApp, o caminho que o anúncio \
+percorreu até o destino.
+
+Você recebe o diagnóstico que o motor já produziu e as métricas de cada etapa. \
+Reescreva-o para que a sequência fique clara para quem não é da área.
+
+O que este texto está fazendo: descrevendo um funil — clique, chegada ao \
+destino, relevância comparada pelo Meta, retenção do vídeo — e apontando em \
+qual dessas etapas está a maior perda. O ponto de atenção do fim é a conclusão \
+do texto e precisa continuar sendo a última coisa que o cliente lê.
+
+Cuidado específico desta análise: as classificações de relevância são o que o \
+Meta publicou comparando o anúncio com os concorrentes, não um julgamento \
+nosso. "Ficou abaixo da média" é o dado; "o criativo é ruim" seria uma \
+conclusão que ninguém mediu.""" + _REGRAS_DA_REESCRITA
+
+PROMPT_REESCRITA_LEITURA = """Atue como gestor de tráfego pago sênior mandando \
+o recado rápido do período no grupo de WhatsApp do cliente.
+
+Você recebe a leitura curta que o motor já produziu e os números que a \
+originaram. Reescreva-a mantendo-a CURTA — ela compete com o tempo de rolagem \
+de um grupo, e uma leitura de meia tela não é lida.
+
+O que este texto está fazendo: três parágrafos pequenos (o que aconteceu, como \
+foi a entrega, qual a leitura) e, no fim, uma pergunta comercial que cruza o \
+que o Meta mostra com o que só o cliente sabe — quantos contatos viraram \
+venda.
+
+A pergunta final é o motivo de este texto existir. Ela continua em linha \
+própria, começando com "*Ponto comercial:*", e continua sendo uma pergunta \
+sobre venda. Não a suavize, não a transforme em sugestão e não a junte ao \
+parágrafo anterior.""" + _REGRAS_DA_REESCRITA
+
+PROMPT_REESCRITA_VERBA = """Atue como gestor de tráfego pago sênior passando o \
+fechamento de verba do período para o cliente da agência confirmar, no \
+WhatsApp.
+
+Você recebe a mensagem que o motor já produziu e os números que a originaram. \
+Reescreva as frases mantendo o formato de conferência.
+
+O que este texto está fazendo: prestando contas de dinheiro. As linhas de \
+valor (contratado, o equivalente diário quando houver, o período apurado, o \
+previsto no período e o gasto) são uma tabela de conferência — elas continuam \
+uma por linha, com o rótulo em negrito e o valor ao lado, exatamente na mesma \
+ordem. Não as junte em parágrafo, não as reordene e não mude os rótulos.
+
+O fechamento apura um intervalo que já terminou. Não escreva projeção, \
+previsão de fechamento, dias restantes nem o que falta gastar — nada disso \
+está nos números que você recebeu.
+
+De quem é a entrega, e isso muda o tom do texto inteiro: a agência CONFIGURA o \
+orçamento; quem decide quanto gastar por dia é o sistema de entrega do Meta, \
+que distribui pelo leilão e com frequência não consome o valor diário cheio. \
+Um orçamento de R$ 150/dia é um teto que a plataforma pode ou não preencher.
+
+Por isso, gasto abaixo do previsto NÃO é falha da agência e não se escreve \
+como se fosse. Nunca use "não conseguimos gastar", "deixamos de investir", \
+"vou verificar o que houve", "estou apurando o motivo", "houve um problema", \
+"peço desculpas" nem qualquer promessa de investigar uma causa. Também não \
+prometa recuperar o valor no período seguinte: essa decisão é do cliente, não \
+sua.
+
+O que se escreve é o mecanismo, que é verdadeiro e útil: o orçamento seguiu \
+configurado, e a entrega variou conforme o leilão do Meta. O mesmo vale para o \
+lado de cima — a plataforma pode consumir mais que o diário em um dia e \
+compensar em outro.
+
+O que você pode reescrever é a frase de status e a pergunta do fim. A pergunta \
+é fechada, de sim ou não, e termina o texto — é ela que autoriza o gestor a \
+seguir. Se houver uma linha com o nome do cliente em negrito no topo, ela \
+continua lá, igual.""" + _REGRAS_DA_REESCRITA
+
+# Um número, do jeito que o produto os escreve: "1.234,56", "22.498", "4,45",
+# "73%", "17". A vírgula e o ponto entram no token para "4,52" não virar "4" e
+# "52" — que passariam como se estivessem no original. O token TERMINA em
+# dígito de propósito: sem isso, "R$ 4,52." no fim da frase capturaria o ponto
+# final e nunca casaria com o "4,52" do meio do texto original.
+_NUMERO_NO_TEXTO = re.compile(r"\d(?:[\d.,]*\d)?")
+
+ESFORCO_REESCRITA = "low"
+MAX_TOKENS_REESCRITA = 4000
+
+
+def reescrever(texto_do_motor, payload, prompt, *, proibidos=(),
+               max_linhas=None, termina_em_pergunta=False):
+    """Outra redação do MESMO texto, com os MESMOS números.
+
+    `prompt` é o da frente que está chamando — ver as constantes acima. Ele
+    descreve o que aquele texto está tentando fazer; as regras que impedem a
+    invenção de dado são as mesmas nos quatro e vêm coladas nele.
+
+    Levanta `ErroDeIA` — a view mostra o aviso e o texto do motor continua na
+    tela, porque ele nunca saiu de lá: é recalculado a cada renderização.
+    """
+    if not disponivel():
+        raise ErroDeIA("Nenhuma chave de API configurada: defina OPENAI_API_KEY "
+                       "no ambiente (em produção, /etc/apex-reports/env).",
+                       "chave")
+    conteudo = {"texto_atual": texto_do_motor, "numeros_do_periodo": payload}
+    bruto = _chamar(
+        [{"role": "system", "content": prompt},
+         {"role": "user", "content": json.dumps(conteudo, ensure_ascii=False,
+                                                indent=1)}],
+        max_tokens=MAX_TOKENS_REESCRITA, esforco=ESFORCO_REESCRITA)
+    return _validar_reescrita(bruto, texto_do_motor, proibidos=proibidos,
+                              max_linhas=max_linhas,
+                              termina_em_pergunta=termina_em_pergunta)
+
+
+def _validar_reescrita(bruto, original, *, proibidos=(), max_linhas=None,
+                       termina_em_pergunta=False):
+    """A resposta, ou `ErroDeIA` dizendo por que ela foi recusada.
+
+    Recusar não custa nada: o texto do motor está na tela desde antes do
+    clique e continua depois dele. Por isso as checagens podem ser rígidas.
+
+    A terceira é a que importa. Comparar os números da resposta com os do
+    original transforma "o modelo não deve inventar dado" de recomendação em
+    garantia — um total somado por conta própria, um percentual deduzido, uma
+    projeção do mês seguinte, um dígito trocado: qualquer um introduz um
+    número que não estava lá, e a resposta inteira é descartada.
+    """
+    limpo = _CERCA_JSON.sub("", (bruto or "").strip()).strip()
+    if not limpo:
+        raise ErroDeIA("O modelo devolveu um texto vazio. Mantido o texto do "
+                       "cálculo.", "formato")
+
+    achado = _MARCACAO_PROIBIDA.search(limpo)
+    if achado:
+        raise ErroDeIA(
+            "A reescrita veio com marcação que o WhatsApp não renderiza "
+            f"({achado.group().strip()!r} abrindo uma linha). Mantido o texto "
+            "do cálculo.", "formato")
+
+    if max_linhas:
+        linhas = [l for l in limpo.splitlines() if l.strip()]
+        if len(linhas) > max_linhas:
+            raise ErroDeIA(
+                f"A reescrita veio com {len(linhas)} linhas e o limite é "
+                f"{max_linhas}. Mantido o texto do cálculo.", "formato")
+
+    # Vocabulário que aquela frente não usa. No fechamento de verba são as
+    # métricas de performance: o modelo não as recebe, então citá-las é
+    # inventá-las — e nesse caso não vale "limpar" a resposta.
+    normal = _sem_acento(limpo)
+    citados = sorted({t for t in proibidos if t in normal})
+    if citados:
+        raise ErroDeIA(
+            "A reescrita citou " + ", ".join(citados) + ", que esta análise "
+            "não usa. Mantido o texto do cálculo.", "formato")
+
+    if termina_em_pergunta and not limpo.rstrip().endswith("?"):
+        raise ErroDeIA("A reescrita não terminou com a pergunta fechada, que é "
+                       "o que autoriza seguir. Mantido o texto do cálculo.",
+                       "formato")
+
+    originais = set(_NUMERO_NO_TEXTO.findall(original))
+    inventados = [n for n in _NUMERO_NO_TEXTO.findall(limpo)
+                  if n not in originais]
+    if inventados:
+        raise ErroDeIA(
+            f"A reescrita trouxe número que não está no cálculo "
+            f"({', '.join(sorted(set(inventados))[:3])}). Mantido o texto do "
+            "cálculo — a IA reescreve as frases, nunca os dados.", "formato")
     return limpo

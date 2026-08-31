@@ -16,10 +16,10 @@ VPS    ?= deploy@$(IP)
 DIR    ?= ~/apex-reports
 
 # O interpretador do venv muda de lugar conforme o sistema: `Scripts/python.exe`
-# no Windows, `bin/python` no Linux e no macOS. Sem venv nenhum, cai no python3
-# do PATH — assim `make teste` não morre com "No such file or directory" numa
-# máquina recém-clonada, e sim com o erro de dependência, que diz o que fazer.
-PY := $(firstword $(wildcard venv/Scripts/python.exe venv/bin/python) python3)
+# no Windows, `bin/python` no Linux e no macOS. `.venv` é o ambiente local
+# oficial; `venv` continua aceito para instalações antigas. Sem nenhum dos
+# dois, cai no python3 do PATH.
+PY := $(firstword $(wildcard .venv/Scripts/python.exe .venv/bin/python venv/Scripts/python.exe venv/bin/python) python3)
 DEPLOY := sudo deploy/deploy.sh --ip $(IP) --repo $(REPO) --branch $(BRANCH)
 
 .DEFAULT_GOAL := ajuda

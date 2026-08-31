@@ -1,19 +1,34 @@
 # Relatórios Apex (Meta Ads)
 
 Aplicação Django que lê exports **.xlsx** do Meta Ads Manager. A raiz oferece
-três frentes, porque são perguntas diferentes com entregas diferentes:
+quatro análises, porque são perguntas diferentes com entregas diferentes:
 
 | Frente | Pergunta | Export | Saída |
 | --- | --- | --- | --- |
-| **Leitura Rápida** | "O que eu mando no grupo agora?" | preset de desempenho | mensagem de WhatsApp |
-| **Análise de Desempenho** | "Como foi o mês?" | preset de desempenho | PDF |
+| **Análise Geral** | "Como foi o mês?" | export do Meta Ads | PDF |
+| **Análise de Desempenho** | "Como está a performance?" | preset `DESEMPENHO` | mensagem de WhatsApp |
 | **Análise de Verba** | "Vai fechar no combinado?" | preset `VERBA` | mensagem de WhatsApp |
+| **Análise de Rastreamento** | "Onde está o gargalo?" | preset `RASTREAMENTO` | diagnóstico + mensagem de WhatsApp |
+| **Leitura Rápida** | "O que eu mando no grupo agora?" | preset `DESEMPENHO` ou print | leitura curta de WhatsApp |
 
 As duas primeiras lêem o **mesmo arquivo** e diferem só no formato da entrega —
 é isso que garante que o PDF e a mensagem nunca contem o mesmo mês com números
 diferentes: os dois saem de `consolidar`. A verba lê outro export, e misturá-la
 com as outras faria enviar a planilha errada: as três abrem sem reclamar, e o
 erro só apareceria no número.
+
+**As cinco telas de resultado abrem com o mesmo bloco `Campanhas incluídas`**
+(`relatorios/selecao_campanhas.py`), com a mesma marcação da Análise Geral: uma
+caixa por grupo, o botão *Aplicar seleção* e nenhuma caixa quando o arquivo traz
+um grupo só. Recortar uma conta é o mesmo gesto em qualquer frente, e em todas
+elas o recorte acontece **antes do cálculo** — o que sai da seleção sai dos
+números, do texto e do que a IA recebe.
+
+Uma diferença deliberada entre elas: nas frentes de texto já nasce marcado só o
+que **entregou** no período (a conta de referência traz nove campanhas e oito
+estão paradas há meses, e o texto passava a falar delas); na verba nasce tudo
+marcado, porque campanha configurada que ainda não gastou continua fazendo parte
+do orçamento do ciclo.
 
 ## Análise de Desempenho
 O painel oferece quatro modos:
@@ -66,9 +81,10 @@ produto é o que o cliente reconhece.
 ## Leitura Rápida
 
 A leitura do período escrita para o cliente, a partir de **um** export de
-desempenho e do nome da conta. Sem modos, sem seleção de campanha e sem PDF: o
-entregável é um texto de WhatsApp, e o caminho inteiro é subir o arquivo,
-conferir e copiar.
+desempenho e do nome da conta. Sem modos e sem PDF: o entregável é um texto de
+WhatsApp, e o caminho inteiro é subir o arquivo, conferir e copiar. A seleção de
+campanhas existe aqui como nas outras frentes, e some quando não há o que
+escolher — que é o caso comum nesta tela.
 
 A mensagem segue o formato do prompt de Análise de Período (v2): duas linhas de
 cabeçalho (período e classificação em **ÓTIMO / BOM / ATENÇÃO**), três
@@ -108,8 +124,8 @@ quando acaba o que dizer. Quem cumpre a faixa à risca é a redação da IA.
 
 ## Análise de Verba
 
-Fechamento de verba: o **contratado** contra o **já gasto**, com projeção de
-fechamento. Orçamento não é métrica, é configuração — ele só existe na tabela do
+Fechamento de verba: o **contratado** contra o **já gasto**, no intervalo que
+o export declara. Orçamento não é métrica, é configuração — ele só existe na tabela do
 Gerenciador, e por isso a coleta é um export do preset `VERBA` (ver
 `docs/GUIA_VERBA.md`), não o export de desempenho.
 
@@ -119,11 +135,42 @@ declarada na tela e conferida contra as colunas do arquivo, porque exportar a
 aba errada soma o gasto no nível errado sem reclamar de nada.
 
 Dois campos são digitados, porque nenhuma planilha os traz: **cliente /
-unidade** e **orçamento contratado**, por mês, por quinzena ou por semana. O
-equivalente diário não é digitado: R$ 300/semana são R$ 43/dia porque a semana
-tem 7 dias, e R$ 1.800/mês são R$ 58/dia num mês de 31 — quem sabe esse número
-é o motor, que conhece o tamanho do ciclo. Dois campos que podiam discordar
-viraram um campo e uma divisão.
+unidade** e **orçamento contratado**, com a unidade em que ele foi combinado —
+por mês, por quinzena, por semana ou **por dia**. Só um número é digitado; o
+outro sempre sai dele:
+
+- por mês/quinzena/semana, a diária é uma divisão: R$ 300/semana são R$ 43/dia
+  porque a semana tem 7 dias, e R$ 1.800/mês são R$ 58/dia num mês de 31;
+- **por dia**, não há divisão — o valor digitado JÁ É a diária.
+
+Dois campos que podiam discordar viraram um campo e uma conta, e continuam
+assim: a unidade não é um segundo valor.
+
+### O período apurado é o recorte do export
+
+Nada é suposto. O arquivo declara de quando até quando houve gasto medido, e é
+sobre **esses** dias que tudo é calculado: o previsto é a diária vezes os dias
+apurados, e o desvio compara o gasto com ele. Não há ciclo deduzido, não há
+dias restantes e **não há projeção**.
+
+Isso mudou em 31/08/2026. Antes o app supunha uma janela de mês (ou semana, ou
+quinzena) a partir do início do relatório e esticava o gasto até lá — três dias
+de export viravam um ciclo de 31 e uma projeção de R$ 3.735 a partir de
+R$ 361 gastos. A frente deixou de responder *"vai fechar no combinado?"* e
+passou a responder *"fechou no combinado?"*: uma troca de previsão por
+exatidão.
+
+A contrapartida é que o app confia no intervalo escolhido no Gerenciador —
+exportar sete dias de um cliente mensal produz o fechamento correto **daqueles
+sete dias**, e não do mês. Por isso o intervalo e a contagem de dias vão
+escritos na própria mensagem: é o que deixa um recorte errado visível para quem
+confere.
+
+O denominador do ritmo continua importando, mesmo sem projeção. `ritmo_real`
+divide o gasto pelos dias **veiculados**, não pelos apurados, e é isso que
+separa "gastou pouco" de "rodou pouco": campanha que subiu no dia 17 de um
+export que começa no dia 1º aparece com desvio negativo e, ao lado, com um
+ritmo acima do contratado.
 
 ### A mensagem do cliente
 
@@ -135,19 +182,35 @@ palavra, e a hora do envio não é decidida pela aplicação.
 Passando o fechamento de verba pra confirmar 👇
 
 *Contratado:* R$ 1.800/mês
-*Configurado:* R$ 58/dia
-*Gasto de 30/07 a 28/08:* R$ 1.778
-*Fechamento previsto:* R$ 1.837
+*Equivale a:* R$ 58/dia
+*Período de 30/07 a 28/08:* 30 dias
+*Previsto no período:* R$ 1.742
+*Gasto:* R$ 1.778
 
-O ritmo está alinhado com o contratado e o mês deve fechar no valor combinado.
+O ritmo do período ficou alinhado com o contratado.
 Podemos seguir assim?
 ```
 
-O gasto traz as **duas** pontas do período. "Gasto até 28/08" não dizia desde
-quando, e num ciclo que começa no dia 30 o cliente não tem como adivinhar.
+A linha de conversão **some** quando não há o que converter: escrever
+"Equivale a R$ 150/dia" abaixo de "Contratado R$ 150/dia" seria a mesma linha
+duas vezes. E o contratado sai sempre na unidade em que foi combinado —
+traduzir R$ 150/dia para "R$ 4.650/mês" é entregar ao cliente uma unidade que
+ele não usou, numa mensagem que existe para ele conferir.
 
-Na tela 02 tudo continua editável: corrigir refaz os números sem reenviar
-planilha, porque a sessão guarda as linhas cruas do export.
+```
+*Contratado:* R$ 150/dia
+*Período de 28/08 a 30/08:* 3 dias
+*Previsto no período:* R$ 450
+*Gasto:* R$ 361
+```
+
+O período traz as **duas** pontas e a contagem de dias. "Gasto até 28/08" não
+dizia desde quando, e sem o número de dias o cliente não tem como saber se o
+fechamento fala do intervalo que ele espera.
+
+A tela 02 não edita dado nenhum: contratado errado é um envio errado, e o
+conserto é voltar e reenviar. O que muda ali é o texto, pelo botão de IA, e as
+campanhas incluídas.
 
 A saída são dois blocos com botão de copiar — a mensagem para o grupo do
 cliente e a análise interna do desvio — mais a tabela de conferência estrutura a
@@ -160,6 +223,31 @@ status já escrita. Um botão opcional pede ao modelo outra redação do mesmo
 texto — ele recebe apenas os números já calculados, nunca as planilhas, e a
 resposta é recusada se passar de 10 linhas, não terminar em pergunta ou citar
 métrica de performance.
+
+### Subentrega não é falha da agência
+
+A divisão de responsabilidade é literal, e o texto do cliente a respeita: **a
+agência configura o orçamento; quem decide quanto gastar por dia é o sistema de
+entrega do Meta**, que distribui pelo leilão e com frequência não consome o
+valor diário cheio. Um orçamento de R$ 150/dia é um teto que a plataforma pode
+ou não preencher — e isso não está sob controle de quem opera a conta.
+
+As frases de subentrega diziam *"estou verificando o motivo antes de qualquer
+ajuste de verba"*, e a pergunta era *"te retorno ainda hoje com o motivo"*.
+Escritas assim, admitiam um erro que não houve e prometiam uma apuração que não
+tem o que apurar. Hoje dizem o mecanismo:
+
+```
+O período fechou abaixo do previsto. O orçamento seguiu configurado o tempo
+todo; quem define quanto gastar por dia é a entrega do Meta, e ela varia com o
+leilão — em dias de menor disputa a plataforma não usa todo o diário.
+Podemos seguir com o mesmo diário configurado?
+```
+
+O mesmo contexto está em `PROMPT_REESCRITA_VERBA`, com os termos proibidos por
+extenso ("não conseguimos gastar", "vou verificar o que houve", "peço
+desculpas"). Sem isso a reescrita reintroduz o tom que o motor tirou: o modelo
+preenche a lacuna com o pedido de desculpa que ele viu mil vezes.
 
 ### O ciclo vem do arquivo
 
@@ -199,9 +287,34 @@ sobre a fórmula literal, e as duas mudam número:
   esticar o denominador.
 
 ## Rodando
+
+O desenvolvimento local usa **Python 3.12.10** como referência — a mesma
+versão com que a suíte do projeto é validada. Crie o ambiente em `.venv`;
+`venv` fica reservado apenas para instalações locais antigas.
+
+No Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+No Linux/macOS:
+
 ```bash
-pip install -r requirements.txt
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
+```
+
+Com o ambiente ativo:
+
+```bash
+python manage.py check
+python manage.py test relatorios
 python manage.py migrate
 python manage.py runserver
 ```
@@ -343,6 +456,11 @@ aplicação ocupar a raiz, é esse redirect que sai — o resto continua igual.
   nome que o cliente reconhece e monta o resumo da tela
 - `relatorios/views_leitura.py` — as duas telas da leitura rápida
 - `relatorios/tests_leitura.py` — testes da frente (rótulo, mensagem, telas e IA)
+- `relatorios/selecao_campanhas.py` — o bloco `Campanhas incluídas` das quatro
+  frentes de texto: agrupa pelo mesmo critério da Análise Geral
+  (`parser_xlsx.chave_grupo_campanha`), decide o que já nasce marcado e filtra
+  as linhas antes do cálculo. O que muda entre as frentes entra por parâmetro —
+  onde está o nome da campanha em cada preset, e o que conta como entrega
 - `relatorios/parser_verba.py` — leitura do preset `VERBA` e cruzamento dos
   dois níveis por ID. Separado do parser de desempenho porque as colunas
   **colidem**: `Início` aqui é a data de configuração da campanha; lá, o

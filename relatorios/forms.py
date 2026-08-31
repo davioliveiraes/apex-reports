@@ -253,8 +253,13 @@ class _BaseInterna(forms.Form):
     MENSAL = "mensal"
     QUINZENAL = "quinzenal"
     SEMANAL = "semanal"
+    # Do ciclo mais longo ao mais curto. "Por dia" fecha a lista porque é o
+    # único que não é uma janela: é a unidade em que o valor foi cotado, e o
+    # fechamento continua sendo medido no ciclo (ver `fechamento_verba
+    # .CICLO_DIARIO`).
+    DIARIO = "diario"
     PERIODICIDADES = [(MENSAL, "por mês"), (QUINZENAL, "por quinzena"),
-                      (SEMANAL, "por semana")]
+                      (SEMANAL, "por semana"), (DIARIO, "por dia")]
 
     # Onde o orçamento da conta está montado. Não é preferência: decide qual
     # aba do Gerenciador exportar, porque é no nível do orçamento que estão as
@@ -294,9 +299,10 @@ class _BaseInterna(forms.Form):
     periodicidade = forms.ChoiceField(
         label="Esse valor é", choices=PERIODICIDADES, initial=MENSAL,
         widget=forms.RadioSelect,
-        help_text="O diário sai daqui sozinho — o contratado dividido pelos "
-                  "dias do ciclo: R$ 300/semana são R$ 43/dia; R$ 1.800/mês, "
-                  "R$ 58/dia num mês de 31.",
+        help_text="Um número só, e o outro sai daqui sozinho: R$ 300/semana "
+                  "são R$ 43/dia; R$ 1.800/mês, R$ 58/dia num mês de 31. Em "
+                  "por dia é o contrário — R$ 150/dia fecham R$ 4.650 num "
+                  "ciclo de 31, e é esse ciclo que a mensagem compara.",
     )
 
     def clean_orcamento(self):
@@ -349,15 +355,6 @@ class VerbaUploadForm(_BaseInterna):
         return f
 
 
-class VerbaBaseForm(_BaseInterna):
-    """Tela 02 da verba: a mesma base interna, sem os anexos.
-
-    Corrigir o contratado ou a data de referência refaz todos os números sem
-    reenviar planilha — as linhas dos dois exports ficam na sessão, no mesmo
-    espírito do *Aplicar seleção* dos relatórios de desempenho.
-    """
-
-
 # ----------------------------------------------------------------------
 # Leitura Rápida
 # ----------------------------------------------------------------------
@@ -369,9 +366,10 @@ class LeituraUploadForm(forms.Form):
     batizar; aqui a saída é uma mensagem para colar num grupo, e cada campo a
     mais é um segundo a mais entre "abri a planilha" e "mandei a leitura".
 
-    Nem perfil de negócio nem meta de CPA aparecem: a classificação usa a faixa
-    estimada do perfil padrão, e é isso que a tela declara na lateral em vez de
-    fingir uma precisão que não tem.
+    Nem perfil de negócio nem meta de CPA aparecem, e desde 30/08/2026 isso
+    deixou de ser uma economia para virar uma consequência: a frente não
+    classifica mais o período (ver `leitura.resumo.classificar`), então não há
+    o que esses campos alimentassem.
     """
 
     MAX_BYTES = 10 * 1024 * 1024
@@ -381,10 +379,138 @@ class LeituraUploadForm(forms.Form):
         widget=forms.TextInput(attrs={"placeholder": "Ex.: Rei do Celular"}),
         help_text="Identifica a leitura na tela; não entra na mensagem.",
     )
+    # Um campo para as duas portas. Separá-los em "planilha" e "print" faria a
+    # tela perguntar algo que o próprio arquivo responde — e é a extensão que
+    # decide, não o operador.
+    arquivos = MultipleFileField(
+        label="Planilha ou print (.xlsx, .png, .jpg)",
+        widget=MultipleFileInput(attrs={"accept": ".xlsx,.png,.jpg,.jpeg,.webp",
+                                        "multiple": True}),
+        help_text="O .xlsx do preset DESEMPENHO, ou capturas de tela do "
+                  "Gerenciador de Anúncios.",
+    )
+
+    def clean_arquivos(self):
+        """Ou UMA planilha, ou até quatro prints — nunca os dois juntos.
+
+        Misturar as duas fontes obrigaria a decidir qual vence quando elas
+        discordarem, e não há resposta certa para isso: a planilha é exata, o
+        print é transcrito. Uma origem por leitura mantém a resposta óbvia.
+        """
+        from .leitura.imagem import EXTENSOES, MAX_BYTES_IMAGEM, MAX_IMAGENS
+
+        arquivos = self.cleaned_data["arquivos"]
+        # `MultipleFileInput` devolve `files.getlist(nome)`, que é uma LISTA
+        # VAZIA quando não veio arquivo nenhum — e lista vazia não dispara o
+        # `required` do campo. Sem esta guarda o formulário passa válido sem
+        # anexo e a view estoura ao tentar ler `None`.
+        if not arquivos:
+            raise forms.ValidationError(
+                "Envie o .xlsx do preset DESEMPENHO ou pelo menos um print da "
+                "tela do Gerenciador.")
+        planilhas = [f for f in arquivos if f.name.lower().endswith(".xlsx")]
+        imagens = [f for f in arquivos
+                   if f.name.lower().rsplit(".", 1)[-1] in EXTENSOES]
+
+        estranhos = [f.name for f in arquivos
+                     if f not in planilhas and f not in imagens]
+        if estranhos:
+            raise forms.ValidationError(
+                f'"{estranhos[0]}" não é .xlsx nem imagem — envie o export do '
+                "Gerenciador de Anúncios ou um print da tela dele.")
+        if planilhas and imagens:
+            raise forms.ValidationError(
+                "Envie a planilha OU os prints, não os dois: são duas leituras "
+                "do mesmo período, e a planilha é a exata.")
+        if len(planilhas) > 1:
+            raise forms.ValidationError(
+                "Uma planilha por leitura — a Leitura Rápida é de uma conta e "
+                "um período.")
+        if len(imagens) > MAX_IMAGENS:
+            raise forms.ValidationError(
+                f"Máximo de {MAX_IMAGENS} prints por leitura (você enviou "
+                f"{len(imagens)}).")
+
+        for f in planilhas:
+            if f.size > self.MAX_BYTES:
+                raise forms.ValidationError(f'"{f.name}" está acima de 10 MB.')
+        for f in imagens:
+            if f.size > MAX_BYTES_IMAGEM:
+                raise forms.ValidationError(f'"{f.name}" está acima de 8 MB.')
+        return arquivos
+
+    def imagens(self):
+        """Os prints do envio, ou lista vazia quando veio planilha."""
+        from .leitura.imagem import eh_imagem
+        return [f for f in self.cleaned_data["arquivos"] if eh_imagem(f.name)]
+
+    def planilha(self):
+        """O .xlsx do envio, ou `None` quando vieram prints."""
+        return next((f for f in self.cleaned_data["arquivos"]
+                     if f.name.lower().endswith(".xlsx")), None)
+
+
+# ----------------------------------------------------------------------
+# Análise de Desempenho
+# ----------------------------------------------------------------------
+class DesempenhoUploadForm(forms.Form):
+    """A tela inteira da Análise de Desempenho: um nome e um arquivo.
+
+    Mesma forma da tela da verba, e pelo mesmo motivo: a saída é um texto para
+    colar num grupo, e cada campo a mais é um segundo a mais entre "abri a
+    planilha" e "mandei a leitura". Não há perfil de negócio nem meta de CPA
+    porque não há classificação — ver `analise_desempenho.classificar`.
+    """
+
+    MAX_BYTES = 10 * 1024 * 1024
+
+    cliente = forms.CharField(
+        label="Cliente / unidade", max_length=120,
+        widget=forms.TextInput(attrs={"placeholder": "Ex.: TIM Brasil"}),
+        help_text="Identifica a análise na tela; não entra no texto.",
+    )
     arquivo = forms.FileField(
-        label="Export de desempenho (.xlsx)",
+        label="Export do preset DESEMPENHO (.xlsx)",
         widget=forms.ClearableFileInput(attrs={"accept": ".xlsx"}),
-        help_text="O mesmo arquivo da Análise de Desempenho — uma conta.",
+        help_text="Da aba Conjuntos de anúncios, com a predefinição "
+                  "DESEMPENHO aplicada em Colunas → Personalizar colunas.",
+    )
+
+    def clean_arquivo(self):
+        f = self.cleaned_data["arquivo"]
+        if not f.name.lower().endswith(".xlsx"):
+            raise forms.ValidationError(
+                f'"{f.name}" não é um .xlsx — envie o arquivo exportado do '
+                "Gerenciador de Anúncios.")
+        if f.size > self.MAX_BYTES:
+            raise forms.ValidationError(f'"{f.name}" está acima de 10 MB.')
+        return f
+
+
+# ----------------------------------------------------------------------
+# Análise de Rastreamento
+# ----------------------------------------------------------------------
+class RastreamentoUploadForm(forms.Form):
+    """A tela inteira da Análise de Rastreamento: um nome e um arquivo.
+
+    Mesma forma das outras duas frentes de texto. O nível preferencial do
+    export é o de anúncios (§4) — é onde métrica de vídeo e classificação de
+    relevância existem —, mas o formulário não obriga: um export de conjuntos
+    é lido do mesmo jeito, com os blocos que ele sustentar.
+    """
+
+    MAX_BYTES = 10 * 1024 * 1024
+
+    cliente = forms.CharField(
+        label="Cliente / unidade", max_length=120,
+        widget=forms.TextInput(attrs={"placeholder": "Ex.: TIM Brasil"}),
+        help_text="Identifica a análise na tela; não entra no texto.",
+    )
+    arquivo = forms.FileField(
+        label="Export do preset RASTREAMENTO (.xlsx)",
+        widget=forms.ClearableFileInput(attrs={"accept": ".xlsx"}),
+        help_text="De preferência da aba Anúncios, com a predefinição "
+                  "RASTREAMENTO aplicada em Colunas → Personalizar colunas.",
     )
 
     def clean_arquivo(self):

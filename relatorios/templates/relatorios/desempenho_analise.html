@@ -1,0 +1,211 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex Acelera | Análise de Desempenho{% endblock %}
+{% block topo_sub %}Análise de desempenho{% endblock %}
+{% block form_id %}form-desempenho{% endblock %}
+{% block nome_etapa1 %}Importar export{% endblock %}
+{% block nome_etapa2 %}Copiar o texto{% endblock %}
+{% block cls_etapa1 %}concluida{% endblock %}
+{% block cls_etapa2 %}ativa{% endblock %}
+
+{% block conteudo %}
+<h1>{{ cliente }}</h1>
+<p class="sub">{% if periodo %}{{ periodo }}{% else %}Período não informado no
+  export{% endif %} · {{ rotulo_indicador }}</p>
+
+{% if erro_ia %}
+<div class="{% if erro_ia_definitivo %}erro{% else %}aviso{% endif %}">
+  <span class="erro-corpo">{{ erro_ia }}</span>
+</div>
+{% endif %}
+{% if texto_ia_gerado %}<div class="aviso"><span class="erro-corpo">Texto
+  reescrito pela IA. O do cálculo continua a um clique de distância.</span></div>{% endif %}
+{% if restaurado %}<div class="aviso"><span class="erro-corpo">De volta ao
+  texto do cálculo.</span></div>{% endif %}
+
+{% if sem_periodo %}
+<div class="aviso">O export não trouxe as datas do relatório, então o texto sai
+  sem a linha de período. Escreva o intervalo à mão antes de enviar — o cliente
+  precisa saber a que período a leitura se refere.</div>
+{% endif %}
+
+{% comment %}
+A seleção fica no topo porque é a primeira coisa a conferir: todos os números
+abaixo, o texto e o que a IA recebe saem só do que estiver marcado aqui. O
+nome técnico vive nesta tela e só nela — no texto do cliente a campanha é "a
+campanha", porque `[LEADS][CELULAR-BOLETO][BRAGANCA]` é nomenclatura nossa.
+{% endcomment %}
+{% include "relatorios/_campanhas_incluidas.html" with idx="01" %}
+
+{% comment %}
+O resumo antes do texto: quem abre esta tela quer conferir os números antes de
+enviá-los. Os nove cartões são exatamente as métricas que o preset DESEMPENHO
+traz — nenhuma derivada de fora do arquivo, e nenhuma inventada.
+
+Não há selo de classificação. `analise_desempenho.classificar()` devolve None
+enquanto não existir faixa de referência calibrada para este preset; dar um
+"BOM" aqui seria inventar o método e depois acreditar nele.
+{% endcomment %}
+<div class="bloco">
+  <span class="bloco-idx">{% if tem_selecao %}02{% else %}01{% endif %}</span>
+  <span class="bloco-nome">Métricas do período</span>
+  <span class="bloco-rule"></span>
+  {% if classificacao %}<span class="bloco-meta">{{ classificacao }}</span>{% endif %}
+</div>
+<div class="kpis">
+  {% for m in metricas %}
+  <div class="kpi"><small>{{ m.rotulo }}</small><b>{{ m.valor }}</b></div>
+  {% endfor %}
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">{% if tem_selecao %}03{% else %}02{% endif %}</span>
+  <span class="bloco-nome">Texto para o cliente</span>
+  <span class="bloco-rule"></span>
+</div>
+{% comment %}
+Editável, como a mensagem da verba não é: este texto pode citar nome de
+conjunto, e o nome sai do padrão de nomenclatura em CAIXA ALTA e sem acento.
+Travá-lo obrigaria a corrigir depois de colar, que é onde o erro passa batido.
+{% endcomment %}
+<div class="saida">
+  <div class="saida-cabeca">
+    <b>WhatsApp</b>
+    <span>{% if do_motor %}da análise · editável{% else %}reescrita pela IA · editável{% endif %}</span>
+    <button type="button" class="copiar" data-alvo="txt-desempenho">Copiar texto</button>
+  </div>
+  <textarea class="saida-texto saida-edit" id="txt-desempenho" name="texto"
+            spellcheck="true" aria-label="Análise de desempenho">{{ texto }}</textarea>
+</div>
+<p class="legenda">O texto trata só do que está marcado acima e não afirma
+  causa: a frequência é relatada como frequência, não como diagnóstico de
+  criativo. O nome técnico da campanha fica nesta tela e não vai para o
+  cliente — editar o texto aqui não desfaz nada do cálculo.</p>
+
+<div class="bloco">
+  <span class="bloco-idx">{% if tem_selecao %}04{% else %}03{% endif %}</span>
+  <span class="bloco-nome">Conferência</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">{{ n_conjuntos }} linha{{ n_conjuntos|pluralize }}</span>
+</div>
+{% comment %}
+As linhas que entraram na soma, do custo mais baixo ao mais alto — e as que
+não converteram no fim, porque não têm custo por onde ordenar e é isso que
+precisa saltar aos olhos. O nome CRU está aqui porque é por ele que o operador
+acha a linha no Gerenciador; o texto do cliente não usa nome nenhum.
+{% endcomment %}
+<div class="tabela-rolagem">
+  <table>
+    <thead>
+      <tr><th>Campanha</th><th>Veiculação</th><th>Resultados</th>
+        <th>Custo</th><th>Impressões</th><th>Freq.</th><th>Novos</th></tr>
+    </thead>
+    <tbody>
+      {% for c in conjuntos %}
+      <tr>
+        <td>{{ c.rotulo }}<br><span class="legenda">{{ c.nome }}</span></td>
+        <td>{{ c.veiculacao }}</td>
+        <td>{{ c.resultados_txt }}</td>
+        <td>{{ c.custo_txt }}</td>
+        <td>{{ c.impressoes_txt }}</td>
+        <td>{{ c.frequencia_txt }}</td>
+        <td>{{ c.novos_txt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Do período</div>
+<dl class="resumo-lista">
+  {% for m in metricas|slice:":5" %}
+  <div class="resumo-item"><dt>{{ m.rotulo }}</dt>
+    <dd class="num">{{ m.valor }}</dd></div>
+  {% endfor %}
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">Antes de enviar</div>
+<div class="checks">
+  <div class="check"><i>✓</i>
+    <span>Números conferidos contra o Gerenciador</span></div>
+  <div class="check"><i>✓</i>
+    <span>Campanhas marcadas são as certas</span></div>
+</div>
+
+<div class="acao">
+  {% comment %}
+  O CTA desta tela é copiar, e ele fica no cabeçalho do texto — junto do que
+  se copia. Aqui embaixo sobra a saída: começar outra análise. Não há botão de
+  PDF nesta frente, e não é omissão: a saída é o texto.
+  {% endcomment %}
+  {% if ia_disponivel %}
+  <button class="botao botao-ia" type="submit" name="desempenho_ia" value="1">
+    <span>Reescrever com IA</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  <p class="acao-nota">O texto acima já está pronto. A IA reescreve as frases do mesmo período — ela recebe os números calculados, nunca o arquivo, e uma resposta que invente qualquer valor é recusada.</p>
+  {% endif %}
+  {% if not do_motor %}
+  {% comment %}
+  Só aparece DEPOIS de uma reescrita: desfazer precisa ser um clique, senão
+  voltar ao texto do cálculo exigiria reenviar o arquivo.
+  {% endcomment %}
+  <button class="botao botao-sec" type="submit" name="voltar_ao_motor" value="1">
+    <span>Voltar ao texto do cálculo</span>
+  </button>
+  {% endif %}
+  <a class="botao botao-sec" href="{% url 'desempenho' %}">
+    <span>Nova análise</span>
+  </a>
+  <p class="acao-nota">A saída desta frente é texto. Para o relatório completo
+    em páginas, use a Análise Geral.</p>
+  <div class="status">
+    <span class="status-eixo ativo" aria-hidden="true"></span>
+    <span class="status-txt">Análise pronta para copiar</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Mesmo botão das outras frentes: o alvo é um <textarea>, e o que se copia
+  // é o que está NELE agora — inclusive as correções que o operador acabou de
+  // digitar.
+  document.querySelectorAll('.copiar').forEach(botao => {
+    const rotulo = botao.textContent;
+    botao.addEventListener('click', async () => {
+      const campo = document.getElementById(botao.dataset.alvo);
+      try {
+        await navigator.clipboard.writeText(campo.value);
+      } catch (e) {
+        // clipboard exige contexto seguro; sem HTTPS resta selecionar o texto
+        // e deixar o operador terminar no teclado.
+        campo.focus();
+        campo.select();
+        botao.textContent = 'Ctrl+C';
+        return;
+      }
+      botao.textContent = 'Copiado';
+      botao.classList.add('feito');
+      setTimeout(() => {
+        botao.textContent = rotulo;
+        botao.classList.remove('feito');
+      }, 2000);
+    });
+  });
+
+  // O textarea cresce com o texto: a análise tem quatro parágrafos e uma
+  // barra de rolagem interna esconderia metade do que precisa ser conferido.
+  const campo = document.getElementById('txt-desempenho');
+  const ajustar = () => {
+    campo.style.height = 'auto';
+    campo.style.height = `${campo.scrollHeight + 2}px`;
+  };
+  campo.addEventListener('input', ajustar);
+  ajustar();
+</script>
+{% endblock %}

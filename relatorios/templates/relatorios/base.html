@@ -214,14 +214,26 @@
      `.grupo-row` são para listas de campanha, onde cada item tem nome longo e
      subtítulo — usá-las num "por mês / por dia" dava dois cartões de 60px
      para uma decisão de duas palavras. */
-  .segmento{display:flex;width:fit-content;max-width:100%;background:var(--sunken);
+  /* O divisor entre as opções é o FUNDO do contêiner aparecendo por um vão de
+     1px, e não um `border-left` no vizinho. Os dois desenham a mesma linha
+     enquanto tudo cabe numa fileira; a diferença aparece quando não cabe — a
+     borda sobreviveria na primeira opção da segunda fileira, riscando o lado
+     de fora do controle. Com o vão, quebrar em duas fileiras continua
+     desenhando a grade certa. Foi o que a quarta opção do contratado ("por
+     dia", 31/08/2026) cobrou: com `overflow:hidden` e sem quebra, ela saía
+     cortada pela metade na coluna. */
+  .segmento{display:flex;flex-wrap:wrap;gap:1px;width:100%;
+    background:var(--edge);
     border:1px solid var(--edge);border-radius:var(--r);overflow:hidden}
-  .segmento label{margin:0;position:relative;cursor:pointer}
+  /* `flex:1 1 auto` mantem a largura natural de cada opcao e reparte o que
+     sobra da fileira entre elas. Sem isso, a fileira que nao enche deixa a
+     cor do divisor aparecendo como um retangulo cinza no fim do controle. */
+  .segmento label{flex:1 1 auto;margin:0;position:relative;cursor:pointer}
   .segmento input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
-  .segmento span{display:block;padding:11px 22px;white-space:nowrap;
+  .segmento span{display:block;padding:11px 12px;white-space:nowrap;
+    text-align:center;background:var(--sunken);
     font:600 13px/1.2 var(--sans);color:var(--faint);
     transition:background .14s,color .14s}
-  .segmento label + label span{border-left:1px solid var(--edge)}
   .segmento label:hover span{color:var(--bright)}
   .segmento label:has(input:checked) span{background:var(--apex);color:#fff}
   .segmento label:has(input:focus-visible){outline:2px solid var(--apex);
@@ -357,6 +369,12 @@
   /* ==================================================================== */
   .erro,.aviso{padding:13px 15px;margin-bottom:16px;border-radius:var(--r);
     font:13px/1.55 var(--sans);display:flex;gap:11px;align-items:flex-start}
+  /* O corpo da mensagem, num filho só. Sem ele, o rótulo do `::before` divide
+     a caixa com CADA elemento de dentro: um `<b>` no meio da frase a quebra
+     em colunas, e a lista de colunas faltantes senta à direita do texto em
+     vez de embaixo. `min-width:0` deixa a frase quebrar linha em vez de
+     esticar a caixa. */
+  .erro-corpo{flex:1;min-width:0}
   .erro::before,.aviso::before{font:700 10px/1.7 var(--mono);letter-spacing:.12em;
     text-transform:uppercase;flex-shrink:0}
   .erro{background:#1C1214;border:1px solid var(--apex);color:#F3B7BA}
@@ -480,6 +498,128 @@
     letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
     background:var(--sunken);border:1px solid var(--edge-lift);
     border-radius:var(--r-chip);padding:5px 9px}
+
+  /* Cabeçalho da home: o título e, na outra ponta, o atalho que NÃO faz parte
+     da grade. A separação é o argumento do desenho — a grade são as quatro
+     análises do produto, o atalho é outra coisa. Alinhado pela base do h1
+     para os dois lerem como uma linha só. */
+  .home-cabeca{display:flex;align-items:flex-end;justify-content:space-between;
+    gap:16px;flex-wrap:wrap;margin-bottom:6px}
+  .home-cabeca h1{margin-bottom:0}
+  /* Compacto de propósito: precisa caber ao lado do título sem competir com
+     ele. É um <span>, não uma âncora — não há rota para onde ir, e um link
+     que não navega é pior do que um rótulo que se declara indisponível. */
+  .atalho{display:inline-flex;align-items:center;gap:8px;flex-shrink:0;
+    padding:7px 11px;background:var(--riser);border:1px solid var(--edge);
+    border-radius:var(--r-chip);font:600 12px/1 var(--sans);color:var(--read)}
+  .atalho svg{width:14px;height:14px;flex-shrink:0;color:var(--faint)}
+  .atalho-selo{font:600 9.5px/1 var(--mono);letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);background:var(--sunken);
+    border:1px solid var(--edge-lift);border-radius:var(--r-chip);
+    padding:4px 7px}
+  /* Clicável desde 30/08/2026: ganha o vermelho da marca no ícone e o mesmo
+     realce de hover dos cartões, sem o tamanho deles. Achar rápido sem
+     competir com a grade é o trabalho inteiro deste botão. */
+  a.atalho{text-decoration:none;transition:border-color .16s,background .16s,
+    color .16s}
+  a.atalho svg{color:var(--apex)}
+  a.atalho:hover{border-color:var(--apex);background:var(--apex-wash);
+    color:var(--bright)}
+  /* Indisponível, mas legível: opacidade só no suficiente para recuar. Abaixo
+     de .7 o selo "Em breve" deixa de ser lido, e aí o atalho vira ruído em
+     vez de anúncio. Sem uso hoje — fica para o próximo "Em breve". */
+  .atalho.em-breve{opacity:.72;cursor:default;border-style:dashed}
+
+  /* Lista de colunas que faltaram no export, dentro do .erro — "faltam
+     Alcance, Frequência e CPM" resolve numa ida ao personalizador de colunas;
+     a mesma informação diluída no parágrafo obriga a reler. */
+  .erro-lista{margin:8px 0 0;padding-left:18px;font:12.5px/1.7 var(--mono)}
+  .legenda-lista{margin:6px 0 20px;padding-left:18px;
+    font:12px/1.7 var(--sans);color:var(--faint)}
+  /* "Encontradas" contra "esperadas": a comparação é o conteúdo, então as
+     duas colunas precisam caber no mesmo olhar. Empilham em tela estreita. */
+  .erro-colunas{display:grid;grid-template-columns:1fr 1fr;gap:16px;
+    margin-top:12px}
+  .erro-colunas b{display:block;font:700 11px/1 var(--mono);
+    letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+  .erro-vazio{margin:0;font:12.5px/1.6 var(--mono);opacity:.75}
+  .detalhe{margin:4px 0 20px}
+  .detalhe summary{cursor:pointer;font:600 12px/1.4 var(--sans);
+    color:var(--read);padding:4px 0}
+  .detalhe summary:hover{color:var(--bright)}
+  .detalhe .legenda{margin:8px 0 4px}
+
+  /* ==================================================================== */
+  /* RASTREAMENTO — diagnóstico e os quatro blocos do caminho             */
+  /* ==================================================================== */
+  /* O veredito antes dos números, como no fechamento de verba: quem abre a
+     tela quer saber em que etapa está a perda, e o resto é a prova disso. */
+  .diagnostico{display:flex;flex-direction:column;gap:5px;margin:0 0 22px;
+    padding:16px 18px;background:var(--apex-wash);
+    border:1px solid var(--apex);border-left-width:3px;
+    border-radius:var(--r)}
+  .diagnostico-rot{font:600 10px/1 var(--mono);letter-spacing:.14em;
+    text-transform:uppercase;color:var(--apex)}
+  .diagnostico strong{font:800 22px/1.2 var(--sans);color:var(--bright);
+    letter-spacing:-.01em}
+  .diagnostico-por{font:13px/1.55 var(--sans);color:var(--read)}
+  /* Sem gargalo identificado o bloco perde o vermelho: não há alarme a dar, e
+     manter a cor de alerta numa caixa que diz "sem evidência" ensinaria o
+     operador a ignorar a cor. */
+  .diagnostico.vazio{background:var(--slab);border-color:var(--edge);
+    border-left-color:var(--edge-lift)}
+  .diagnostico.vazio .diagnostico-rot{color:var(--faint)}
+  .diagnostico.vazio strong{color:var(--read)}
+
+  .etapa-bloco{margin-bottom:10px;padding:14px 16px;background:var(--riser);
+    border:1px solid var(--edge);border-radius:var(--r)}
+  .etapa-cabeca{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .etapa-cabeca b{font:700 13px/1.3 var(--sans);color:var(--bright)}
+  .etapa-cabeca span{font:12px/1.4 var(--sans);color:var(--faint)}
+  /* As métricas do bloco, em linha e sem tabela: são de duas a oito, e uma
+     tabela para oito pares rótulo/valor pesa mais do que informa. */
+  .etapa-nums{display:flex;flex-wrap:wrap;gap:0;margin:11px 0 0;padding:0}
+  .etapa-nums > div{flex:1 1 118px;padding:0 14px;
+    border-left:1px solid var(--edge)}
+  .etapa-nums > div:first-child{border-left:0;padding-left:0}
+  .etapa-nums dt{font:11.5px/1.35 var(--sans);color:var(--faint);
+    margin-bottom:3px}
+  .etapa-nums dd{margin:0;font:700 15px/1.2 var(--mono);color:var(--bright)}
+  .etapa-sinal{margin:11px 0 0;font:12.5px/1.5 var(--sans);color:var(--read)}
+  /* Bloco que o arquivo não sustenta: recuado e de uma linha só. A §25 pede
+     que ele não vire uma grade vazia — e a linha explica QUAL ausência é,
+     porque campanha de mensagem e anúncio de imagem não são a mesma falta. */
+  .etapa-bloco.ausente{background:var(--slab);border-style:dashed}
+  .etapa-bloco.ausente .etapa-cabeca b{color:var(--read)}
+  .etapa-ausencia{margin:8px 0 0;font:12px/1.5 var(--sans);color:var(--faint)}
+  .etapa-alerta{font:11px/1.4 var(--sans);color:var(--drift)}
+
+  /* ==================================================================== */
+  /* LEITURA RÁPIDA — a tela mais enxuta do produto                       */
+  /* ==================================================================== */
+  /* O mesmo par entrada→saída dos cartões da home, solto numa linha. Ele
+     aparece aqui porque esta frente come o MESMO arquivo da Análise de
+     Desempenho, e sem ele a pergunta "então qual das duas eu uso?" sobra. */
+  .fluxo-linha{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+    margin:0 0 26px}
+  .fluxo-linha span{font:600 10.5px/1.4 var(--mono);color:var(--read);
+    background:var(--sunken);border:1px solid var(--edge);
+    border-radius:var(--r-chip);padding:4px 9px}
+  .fluxo-linha i{font-style:normal;color:var(--apex);font-weight:700}
+  /* Campo sem a moldura de bloco numerado: são dois controles na tela, e a
+     numeração custaria mais atenção do que a tela inteira vale. */
+  .campo-solto{margin-bottom:18px}
+  /* Três ou quatro cartões, nunca nove. `auto-fit` porque o número varia: numa
+     campanha de mensagem o resultado JÁ É a conversa, e o cartão repetido sai
+     — com colunas fixas ele deixaria um buraco no fim da linha. */
+  .kpis-curto{grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+    margin-bottom:22px}
+  /* Números vindos de print: a borda tracejada diz, sem uma palavra a mais,
+     que estes valores foram transcritos e não lidos de uma célula. É o mesmo
+     vocabulário do `.frente.em-breve` — tracejado é "ainda não é definitivo".
+     O aviso acima explica; isto mantém a diferença visível enquanto o
+     operador confere número por número. */
+  .kpis-curto.da-imagem .kpi{border-style:dashed;border-color:var(--edge-lift)}
 
   /* ==================================================================== */
   /* BLOCOS DE SAÍDA COPIÁVEIS (fechamento de verba)                      */
@@ -638,6 +778,11 @@
     .frente-fluxo{padding-top:11px}
   }
   @media (max-width:720px){
+    .home-cabeca{align-items:flex-start;flex-direction:column;gap:12px}
+    .erro-colunas{grid-template-columns:1fr}
+    /* Oito métricas em coluna única viram oito linhas altas; em duas colunas
+       o bloco continua legível sem virar rolagem. */
+    .etapa-nums > div{flex-basis:44%;padding:0 10px}
     .campos{grid-template-columns:1fr}
     .anexos-head,.anexo{grid-template-columns:32px 1fr 68px 32px}
     .anexos-head span:nth-child(3),.anexo-nome{display:none}

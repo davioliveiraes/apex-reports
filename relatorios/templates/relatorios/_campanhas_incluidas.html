@@ -1,0 +1,44 @@
+{% comment %}
+O bloco *Campanhas incluídas* das quatro frentes de texto — o mesmo da Análise
+Geral (`revisao.html`), com a mesma marcação e as mesmas classes, para que
+recortar uma conta seja o mesmo gesto em qualquer modo.
+
+Quem inclui passa `idx` (o número do bloco naquela tela) e, quando quiser
+trocar a frase de baixo, `nota`. Os dados vêm de `selecao_campanhas.aplicar`.
+
+Só aparece com mais de um grupo: uma caixa marcada sozinha não é escolha, é
+ruído. Por isso o `{% if tem_selecao %}` vive AQUI e não em cada template — a
+numeração dos blocos seguintes é que precisa do sinal, e essa parte cada tela
+resolve com o mesmo `{% if tem_selecao %}`.
+{% endcomment %}
+{% if tem_selecao %}
+<div class="bloco">
+  <span class="bloco-idx">{{ idx|default:"01" }}</span>
+  <span class="bloco-nome">Campanhas incluídas</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">{{ grupos_campanha|length }} grupos</span>
+</div>
+{% if erro_campanhas %}
+<div class="erro"><span class="erro-corpo">{{ erro_campanhas }}</span></div>
+{% endif %}
+<div class="grupos">
+  {% for g in grupos_campanha %}
+  <label class="grupo-row" for="grupo-{{ forloop.counter }}">
+    <input type="checkbox" id="grupo-{{ forloop.counter }}" name="campanhas"
+           value="{{ g.chave }}"{% if g.marcada %} checked{% endif %}>
+    <span class="grupo-corpo">
+      <span class="grupo-nome">{{ g.chave }}</span>
+      <span class="grupo-meta">{{ g.n_campanhas }} campanha{{ g.n_campanhas|pluralize }}
+        {% if g.campanhas %}· {{ g.campanhas|join:" · " }}{% endif %}
+        {% comment %}Oito das nove campanhas do export de referência estão
+        paradas há meses. Sem esta marca, a lista parece nove opções
+        equivalentes.{% endcomment %}
+        {% if g.sem_entrega %}· <b>sem entrega no período</b>{% endif %}</span>
+    </span>
+  </label>
+  {% endfor %}
+</div>
+<button class="botao botao-sec botao-inline" type="submit"
+        name="aplicar_campanhas" value="1">Aplicar seleção</button>
+<p class="legenda">{{ nota|default:"Refaz a leitura do anexo só com o que estiver marcado, sem reenviar arquivo. O que ficar desmarcado sai dos números, do texto e do que a IA recebe." }}</p>
+{% endif %}

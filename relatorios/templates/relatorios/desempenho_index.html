@@ -1,0 +1,197 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex Acelera | Análise de Desempenho{% endblock %}
+{% block topo_sub %}Análise de desempenho{% endblock %}
+{% block nome_etapa1 %}Importar export{% endblock %}
+{% block nome_etapa2 %}Copiar o texto{% endblock %}
+{% block form_extra %}enctype="multipart/form-data"{% endblock %}
+
+{% block conteudo %}
+<h1>Análise de Desempenho</h1>
+<p class="sub">Analise as principais métricas de desempenho exportadas do Meta
+  Ads e gere uma leitura pronta para compartilhar com o cliente.</p>
+
+{% if erro %}
+<div class="erro">
+  <div class="erro-corpo">
+  {{ erro }}
+  {% if faltando %}
+  {% comment %}
+  A lista vem separada do texto de propósito: "faltam Alcance, Frequência e
+  CPM" resolve o problema em uma ida ao personalizador de colunas; a mesma
+  informação diluída num parágrafo obriga a reler.
+  {% endcomment %}
+  <ul class="erro-lista">
+    {% for coluna in faltando %}<li>{{ coluna }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="bloco">
+  <span class="bloco-idx">01</span><span class="bloco-nome">Cliente</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="campos">
+  <div class="campo">
+    <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
+    {{ form.cliente }}
+    <span class="ajuda">{{ form.cliente.help_text }}</span>
+    {{ form.cliente.errors }}
+  </div>
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Export do preset DESEMPENHO</span>
+  <span class="bloco-rule"></span>
+</div>
+
+<div class="dropzone" id="dropzone" tabindex="0" role="button"
+     aria-label="Selecionar arquivo XLSX">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
+    <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
+  </svg>
+  <span class="dropzone-txt" id="dropzone-txt">
+    <strong>Selecionar arquivo XLSX</strong> ou arraste para cá</span>
+  <span class="dropzone-meta">conjuntos de anúncios · 10 MB</span>
+  {{ form.arquivo }}
+</div>
+{{ form.arquivo.errors }}
+
+<p class="legenda">Use o arquivo exportado do Meta Ads com o preset
+  DESEMPENHO.</p>
+
+{% comment %}
+A lista de colunas fica na tela do envio, e não só na mensagem de erro: é
+antes de exportar que ela evita a viagem ao Gerenciador. As duas últimas
+aparecem marcadas como opcionais porque vêm vazias no export real, e um
+operador que as visse na lista sem a ressalva iria procurá-las.
+{% endcomment %}
+<details class="detalhe">
+  <summary>Quais colunas o preset precisa ter</summary>
+  <p class="legenda">No Gerenciador, aba <b>Conjuntos de anúncios</b> →
+    <b>Colunas</b> → <b>Personalizar colunas</b>, com a predefinição
+    <b>DESEMPENHO</b> aplicada:</p>
+  <ul class="legenda-lista">
+    <li>Início e Encerramento dos relatórios</li>
+    <li>Nome e Veiculação do conjunto de anúncios</li>
+    <li>Resultados · Indicador de resultados · Custo por resultados</li>
+    <li>Alcance · Impressões · Frequência · CPM</li>
+    <li>Conversas por mensagem iniciadas · Custo por conversa por mensagem
+      iniciada · Novos contatos de mensagem</li>
+    <li>Resultados (iniciais) e Indicador de resultados (inicial) —
+      opcionais, podem vir vazios</li>
+  </ul>
+</details>
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Resumo do envio</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Frente</dt><dd>Análise de Desempenho</dd></div>
+  <div class="resumo-item"><dt>Preset</dt><dd>DESEMPENHO</dd></div>
+  <div class="resumo-item"><dt>Anexo</dt><dd class="num" id="rs-anexo">nenhum</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>Texto para o cliente</dd></div>
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">Pré-requisitos</div>
+<div class="checks">
+  <div class="check falta" id="ck-cliente"><i>!</i><span>Informe o cliente</span></div>
+  <div class="check falta" id="ck-arquivo"><i>!</i><span>Envie o export .xlsx</span></div>
+</div>
+
+<div class="acao">
+  <button class="botao" type="submit" id="btn-enviar" disabled>
+    <span id="btn-rotulo">Ler planilhas</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  <p class="acao-nota">A leitura sai dos números do próprio export. O período
+    analisado vem do arquivo — não é preciso informar datas.</p>
+  <div class="status">
+    <span class="status-eixo" aria-hidden="true"></span>
+    <span class="status-txt" id="status-txt">Nenhum anexo — selecione o .xlsx para começar</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Um arquivo, sem lista e sem remover — o <input> nativo já guarda a
+  // escolha e aqui só se reflete o estado dele na tela. Mesmo painel da tela
+  // de verba, com os rótulos desta frente.
+  const dz = document.getElementById('dropzone');
+  const input = dz.querySelector('input[type=file]');
+  const txt = document.getElementById('dropzone-txt');
+  const btn = document.getElementById('btn-enviar');
+  const btnRotulo = document.getElementById('btn-rotulo');
+  const statusTxt = document.getElementById('status-txt');
+  const statusEixo = document.querySelector('.status-eixo');
+  const rsAnexo = document.getElementById('rs-anexo');
+  const ckCliente = document.getElementById('ck-cliente');
+  const ckArquivo = document.getElementById('ck-arquivo');
+  const inputCliente = document.getElementById('{{ form.cliente.auto_id }}');
+
+  const tamanho = b => b < 1024 * 1024
+    ? `${(b / 1024).toFixed(0)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+
+  function marcar(check, ok, texto) {
+    check.classList.toggle('falta', !ok);
+    check.querySelector('i').textContent = ok ? '✓' : '!';
+    check.querySelector('span').textContent = texto;
+  }
+
+  function avaliar() {
+    const f = input.files[0];
+    const okCliente = inputCliente.value.trim() !== '';
+
+    txt.innerHTML = f
+      ? `<strong>${f.name}</strong> · ${tamanho(f.size)}`
+      : '<strong>Selecionar arquivo XLSX</strong> ou arraste para cá';
+    rsAnexo.textContent = f ? tamanho(f.size) : 'nenhum';
+
+    marcar(ckCliente, okCliente,
+      okCliente ? 'Cliente preenchido' : 'Informe o cliente');
+    marcar(ckArquivo, !!f, f ? 'Export pronto para análise'
+                             : 'Envie o export .xlsx');
+
+    btn.disabled = !(f && okCliente);
+    statusEixo.classList.toggle('ativo', !btn.disabled);
+    statusTxt.textContent = !f ? 'Nenhum anexo — selecione o .xlsx para começar'
+      : btn.disabled ? 'Falta o nome do cliente'
+      : 'Pronto para analisar';
+  }
+
+  inputCliente.addEventListener('input', avaliar);
+  input.addEventListener('change', avaliar);
+  dz.addEventListener('click', () => input.click());
+  dz.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
+  ['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.add('arrastando'); }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.remove('arrastando'); }));
+  dz.addEventListener('drop', e => {
+    const dt = new DataTransfer();
+    if (e.dataTransfer.files[0]) dt.items.add(e.dataTransfer.files[0]);
+    input.files = dt.files;
+    avaliar();
+  });
+
+  document.getElementById('form-painel').addEventListener('submit', () => {
+    if (btn.disabled) return;
+    btn.classList.add('carregando');
+    btnRotulo.textContent = 'Analisando…';
+    btn.disabled = true;
+    statusEixo.classList.add('ativo');
+    statusTxt.textContent = 'Lendo a planilha…';
+  });
+
+  avaliar();
+</script>
+{% endblock %}

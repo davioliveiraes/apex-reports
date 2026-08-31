@@ -1,0 +1,247 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex Acelera | Análise de Rastreamento{% endblock %}
+{% block topo_sub %}Análise de rastreamento{% endblock %}
+{% block form_id %}form-rastreamento{% endblock %}
+{% block nome_etapa1 %}Importar export{% endblock %}
+{% block nome_etapa2 %}Copiar o texto{% endblock %}
+{% block cls_etapa1 %}concluida{% endblock %}
+{% block cls_etapa2 %}ativa{% endblock %}
+
+{% block conteudo %}
+<h1>{{ cliente }}</h1>
+<p class="sub">{% if periodo %}{{ periodo }}{% else %}Período não informado no
+  export{% endif %} · {{ n_anuncios }} {{ nivel }}{% if n_video %} ·
+  {{ n_video }} em vídeo{% endif %}</p>
+
+{% if erro_ia %}
+<div class="{% if erro_ia_definitivo %}erro{% else %}aviso{% endif %}">
+  <span class="erro-corpo">{{ erro_ia }}</span>
+</div>
+{% endif %}
+{% if texto_ia_gerado %}<div class="aviso"><span class="erro-corpo">Texto
+  reescrito pela IA. O do cálculo continua a um clique de distância.</span></div>{% endif %}
+{% if restaurado %}<div class="aviso"><span class="erro-corpo">De volta ao
+  texto do cálculo.</span></div>{% endif %}
+
+{% if sem_periodo %}
+<div class="aviso">O export não trouxe as datas do relatório, então o texto sai
+  sem a linha de período. Escreva o intervalo à mão antes de enviar.</div>
+{% endif %}
+
+{% comment %}
+A seleção vem antes do diagnóstico porque o muda: um export de conta inteira
+mistura campanhas de objetivos diferentes, e uma taxa de carregamento somada
+sobre elas não descreve caminho nenhum.
+{% endcomment %}
+{% include "relatorios/_campanhas_incluidas.html" with idx="01" %}
+
+{% comment %}
+O diagnóstico vem antes dos números porque é a resposta à pergunta que trouxe
+o operador até aqui: "em qual ponto do caminho existe perda?". Quando o arquivo
+não sustenta uma conclusão, a caixa diz isso — é melhor do que inventar uma
+etapa culpada (§26).
+{% endcomment %}
+<div class="diagnostico{% if not gargalo %} vazio{% endif %}">
+  <span class="diagnostico-rot">Principal ponto de atenção</span>
+  {% if gargalo %}
+  <strong>{{ gargalo.titulo }}</strong>
+  <span class="diagnostico-por">{{ gargalo.evidencia|capfirst }}.</span>
+  {% else %}
+  <strong>Sem evidência suficiente</strong>
+  <span class="diagnostico-por">Os dados deste arquivo não sustentam apontar um
+    gargalo principal. Um export no nível de anúncios, com mais de um anúncio,
+    permite a comparação que falta aqui.</span>
+  {% endif %}
+</div>
+
+{% comment %}
+Os quatro blocos, cada um com a sua pergunta. Bloco sem dado não vira uma
+grade de traços: some, e deixa no lugar a linha que explica a ausência — que é
+diferente em cada caso (campanha de mensagem, anúncio de imagem, anúncio novo
+sem classificação).
+{% endcomment %}
+<div class="bloco">
+  <span class="bloco-idx">{% if tem_selecao %}02{% else %}01{% endif %}</span>
+  <span class="bloco-nome">Caminho do anúncio</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">{{ possiveis }} de 4 blocos</span>
+</div>
+
+{% for b in blocos %}
+<div class="etapa-bloco{% if not b.disponivel %} ausente{% endif %}">
+  <div class="etapa-cabeca">
+    <b>{{ b.titulo }}</b>
+    <span>{{ b.pergunta }}</span>
+  </div>
+  {% if b.disponivel %}
+  <div class="etapa-nums">
+    {% for m in b.metricas %}
+    <div><dt>{{ m.rotulo }}</dt><dd>{{ m.texto }}</dd></div>
+    {% endfor %}
+  </div>
+  {% for s in b.sinais %}{% if s.texto %}
+  <p class="etapa-sinal">{{ s.texto }}</p>
+  {% endif %}{% endfor %}
+  {% else %}
+  <p class="etapa-ausencia">{{ b.ausencia }}</p>
+  {% endif %}
+</div>
+{% endfor %}
+
+<div class="bloco">
+  <span class="bloco-idx">{% if tem_selecao %}03{% else %}02{% endif %}</span>
+  <span class="bloco-nome">Texto para o cliente</span>
+  <span class="bloco-rule"></span>
+</div>
+{% comment %}
+Editável, como nas outras frentes de texto: o texto cita nome de anúncio, e o
+nome sai do padrão de nomenclatura em CAIXA ALTA e sem acento.
+{% endcomment %}
+<div class="saida">
+  <div class="saida-cabeca">
+    <b>WhatsApp</b>
+    <span>{% if do_motor %}do diagnóstico · editável{% else %}reescrita pela IA · editável{% endif %}</span>
+    <button type="button" class="copiar" data-alvo="txt-rastreamento">Copiar texto</button>
+  </div>
+  <textarea class="saida-texto saida-edit" id="txt-rastreamento" name="texto"
+            spellcheck="true" aria-label="Análise de rastreamento">{{ texto }}</textarea>
+</div>
+<p class="legenda">O texto descreve o caminho medido no export e não afirma
+  causa: uma classificação abaixo da média é o que o Meta publicou, não um
+  veredito sobre o criativo. Confira os nomes dos anúncios antes de enviar.</p>
+
+<div class="bloco">
+  <span class="bloco-idx">{% if tem_selecao %}04{% else %}03{% endif %}</span>
+  <span class="bloco-nome">Conferência</span>
+  <span class="bloco-rule"></span>
+  <span class="bloco-meta">{{ n_anuncios }} {{ nivel }}</span>
+</div>
+{% comment %}
+Os mesmos anúncios que o diagnóstico compara, do maior volume de cliques ao
+menor. É aqui que o operador discorda do app: se o gargalo apontado não bater
+com esta tabela, o erro está na leitura, não na conta.
+{% endcomment %}
+<div class="tabela-rolagem">
+  <table>
+    <thead>
+      <tr><th>Anúncio</th><th>Veiculação</th><th>Cliques</th><th>Share</th>
+        <th>CTR</th><th>CPC</th><th>Carreg.</th><th>Vídeo 25→100</th></tr>
+    </thead>
+    <tbody>
+      {% for a in anuncios %}
+      <tr>
+        <td>{{ a.rotulo }}{% if a.abaixo %}<br><span class="etapa-alerta">abaixo
+          da média: {{ a.abaixo|join:", " }}</span>{% endif %}</td>
+        <td>{{ a.veiculacao }}</td>
+        <td>{{ a.cliques_txt }}</td>
+        <td>{{ a.share_txt }}</td>
+        <td>{{ a.ctr_txt }}</td>
+        <td>{{ a.cpc_txt }}</td>
+        <td>{{ a.carregamento_txt }}</td>
+        <td>{{ a.video_txt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if atribuicao %}
+<p class="legenda">Janela de atribuição do export: {{ atribuicao }}. Os números
+  acima seguem essa janela — trocá-la no Gerenciador muda o que a planilha
+  reporta.</p>
+{% endif %}
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Diagnóstico</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Ponto de atenção</dt>
+    <dd class="num">{% if gargalo %}{{ gargalo.titulo }}{% else %}—{% endif %}</dd></div>
+  <div class="resumo-item"><dt>Blocos avaliados</dt>
+    <dd class="num">{{ possiveis }} de 4</dd></div>
+  <div class="resumo-item"><dt>Anúncios</dt>
+    <dd class="num">{{ n_anuncios }}</dd></div>
+  <div class="resumo-item"><dt>Em vídeo</dt>
+    <dd class="num">{{ n_video }}</dd></div>
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">Antes de enviar</div>
+<div class="checks">
+  <div class="check"><i>✓</i>
+    <span>Números conferidos contra o Gerenciador</span></div>
+  <div class="check"><i>✓</i>
+    <span>Nomes dos anúncios revisados no texto</span></div>
+</div>
+
+<div class="acao">
+  {% comment %}
+  O CTA é copiar, e ele fica junto do que se copia. Aqui embaixo sobra a
+  saída. Rastreamento não gera PDF (§29).
+  {% endcomment %}
+  {% if ia_disponivel %}
+  <button class="botao botao-ia" type="submit" name="rastreamento_ia" value="1">
+    <span>Reescrever com IA</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+    </svg>
+  </button>
+  <p class="acao-nota">O texto acima já está pronto. A IA reescreve as frases do mesmo período — ela recebe os números calculados, nunca o arquivo, e uma resposta que invente qualquer valor é recusada.</p>
+  {% endif %}
+  {% if not do_motor %}
+  {% comment %}
+  Só aparece DEPOIS de uma reescrita: desfazer precisa ser um clique, senão
+  voltar ao texto do cálculo exigiria reenviar o arquivo.
+  {% endcomment %}
+  <button class="botao botao-sec" type="submit" name="voltar_ao_motor" value="1">
+    <span>Voltar ao texto do cálculo</span>
+  </button>
+  {% endif %}
+  <a class="botao botao-sec" href="{% url 'rastreamento' %}">
+    <span>Nova análise</span>
+  </a>
+  <p class="acao-nota">O diagnóstico compara os anúncios deste arquivo entre
+    si. Não há faixa de referência de mercado — quando ela existir, entra sem
+    mudar esta tela.</p>
+  <div class="status">
+    <span class="status-eixo ativo" aria-hidden="true"></span>
+    <span class="status-txt">Diagnóstico pronto para copiar</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Mesmo botão das outras frentes: copia o que está no <textarea> AGORA,
+  // inclusive as correções que o operador acabou de digitar.
+  document.querySelectorAll('.copiar').forEach(botao => {
+    const rotulo = botao.textContent;
+    botao.addEventListener('click', async () => {
+      const campo = document.getElementById(botao.dataset.alvo);
+      try {
+        await navigator.clipboard.writeText(campo.value);
+      } catch (e) {
+        // clipboard exige contexto seguro; sem HTTPS resta selecionar o texto
+        // e deixar o operador terminar no teclado.
+        campo.focus();
+        campo.select();
+        botao.textContent = 'Ctrl+C';
+        return;
+      }
+      botao.textContent = 'Copiado';
+      botao.classList.add('feito');
+      setTimeout(() => {
+        botao.textContent = rotulo;
+        botao.classList.remove('feito');
+      }, 2000);
+    });
+  });
+
+  const campo = document.getElementById('txt-rastreamento');
+  const ajustar = () => {
+    campo.style.height = 'auto';
+    campo.style.height = `${campo.scrollHeight + 2}px`;
+  };
+  campo.addEventListener('input', ajustar);
+  ajustar();
+</script>
+{% endblock %}

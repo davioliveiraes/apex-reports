@@ -13,7 +13,9 @@ docs/*
 # Redundante com a regra acima, e de propósito: o contexto do projeto não vai
 # para o repositório nem que `docs/*` seja estreitado um dia.
 docs/CONTEXTO.md
-venv
+.venv/
+venv/
+env/
 staticfiles/
 # Allowlist de permissões do Claude Code, gravada por máquina. Só o
 # `.local.json`: um `.claude/settings.json` de projeto, se um dia existir, é
@@ -28,3 +30,6 @@ staticfiles/
 # Reinstalar é um comando.
 .agents/
 .claude/skills/
+
+# Codex
+codex_resume.txt

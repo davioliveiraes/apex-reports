@@ -26,7 +26,28 @@ quatro fluxos em quatro alturas, e o olho lê isso como desalinho.
 {% block miolo %}
 <div class="miolo-home">
   <div class="home-caixa">
-    <h1>O que você vai analisar?</h1>
+    {% comment %}
+    O atalho fica FORA da grade, e é a diferença que o desenho precisa dizer:
+    a grade são as quatro análises do produto; a Leitura Rápida é outra coisa
+    — não é uma análise, é o atalho para mandar a mensagem agora. Enfiá-la
+    como quinto cartão foi o que fez a home descrever errado o que a
+    aplicação faz.
+
+    Saiu de "Em breve" em 30/08/2026: virou âncora e perdeu o selo. Continua
+    compacta de propósito, para ser achada rápido sem competir com os quatro
+    cartões.
+    {% endcomment %}
+    <div class="home-cabeca">
+      <h1>O que você vai analisar?</h1>
+      <a class="atalho" href="{% url 'leitura' %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true">
+          <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z"></path>
+        </svg>
+        <span>Leitura Rápida</span>
+      </a>
+    </div>
     <p class="sub">Escolha a análise de acordo com o objetivo. Gere o relatório
       completo em PDF ou faça leituras específicas para compartilhar com o
       cliente.</p>
@@ -46,21 +67,19 @@ quatro fluxos em quatro alturas, e o olho lê isso como desalinho.
           operação, com funil de vendas, desempenho por campanha e leitura do
           período em um relatório PDF pronto para o cliente.</span>
         <span class="frente-fluxo">
-          <span>export de desempenho</span><i>→</i><span>PDF para o cliente</span>
+          <span>export do Meta Ads</span><i>→</i><span>PDF para o cliente</span>
         </span>
       </a>
 
       {% comment %}
-      Mesma tela que a home chamava de "Leitura Rápida" até 29/08/2026, e a
-      mesma rota: o que mudou foi o nome e o lugar. O atalho separado saiu
-      junto — duas portas para a mesma página confundem mais do que agilizam.
-
-      O fluxo diz "export de desempenho", e não "preset DESEMPENHO": essa
-      predefinição não existe no Gerenciador, e o chip é onde o operador lê o
-      que precisa trazer. Rótulo simétrico que manda procurar um preset
-      inexistente custa uma volta ao Gerenciador.
+      Apontava para `/leitura/` até 30/08/2026 — a tela da antiga Leitura
+      Rápida, que lê o export COMPLETO e classifica o período pela faixa do
+      perfil de negócio. Não era esta frente: esta lê o preset DESEMPENHO, no
+      nível de conjuntos, e não classifica nada (ver
+      `analise_desempenho.classificar`). O cartão certo com a rota errada
+      levava o operador a mandar o arquivo errado — que abre sem reclamar.
       {% endcomment %}
-      <a class="frente" href="{% url 'leitura' %}">
+      <a class="frente" href="{% url 'desempenho' %}">
         <span class="frente-chamada">Como está a performance?</span>
         <span class="frente-nome">
           <strong>Análise de Desempenho</strong>
@@ -70,11 +89,11 @@ quatro fluxos em quatro alturas, e o olho lê isso como desalinho.
             <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
           </svg>
         </span>
-        <span class="frente-desc">Leitura objetiva das principais métricas de
-          desempenho da campanha, com diagnóstico do período e texto pronto
-          para enviar ao cliente. Sem PDF.</span>
+        <span class="frente-desc">Análise das métricas essenciais da operação —
+          resultado, entrega e conversas — com comparação entre conjuntos e
+          texto pronto para enviar ao cliente.</span>
         <span class="frente-fluxo">
-          <span>export de desempenho</span><i>→</i><span>mensagem para o cliente</span>
+          <span>preset DESEMPENHO</span><i>→</i><span>mensagem para o cliente</span>
         </span>
       </a>
 
@@ -97,22 +116,27 @@ quatro fluxos em quatro alturas, e o olho lê isso como desalinho.
       </a>
 
       {% comment %}
-      Não é uma âncora: sem `href` não há navegação, e o cartão não vira um
-      link que leva a lugar nenhum. O selo "Em breve" ocupa o lugar da seta —
-      é ela que promete que há algo do outro lado.
+      Saiu de "Em breve" em 30/08/2026: virou âncora, ganhou a seta de volta e
+      perdeu o selo. O fluxo tem três chips em vez de dois porque esta frente
+      tem uma etapa a mais que as outras — o diagnóstico dos quatro blocos
+      acontece antes do texto, e é o que ela entrega de diferente.
       {% endcomment %}
-      <div class="frente em-breve" aria-disabled="true">
+      <a class="frente" href="{% url 'rastreamento' %}">
         <span class="frente-chamada">Onde está o gargalo?</span>
         <span class="frente-nome">
           <strong>Análise de Rastreamento</strong>
-          <span class="frente-selo">Em breve</span>
+          <svg class="frente-seta" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true">
+            <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
+          </svg>
         </span>
-        <span class="frente-desc">Diagnóstico do caminho entre entrega, clique
-          e conversão para identificar possíveis gargalos da campanha.</span>
+        <span class="frente-desc">Diagnóstico do caminho entre anúncio, clique
+          e destino para identificar possíveis gargalos da campanha.</span>
         <span class="frente-fluxo">
-          <span>preset RASTREAMENTO</span><i>→</i><span>mensagem para o cliente</span>
+          <span>preset RASTREAMENTO</span><i>→</i><span>diagnóstico</span><i>→</i><span>mensagem para o cliente</span>
         </span>
-      </div>
+      </a>
     </div>
   </div>
 </div>

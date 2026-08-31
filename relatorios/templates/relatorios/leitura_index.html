@@ -1,97 +1,117 @@
 {% extends "relatorios/base.html" %}
-{% block title %}Apex — Leitura Rápida{% endblock %}
-{% block topo_sub %}Leitura do período{% endblock %}
-{% block nome_etapa1 %}Importar export{% endblock %}
-{% block nome_etapa2 %}Copiar a mensagem{% endblock %}
+{% block title %}Apex Acelera | Leitura Rápida{% endblock %}
+{% block topo_sub %}Leitura rápida{% endblock %}
+{% block nome_etapa1 %}Selecionar XLSX{% endblock %}
+{% block nome_etapa2 %}Copiar o texto{% endblock %}
 {% block form_extra %}enctype="multipart/form-data"{% endblock %}
 
 {% block conteudo %}
-<h1>Leitura rápida do período</h1>
-<p class="sub">Um export de desempenho, uma conta — e a leitura do mês pronta
-  para colar no grupo do cliente.</p>
-
-{% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
-
-<div class="bloco">
-  <span class="bloco-idx">01</span><span class="bloco-nome">Cliente</span>
-  <span class="bloco-rule"></span>
-</div>
-<div class="campos">
-  <div class="campo">
-    <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
-    {{ form.cliente }}
-    <span class="ajuda">{{ form.cliente.help_text }}</span>
-    {{ form.cliente.errors }}
-  </div>
-</div>
-
-<div class="bloco">
-  <span class="bloco-idx">02</span><span class="bloco-nome">Export de desempenho</span>
-  <span class="bloco-rule"></span>
-</div>
+<h1>Leitura Rápida</h1>
+<p class="sub">Gere uma leitura curta das principais métricas do período para
+  compartilhar rapidamente com o cliente.</p>
 
 {% comment %}
-Uma zona de arraste para um arquivo só — sem lista de anexos, sem reordenar e
-sem nome de conta. É a diferença que justifica esta frente existir ao lado do
-painel de desempenho: lá o operador monta um relatório, aqui ele responde uma
-mensagem.
+O fluxo aparece na tela do envio porque é ele que distingue esta frente da
+Análise de Desempenho, que come o MESMO arquivo. O que muda é o tamanho da
+saída, e dizer isso antes evita a pergunta "então qual das duas eu uso?".
 {% endcomment %}
+<p class="fluxo-linha">
+  <span>preset DESEMPENHO ou print</span><i>→</i><span>leitura rápida</span><i>→</i><span>WhatsApp</span>
+</p>
+
+{% if erro %}
+<div class="erro">
+  <div class="erro-corpo">
+    {{ erro }}
+    {% if faltando %}
+    <ul class="erro-lista">
+      {% for coluna in faltando %}<li>{{ coluna }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% comment %}
+Sem numeração de blocos e sem `.campos`: são dois controles, e a moldura de
+etapas das outras telas custaria mais atenção do que a tela inteira vale. É a
+frente que existe para ser rápida — a interface precisa concordar com isso.
+{% endcomment %}
+<div class="campo campo-solto">
+  <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
+  {{ form.cliente }}
+  <span class="ajuda">{{ form.cliente.help_text }}</span>
+  {{ form.cliente.errors }}
+</div>
+
 <div class="dropzone" id="dropzone" tabindex="0" role="button"
-     aria-label="Selecionar o .xlsx do relatório">
+     aria-label="Selecionar planilha ou print">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
     <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
   </svg>
   <span class="dropzone-txt" id="dropzone-txt">
-    <strong>Arraste o .xlsx aqui</strong> ou clique para escolher</span>
-  <span class="dropzone-meta">uma conta · 10 MB</span>
-  {{ form.arquivo }}
+    <strong>Selecionar planilha ou print</strong> ou arraste para cá</span>
+  <span class="dropzone-meta">.xlsx · .png · .jpg · até 4 prints</span>
+  {{ form.arquivos }}
 </div>
-{{ form.arquivo.errors }}
+{{ form.arquivos.errors }}
 
-<p class="legenda">É o mesmo arquivo da Análise de Desempenho — se você já gerou
-  o PDF do mês, pode reaproveitar o export sem voltar ao Gerenciador. O que
-  muda é a saída: lá um relatório em páginas, aqui um texto de WhatsApp.</p>
+<p class="legenda">Use o export do Meta Ads com o preset DESEMPENHO — é o mesmo
+  arquivo da Análise de Desempenho. Sem a planilha à mão, dá para mandar
+  <b>prints da tela do Gerenciador</b>: os números são transcritos da imagem e
+  aparecem na tela seguinte para você conferir antes de enviar ao cliente.</p>
+
+{% if not ia_disponivel %}
+{% comment %}
+O print depende da IA para ser transcrito; a planilha não depende de nada.
+Dizer isso ANTES do envio evita o operador arrastar a imagem e descobrir o
+problema depois de esperar.
+{% endcomment %}
+<p class="legenda destaque">Sem chave de IA configurada neste ambiente, a leitura
+  por print não funciona — envie o .xlsx, que é lido localmente.</p>
+{% endif %}
 {% endblock %}
 
 {% block resumo %}
 <div class="resumo-titulo">Resumo do envio</div>
 <dl class="resumo-lista">
-  <div class="resumo-item"><dt>Frente</dt><dd>Leitura rápida</dd></div>
+  <div class="resumo-item"><dt>Frente</dt><dd>Leitura Rápida</dd></div>
+  <div class="resumo-item"><dt>Origem</dt><dd id="rs-origem">—</dd></div>
   <div class="resumo-item"><dt>Anexo</dt><dd class="num" id="rs-anexo">nenhum</dd></div>
-  <div class="resumo-item"><dt>Saída</dt><dd>Mensagem de WhatsApp</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd>Texto para WhatsApp</dd></div>
 </dl>
 
 <div class="resumo-titulo" style="margin:22px 0 12px">Pré-requisitos</div>
 <div class="checks">
   <div class="check falta" id="ck-cliente"><i>!</i><span>Informe o cliente</span></div>
-  <div class="check falta" id="ck-arquivo"><i>!</i><span>Envie um export .xlsx</span></div>
+  <div class="check falta" id="ck-arquivo"><i>!</i><span>Envie o .xlsx ou um print</span></div>
 </div>
 
 <div class="acao">
   <button class="botao" type="submit" id="btn-enviar" disabled>
-    <span id="btn-rotulo">Ler o período</span>
+    <span id="btn-rotulo">Ler material</span>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
     </svg>
   </button>
-  <p class="acao-nota">A classificação sai da faixa de custo estimada para
-    varejo local. Sem meta combinada informada, é a melhor referência que a
-    planilha sozinha permite.</p>
+  <p class="acao-nota">Três parágrafos curtos e uma pergunta para o cliente. O
+    período vem do próprio anexo. Print leva alguns segundos a mais — os
+    números precisam ser transcritos da imagem.</p>
   <div class="status">
     <span class="status-eixo" aria-hidden="true"></span>
-    <span class="status-txt" id="status-txt">Nenhum anexo — arraste o .xlsx para começar</span>
+    <span class="status-txt" id="status-txt">Nenhum anexo — selecione a planilha ou o print</span>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  // A menor versão do painel de anexos que existe no projeto: um arquivo, sem
-  // lista e sem remover. O <input> nativo já guarda a escolha; aqui só se
-  // reflete o estado dele na tela.
+  // Mesmo painel de anexo das outras frentes. Os quatro estados da §30 saem
+  // daqui: inicial (botão travado), carregando (botão em progresso e travado
+  // contra o clique duplo), sucesso (a outra tela) e erro (o `.erro` acima).
   const dz = document.getElementById('dropzone');
   const input = dz.querySelector('input[type=file]');
   const txt = document.getElementById('dropzone-txt');
@@ -102,6 +122,7 @@ mensagem.
   const rsAnexo = document.getElementById('rs-anexo');
   const ckCliente = document.getElementById('ck-cliente');
   const ckArquivo = document.getElementById('ck-arquivo');
+  const rsOrigem = document.getElementById('rs-origem');
   const inputCliente = document.getElementById('{{ form.cliente.auto_id }}');
 
   const tamanho = b => b < 1024 * 1024
@@ -113,25 +134,52 @@ mensagem.
     check.querySelector('span').textContent = texto;
   }
 
-  function avaliar() {
-    const f = input.files[0];
-    const okCliente = inputCliente.value.trim() !== '';
+  // Qual porta o anexo abriu. A extensão decide — o operador não escolhe
+  // entre "planilha" e "print" num seletor, ele só arrasta o que tem.
+  const ehPlanilha = n => n.toLowerCase().endsWith('.xlsx');
+  const ehPrint = n => /[.](png|jpe?g|webp)$/i.test(n);
 
-    txt.innerHTML = f
-      ? `<strong>${f.name}</strong> · ${tamanho(f.size)}`
-      : '<strong>Arraste o .xlsx aqui</strong> ou clique para escolher';
-    rsAnexo.textContent = f ? tamanho(f.size) : 'nenhum';
+  function avaliar() {
+    const arquivos = Array.from(input.files);
+    const okCliente = inputCliente.value.trim() !== '';
+    const planilhas = arquivos.filter(f => ehPlanilha(f.name));
+    const prints = arquivos.filter(f => ehPrint(f.name));
+    const bytes = arquivos.reduce((t, f) => t + f.size, 0);
+
+    // Misturar as duas fontes obrigaria a decidir qual vence quando elas
+    // discordarem, e não há resposta certa: a planilha é exata, o print é
+    // transcrito. O servidor recusa; aqui o botão nem habilita.
+    const misturou = planilhas.length > 0 && prints.length > 0;
+    const demais = planilhas.length > 1 || prints.length > 4;
+    const ok = arquivos.length > 0 && !misturou && !demais;
+
+    txt.innerHTML = !arquivos.length
+      ? '<strong>Selecionar planilha ou print</strong> ou arraste para cá'
+      : arquivos.length === 1
+        ? `<strong>${arquivos[0].name}</strong> · ${tamanho(arquivos[0].size)}`
+        : `<strong>${arquivos.length} prints</strong> · ${tamanho(bytes)}`;
+    rsAnexo.textContent = arquivos.length ? tamanho(bytes) : 'nenhum';
+    rsOrigem.textContent = !ok ? '—'
+      : planilhas.length ? 'Planilha (.xlsx)'
+      : (prints.length > 1 ? 'Prints do Gerenciador' : 'Print do Gerenciador');
 
     marcar(ckCliente, okCliente,
       okCliente ? 'Cliente preenchido' : 'Informe o cliente');
-    marcar(ckArquivo, !!f, f ? 'Export pronto para leitura'
-                             : 'Envie um export .xlsx');
+    marcar(ckArquivo, ok,
+      misturou ? 'Envie a planilha OU os prints, não os dois'
+      : demais ? 'Uma planilha, ou até quatro prints'
+      : ok ? (planilhas.length ? 'Planilha pronta para leitura'
+                              : 'Prints prontos para transcrição')
+           : 'Envie o .xlsx ou um print');
 
-    btn.disabled = !(f && okCliente);
+    btn.disabled = !(ok && okCliente);
     statusEixo.classList.toggle('ativo', !btn.disabled);
-    statusTxt.textContent = !f ? 'Nenhum anexo — arraste o .xlsx para começar'
-      : btn.disabled ? 'Falta o nome do cliente'
-      : 'Pronto para ler o período';
+    statusTxt.textContent = !arquivos.length
+      ? 'Nenhum anexo — selecione a planilha ou o print'
+      : misturou ? 'Planilha e print juntos não dá — escolha uma origem'
+      : demais ? 'Uma planilha, ou até quatro prints'
+      : !okCliente ? 'Falta o nome do cliente'
+      : 'Pronto para gerar a leitura';
   }
 
   inputCliente.addEventListener('input', avaliar);
@@ -146,7 +194,7 @@ mensagem.
     e.preventDefault(); dz.classList.remove('arrastando'); }));
   dz.addEventListener('drop', e => {
     const dt = new DataTransfer();
-    if (e.dataTransfer.files[0]) dt.items.add(e.dataTransfer.files[0]);
+    Array.from(e.dataTransfer.files).forEach(f => dt.items.add(f));
     input.files = dt.files;
     avaliar();
   });
@@ -154,10 +202,13 @@ mensagem.
   document.getElementById('form-painel').addEventListener('submit', () => {
     if (btn.disabled) return;
     btn.classList.add('carregando');
-    btnRotulo.textContent = 'Lendo a planilha…';
+    btnRotulo.textContent = Array.from(input.files).some(f => ehPrint(f.name))
+      ? 'Lendo o print…' : 'Lendo a planilha…';
+    // Trava o clique duplo: o POST reenviaria a planilha inteira (§30).
     btn.disabled = true;
     statusEixo.classList.add('ativo');
-    statusTxt.textContent = 'Lendo a planilha…';
+    statusTxt.textContent = Array.from(input.files).some(f => ehPrint(f.name))
+      ? 'Transcrevendo os números da imagem…' : 'Lendo a planilha…';
   });
 
   avaliar();

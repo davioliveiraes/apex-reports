@@ -404,107 +404,24 @@ class SemPeriodoTest(TestCase):
 
 
 # ----------------------------------------------------------------------
-# As duas telas
+# Fluxo e IA
 # ----------------------------------------------------------------------
-class FluxoLeituraTest(TestCase):
-
-    def _enviar(self, **kw):
-        return self.client.post("/leitura/", {
-            "cliente": kw.pop("cliente", "Rei do Celular"),
-            "arquivo": _arquivo(**kw)})
-
-    def test_o_painel_abre(self):
-        r = self.client.get("/leitura/")
-        self.assertEqual(r.status_code, 200)
-        self.assertContains(r, "Leitura rápida do período")
-
-    def test_envio_leva_a_mensagem(self):
-        self.assertRedirects(self._enviar(), "/leitura/mensagem/")
-
-    def test_a_mensagem_sem_sessao_volta_ao_painel(self):
-        self.assertRedirects(self.client.get("/leitura/mensagem/"), "/leitura/")
-
-    def test_a_tela_mostra_o_veredito_e_os_tres_numeros(self):
-        self._enviar()
-        r = self.client.get("/leitura/mensagem/")
-        self.assertEqual(r.context["classificacao"], "ATENÇÃO")
-        self.assertEqual(r.context["tom"], "atencao")
-        self.assertContains(r, "R$ 3.012,80")
-        self.assertContains(r, "R$ 21,22")
-
-    def test_o_texto_da_tela_e_o_do_motor(self):
-        self._enviar()
-        r = self.client.get("/leitura/mensagem/")
-        self.assertTrue(r.context["do_motor"])
-        self.assertEqual(r.context["texto"],
-                         leitura_rapida.mensagem(
-                             self.client.session["leitura_apex"]))
-
-    def test_o_texto_vai_num_campo_editavel(self):
-        """Editável porque a mensagem cita nome de praça, e o padrão de
-        nomenclatura não tem acento: "Jundiai" vira "Jundiaí" na mão."""
-        self._enviar()
-        html = self.client.get("/leitura/mensagem/").content.decode()
-        self.assertIn('id="txt-leitura"', html)
-        self.assertIn("<textarea", html.split('id="txt-leitura"')[0][-200:])
-
-    def test_a_conferencia_lista_as_frentes_do_mais_barato_ao_mais_caro(self):
-        self._enviar()
-        linhas = self.client.get("/leitura/mensagem/").context["frentes_tabela"]
-        self.assertEqual([l["rotulo"] for l in linhas],
-                         ["Jundiai", "Itu", "Salto"])
-
-    def test_frente_sem_resultado_fecha_a_lista(self):
-        self.client.post("/leitura/", {"cliente": "X", "arquivo": _arquivo(
-            campanhas=[dict(TRES_PRACAS[0], res=120, inv=900.00),
-                       dict(TRES_PRACAS[1], res=0, inv=450.00)])})
-        linhas = self.client.get("/leitura/mensagem/").context["frentes_tabela"]
-        self.assertEqual(linhas[-1]["cpa_txt"], "—")
-
-    def test_a_sessao_nao_guarda_grafico_nem_funil(self):
-        """A frente não desenha nenhum dos dois, e eles são a maior parte do
-        dicionário do parser."""
-        self._enviar()
-        guardado = set(self.client.session["leitura_apex"])
-        for gordura in ("grafico_funil", "grafico_campanhas", "funil",
-                        "detalhes_campanha", "analise_sugerida", "_anexos"):
-            with self.subTest(gordura=gordura):
-                self.assertNotIn(gordura, guardado)
-
-    def test_arquivo_que_nao_e_xlsx_e_recusado(self):
-        r = self.client.post("/leitura/", {
-            "cliente": "X",
-            "arquivo": SimpleUploadedFile("dados.csv", b"a,b", "text/csv")})
-        self.assertFormError(r.context["form"], "arquivo",
-                             ['"dados.csv" não é um .xlsx — envie o arquivo '
-                              "exportado do Gerenciador de Anúncios."])
-
-    def test_planilha_ilegivel_aponta_a_outra_frente(self):
-        """O engano provável não é arquivo corrompido: é mandar o export do
-        preset VERBA, que sai do mesmo Gerenciador na mesma semana."""
-        r = self.client.post("/leitura/", {
-            "cliente": "X",
-            "arquivo": SimpleUploadedFile("verba.xlsx", b"nada",
-                                          content_type=XLSX_MIME)})
-        self.assertIn("VERBA", r.context["erro"])
-
-    def test_o_cliente_e_obrigatorio(self):
-        r = self.client.post("/leitura/", {"arquivo": _arquivo()})
-        self.assertIn("cliente", r.context["form"].errors)
-
-    def test_a_tela_nao_mostra_o_nome_cru_da_campanha(self):
-        self._enviar()
-        html = self.client.get("/leitura/mensagem/").content.decode()
-        self.assertNotIn("CELULAR-BOLETO", html)
-        self.assertNotIn("01AGO26", html)
-
-
+# O fluxo das duas telas e o atalho da home saíram daqui em 30/08/2026, quando
+# a Leitura Rápida foi reescrita sobre o domínio da Análise de Desempenho: ela
+# passou a ler o preset DESEMPENHO pelo mesmo parser, deixou de classificar o
+# período e perdeu o botão de reescrita por IA (a §28 da especificação lista
+# só "Copiar texto" e "Nova leitura"). A cobertura nova está em
+# `tests_leitura_rapida.py`.
+#
+# O que sobrou neste arquivo testa `analysis/mensagem.py` e `leitura_rapida.py`
+# DIRETAMENTE. Os dois módulos continuam de pé e passando, mas nenhuma tela os
+# chama mais — ver o relatório da sessão.
 class HomeTest(TestCase):
-    """A grade 2×2 e o que ela promete.
+    """A grade 2×2 e o atalho que fica fora dela.
 
-    Três das quatro análises têm rota; a quarta é interface. Um cartão que
-    parece clicável e não leva a lugar nenhum é pior do que um cartão que
-    declara não estar pronto.
+    Três das quatro análises têm rota; a quarta é interface. E a Leitura
+    Rápida não é nenhuma das quatro — ela ficou como atalho separado, também
+    sem rota, até o fluxo dela ser definido.
     """
 
     def _html(self):
@@ -512,7 +429,7 @@ class HomeTest(TestCase):
 
     def test_as_tres_analises_prontas_apontam_para_as_rotas_certas(self):
         html = self._html()
-        for destino in ("/desempenho/", "/leitura/", "/verba/"):
+        for destino in ("/geral/", "/desempenho/", "/verba/"):
             with self.subTest(destino=destino):
                 self.assertIn(f'class="frente" href="{destino}"', html)
 
@@ -526,12 +443,25 @@ class HomeTest(TestCase):
         self.assertEqual(posicoes, sorted(posicoes))
 
     def test_o_pdf_continua_na_analise_geral(self):
-        """O nome mudou; a rota que gera o relatório é a mesma."""
+        """A Análise Geral mudou de URL em 30/08/2026 — `/desempenho/` passou
+        para a frente que de fato lê aquele preset. A tela que gera o PDF é a
+        mesma de sempre."""
         html = self._html()
-        cartao = html.split('class="frente" href="/desempenho/"')[1].split("</a>")[0]
+        cartao = html.split('class="frente" href="/geral/"')[1].split("</a>")[0]
         self.assertIn("Análise Geral", cartao)
         self.assertIn("PDF para o cliente", cartao)
         self.assertNotIn("Análise de Desempenho", cartao)
+
+    def test_o_cartao_de_desempenho_aponta_para_o_preset_desempenho(self):
+        """Apontava para `/leitura/` até 30/08/2026, que é outra frente: lê o
+        export COMPLETO e classifica o período pela faixa do perfil de
+        negócio. O cartão certo com a rota errada fazia o operador mandar o
+        arquivo errado — e os dois exports abrem sem reclamar."""
+        html = self._html()
+        cartao = html.split('class="frente" href="/desempenho/"')[1].split("</a>")[0]
+        self.assertIn("Análise de Desempenho", cartao)
+        self.assertIn("preset DESEMPENHO", cartao)
+        self.assertNotIn("PDF", cartao)
 
     def test_so_a_analise_geral_promete_pdf(self):
         """A hierarquia da tela é uma só: um cartão devolve PDF, os outros
@@ -540,27 +470,47 @@ class HomeTest(TestCase):
         self.assertEqual(html.count("PDF para o cliente"), 1)
         self.assertEqual(html.count("mensagem para o cliente"), 3)
 
-    def test_o_rastreamento_nao_e_clicavel(self):
-        html = self._html()
-        cartao = html.split('class="frente em-breve"')[1].split("</div>")[0]
-        self.assertIn("Análise de Rastreamento", cartao)
-        self.assertIn("Em breve", cartao)
-        # Sem href e sem âncora: não há navegação para lugar nenhum.
-        self.assertNotIn("href", cartao)
-        self.assertNotIn("<a ", cartao)
-        self.assertIn('aria-disabled="true"', html)
+    def test_nenhum_cartao_da_grade_esta_em_breve(self):
+        """As quatro análises estão de pé desde 30/08/2026, quando o
+        Rastreamento saiu de "Em breve". O único "Em breve" que sobrou na home
+        é o atalho da Leitura Rápida, e ele fica fora da grade.
 
-    def test_o_rastreamento_nao_publicou_rota(self):
-        self.assertEqual(self.client.get("/rastreamento/").status_code, 404)
+        A cobertura do cartão de Rastreamento em si está em
+        `tests_rastreamento.HomeComQuatroFrentesTest`, junto com a frente.
+        """
+        grade = self._html().split('class="frentes"')[1]
+        self.assertNotIn("em-breve", grade)
+        self.assertNotIn("Em breve", grade)
 
-    def test_a_leitura_rapida_virou_a_analise_de_desempenho(self):
-        """A funcionalidade não saiu: mudou de nome e de lugar. O atalho
-        separado saiu junto — duas portas para a mesma tela confundem mais do
-        que agilizam."""
+    def test_a_leitura_rapida_e_um_atalho_fora_da_grade(self):
+        """Ela não é uma das quatro análises, e o desenho precisa dizer isso:
+        a grade são as frentes do produto, o atalho é outra coisa. Enfiá-la
+        como quinto cartão foi o que fez a home descrever errado o que a
+        aplicação faz.
+
+        Que ele navega desde 30/08/2026 está em
+        `tests_leitura_rapida.AtalhoNaHomeTest`, junto com a frente.
+        """
         html = self._html()
-        self.assertNotIn("Leitura Rápida", html)
-        self.assertIn('class="frente" href="/leitura/"', html)
-        self.assertEqual(self.client.get("/leitura/").status_code, 200)
+        self.assertIn("Leitura Rápida", html)
+        # Fora da grade: o atalho vem antes de `.frentes` no documento.
+        self.assertLess(html.index('class="atalho"'),
+                        html.index('class="frentes"'))
+        self.assertNotIn("Leitura Rápida",
+                         html.split('class="frentes"')[1])
+
+    def test_a_grade_tem_exatamente_quatro_cartoes(self):
+        """A Leitura Rápida está na home, mas não na grade."""
+        html = self._html()
+        grade = html.split('class="frentes"')[1]
+        # Só os abridores de cartão: `class="frente-chamada"`, `frente-nome` e
+        # companhia também começam com `class="frente`.
+        cartoes = (grade.count('class="frente"')
+                   + grade.count('class="frente em-breve"'))
+        self.assertEqual(cartoes, 4)
+        # A grade vem depois do atalho no documento, então nada da Leitura
+        # Rápida pode aparecer daqui para baixo.
+        self.assertNotIn("Leitura Rápida", grade)
 
     def test_o_cabecalho_nao_conta_mais_as_frentes(self):
         html = self._html()
@@ -586,74 +536,6 @@ Jundiaí entregou o contato mais barato do mês.
 O conjunto pede ajuste de rota.
 
 Quantas das 142 conversas viraram venda?"""
-
-
-class LeituraIATest(TestCase):
-    """`_chamar` é o único ponto de I/O e está sempre trocado: a suíte roda
-    offline e nunca gasta crédito."""
-
-    def setUp(self):
-        self.client.post("/leitura/", {"cliente": "Rei do Celular",
-                                       "arquivo": _arquivo()})
-
-    def _clicar(self):
-        return self.client.post("/leitura/mensagem/", {"leitura_ia": "1"})
-
-    @patch("relatorios.redator_ia.disponivel", return_value=True)
-    @patch("relatorios.redator_ia._chamar", return_value=LEITURA_DA_IA)
-    def test_a_reescrita_substitui_o_texto_do_motor(self, chamar, _disp):
-        r = self._clicar()
-        self.assertEqual(r.context["texto"], LEITURA_DA_IA)
-        self.assertFalse(r.context["do_motor"])
-        self.assertTrue(r.context["texto_ia_gerado"])
-
-    @patch("relatorios.redator_ia.disponivel", return_value=True)
-    @patch("relatorios.redator_ia._chamar", return_value=LEITURA_DA_IA)
-    def test_o_prompt_v2_vai_inteiro_no_system(self, chamar, _disp):
-        self._clicar()
-        sistema = chamar.call_args[0][0][0]["content"]
-        self.assertEqual(sistema[:len(redator_ia.PROMPT_LEITURA)],
-                         redator_ia.PROMPT_LEITURA)
-
-    @patch("relatorios.redator_ia.disponivel", return_value=True)
-    @patch("relatorios.redator_ia._chamar", return_value=LEITURA_DA_IA)
-    def test_o_modelo_recebe_os_numeros_e_nunca_a_planilha(self, chamar, _disp):
-        self._clicar()
-        payload = chamar.call_args[0][0][1]["content"]
-        self.assertIn("142", payload)
-        self.assertIn("dados_ausentes", payload)
-        self.assertNotIn("Nome da campanha", payload)
-
-    @patch("relatorios.redator_ia.disponivel", return_value=True)
-    @patch("relatorios.redator_ia._chamar", return_value=LEITURA_DA_IA)
-    def test_voltar_ao_motor_desfaz_num_clique(self, chamar, _disp):
-        self._clicar()
-        r = self.client.post("/leitura/mensagem/", {"voltar_ao_motor": "1"})
-        self.assertTrue(r.context["do_motor"])
-        self.assertNotEqual(r.context["texto"], LEITURA_DA_IA)
-
-    @patch("relatorios.redator_ia.disponivel", return_value=True)
-    @patch("relatorios.redator_ia._chamar",
-           side_effect=redator_ia.ErroDeIA("A OpenAI não respondeu.", "rede"))
-    def test_falha_da_ia_vira_aviso_e_preserva_o_texto_do_motor(self, *_):
-        r = self._clicar()
-        self.assertIn("A OpenAI não respondeu.", r.context["erro_ia"])
-        self.assertFalse(r.context["erro_ia_definitivo"])
-        self.assertTrue(r.context["do_motor"])
-
-    @patch("relatorios.redator_ia.disponivel", return_value=True)
-    @patch("relatorios.redator_ia._chamar",
-           side_effect=redator_ia.ErroDeIA("Sem crédito.", "credito"))
-    def test_erro_definitivo_esconde_o_botao(self, *_):
-        r = self._clicar()
-        self.assertTrue(r.context["erro_ia_definitivo"])
-        self.assertFalse(r.context["ia_disponivel"])
-
-    @patch("relatorios.redator_ia.disponivel", return_value=False)
-    def test_sem_chave_o_botao_nao_aparece(self, _disp):
-        r = self.client.get("/leitura/mensagem/")
-        self.assertFalse(r.context["ia_disponivel"])
-        self.assertNotContains(r, 'name="leitura_ia"')
 
 
 class ValidacaoDaLeituraIATest(SimpleTestCase):
@@ -689,17 +571,6 @@ class ValidacaoDaLeituraIATest(SimpleTestCase):
     def test_resposta_vazia_e_recusada(self):
         with self.assertRaises(redator_ia.ErroDeIA):
             redator_ia._validar_leitura("   ")
-
-
-class SuperficieDaLeituraTest(TestCase):
-    """A lista exata de rotas mora em `tests.SuperficieExpostaTest` — dono
-    único, para duas cópias não discordarem na próxima frente."""
-
-    def test_a_leitura_nao_gera_pdf(self):
-        """A saída desta frente é texto. Um PDF aqui seria a outra frente."""
-        self.client.post("/leitura/", {"cliente": "X", "arquivo": _arquivo()})
-        r = self.client.post("/leitura/mensagem/", {})
-        self.assertEqual(r["Content-Type"].split(";")[0], "text/html")
 
 
 class NumerosCompartilhadosTest(SimpleTestCase):
