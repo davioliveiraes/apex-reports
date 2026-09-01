@@ -18,6 +18,7 @@
   {{ erro_ia }} A mensagem abaixo continua sendo a do cálculo.
 </div>
 {% endif %}
+{% if mensagem_ia_gerada %}<div class="aviso">Nova versão gerada com IA.</div>{% endif %}
 {% if recalculado %}<div class="aviso">Números refeitos com a base interna atualizada.</div>{% endif %}
 {% for aviso in avisos %}<div class="aviso">{{ aviso }}</div>{% endfor %}
 {% if calc.divergencia_contratado %}<div class="aviso">{{ calc.divergencia_contratado }}</div>{% endif %}

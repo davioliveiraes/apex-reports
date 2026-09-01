@@ -11,6 +11,7 @@ Nada aqui toca a rede: `redator_ia._chamar` é o único ponto de I/O do projeto 
 está sempre trocado por um `MagicMock`.
 """
 import io
+import re
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +21,7 @@ from openpyxl import Workbook
 
 from . import fechamento_verba as fv
 from . import forms
-from . import parser_verba, redator_ia
+from . import parser_verba, redator_ia, views_verba
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -284,6 +285,23 @@ class NivelDeclaradoTest(SimpleTestCase):
         _l, erro = self._ler(CAMPANHAS, parser_verba.NIVEL_CONJUNTO)
         self.assertIn("marcou <b>ABO</b>", erro)
         self.assertIn("Conjuntos de anúncios", erro)
+
+
+class ErroDeEstruturaNaTelaTest(SimpleTestCase):
+    def test_html_rico_fica_agrupado_no_corpo_visual_da_mensagem(self):
+        resposta = self.client.post("/verba/", {
+            "cliente": "TIM", "orcamento": "1500,00",
+            "periodicidade": "mensal", "estrutura": "abo",
+            "arquivo": _anexo("campanhas.xlsx", CAMPANHAS),
+        })
+
+        html = resposta.content.decode()
+        self.assertEqual(resposta.status_code, 200)
+        self.assertRegex(
+            html,
+            r'<div class="erro"><span class="erro-corpo">[^<]*'
+            r'<b>ABO</b>',
+        )
 
 
 def _estrutura(gasto, orcamento, inicio):
@@ -641,16 +659,29 @@ class FluxoVerbaTest(TestCase):
         self.assertContains(r, "Este campo é obrigatório", status_code=200)
 
 
-RESPOSTA_IA_VERBA = """Passando o fechamento pra você confirmar 👇
+RESPOSTA_IA_VERBA = """*Verba*
 
-*Contratado:* R$ 990/mês
-*Equivale a:* R$ 32/dia
-*Período de 01/08 a 24/08:* 24 dias
-*Previsto no período:* R$ 766
-*Gasto:* R$ 740
+No período de 01/08 a 24/08, o orçamento contratado para a operação foi de R$ 990/mês, equivalente a R$ 32/dia, em 24 dias apurados.
 
-O ritmo do período ficou alinhado com o contratado.
-Posso seguir assim?"""
+*Referência do período:* R$ 766
+*Investimento realizado:* R$ 740
+
+A referência financeira orienta a leitura do intervalo, enquanto o investimento realizado pode variar conforme a distribuição de entrega da plataforma.
+
+A configuração permanece alinhada ao combinado. Podemos manter essa configuração no próximo período?"""
+
+
+RESPOSTA_IA_VERBA_CONFIGURADA = """*Verba*
+
+No período de 01/08 a 24/08, o orçamento contratado para a operação foi de R$ 990/mês, equivalente a R$ 32/dia, em 24 dias apurados.
+
+*Configurado no Meta:* R$ 32/dia
+*Referência do período:* R$ 766
+*Investimento realizado:* R$ 740
+
+O valor investido pode variar ao longo do intervalo conforme a distribuição de entrega da plataforma, sem transformar essa diferença em erro.
+
+A configuração está alinhada ao combinado. Podemos mantê-la no próximo período?"""
 
 
 class MensagemVerbaIATest(TestCase):
@@ -690,7 +721,7 @@ class MensagemVerbaIATest(TestCase):
 
     def test_aceita_a_resposta_no_formato(self):
         texto, _ = self._gerar(RESPOSTA_IA_VERBA)
-        self.assertTrue(texto.startswith("Passando o fechamento"))
+        self.assertTrue(texto.startswith("*Verba*"))
         self.assertTrue(texto.rstrip().endswith("?"))
 
     def test_o_payload_leva_numeros_prontos_e_nenhuma_planilha(self):
@@ -702,6 +733,135 @@ class MensagemVerbaIATest(TestCase):
         for termo in ("campanha_id", "conjunto", "cpm", "impress"):
             self.assertNotIn(termo, enviado.lower())
 
+    def test_system_prompt_exige_titulo_e_comunicacao_consultiva(self):
+        prompt = redator_ia.PROMPT_REESCRITA_VERBA
+        self.assertIn("Comece obrigatoriamente com a linha exata `*Verba*`", prompt)
+        self.assertIn("Não faça uma paráfrase linha por linha", prompt)
+        self.assertIn("formal, profissional, clara, tranquila", prompt)
+
+    def test_system_prompt_distingue_os_quatro_conceitos_financeiros(self):
+        prompt = redator_ia.PROMPT_REESCRITA_VERBA
+        for conceito in ("orçamento contratado", "orçamento configurado",
+                         "referência do período", "investimento realizado"):
+            with self.subTest(conceito=conceito):
+                self.assertIn(conceito, prompt)
+
+    def test_system_prompt_proibe_diagnostico_automatico_do_investimento(self):
+        prompt = redator_ia.PROMPT_REESCRITA_VERBA
+        for frase in ("abaixo do previsto", "acima do previsto",
+                      "faltou gastar", "verba não utilizada"):
+            with self.subTest(frase=frase):
+                self.assertIn(frase, prompt)
+        for causa in ("leilão", "concorrência", "público", "criativo",
+                      "aprendizagem", "horário", "disputa"):
+            with self.subTest(causa=causa):
+                self.assertIn(causa, prompt)
+
+    def test_system_prompt_exclui_metricas_de_desempenho(self):
+        prompt = redator_ia.PROMPT_REESCRITA_VERBA
+        for metrica in ("leads", "conversas", "CTR", "CPC", "CPM",
+                        "alcance", "impressões", "frequência", "ROAS"):
+            with self.subTest(metrica=metrica):
+                self.assertIn(metrica, prompt)
+
+    def test_contexto_estruturado_traz_configuracao_e_status(self):
+        estruturas = [{"ativa": True, "orcamento": 20.0},
+                      {"ativa": True, "orcamento": 12.0}]
+        dados = {"cliente": "Rei do Celular", "estrutura": "cbo"}
+        payload = views_verba._payload_ia_verba(dados, estruturas, self.calc)
+        self.assertEqual(payload["valor_contratado"], "R$ 990/mês")
+        self.assertEqual(payload["equivalente_diario"], "R$ 32/dia")
+        self.assertEqual(payload["orcamento_configurado"], "R$ 32/dia")
+        self.assertEqual(payload["referencia_periodo"], "R$ 766")
+        self.assertEqual(payload["investimento_realizado"], "R$ 740")
+        self.assertEqual(payload["status_configuracao"], "aligned")
+
+    def test_status_configurado_abaixo_e_diferente_do_alinhado(self):
+        self.assertEqual(
+            views_verba._status_configuracao(self.calc["contratado_diario"], 20),
+            "configured_below")
+        self.assertEqual(
+            views_verba._status_configuracao(self.calc["contratado_diario"], 45),
+            "configured_above")
+
+    def test_pergunta_dinamica_muda_com_o_status(self):
+        texto = fv.mensagem(self.calc, "Rei do Celular")
+        base = {"cliente": "Rei do Celular"}
+        alinhada = views_verba._mensagem_usuario_ia_verba(
+            texto, dict(base, status_configuracao="aligned"))
+        divergente = views_verba._mensagem_usuario_ia_verba(
+            texto, dict(base, status_configuracao="configured_below"))
+        self.assertIn("manter a configuração atual", alinhada)
+        self.assertIn("ajustar o orçamento configurado", divergente)
+        self.assertNotEqual(alinhada, divergente)
+
+    def test_campo_ausente_nao_vira_none_nan_null_ou_undefined(self):
+        mensagem = views_verba._mensagem_usuario_ia_verba(
+            fv.mensagem(self.calc), {
+                "cliente": "Cliente", "tipo_contrato": None,
+                "valor_contratado": float("nan"),
+                "orcamento_configurado": "undefined",
+                "referencia_periodo": "null",
+            })
+        for ausente in ("none", "nan", "null", "undefined"):
+            with self.subTest(ausente=ausente):
+                self.assertNotRegex(mensagem.lower(), rf"\b{re.escape(ausente)}\b")
+
+    def test_view_envia_user_prompt_estruturado_sem_xlsx(self):
+        self.client.post("/verba/", {
+            "cliente": "Rei do Celular", "orcamento": "990,00",
+            "periodicidade": "mensal", "estrutura": "cbo",
+            "arquivo": _anexo("c.xlsx", CAMPANHAS)})
+        with patch.object(redator_ia, "disponivel", return_value=True), \
+             patch.object(redator_ia, "_chamar",
+                          return_value=RESPOSTA_IA_VERBA_CONFIGURADA) as chamada:
+            resposta = self.client.post("/verba/fechamento/", {"mensagem_ia": "1"})
+        mensagens = chamada.call_args[0][0]
+        usuario = mensagens[1]["content"]
+        self.assertIn("DADOS FINANCEIROS E OPERACIONAIS VALIDADOS", usuario)
+        self.assertIn("ORÇAMENTO CONFIGURADO\nR$ 32/dia", usuario)
+        self.assertIn("STATUS CONTRATADO X CONFIGURADO\naligned", usuario)
+        self.assertIn("TEXTO DETERMINÍSTICO", usuario)
+        for termo in ("campanha_id", "Nome da campanha", "openpyxl", ".xlsx"):
+            self.assertNotIn(termo, usuario)
+        self.assertContains(resposta, "Nova versão gerada com IA.")
+        self.assertTrue(resposta.context["mensagem"].startswith("*Verba*"))
+
+    def test_view_recusa_titulo_ausente(self):
+        self.client.post("/verba/", {
+            "cliente": "Rei do Celular", "orcamento": "990,00",
+            "periodicidade": "mensal", "estrutura": "cbo",
+            "arquivo": _anexo("c.xlsx", CAMPANHAS)})
+        sem_titulo = RESPOSTA_IA_VERBA_CONFIGURADA.removeprefix("*Verba*\n\n")
+        with patch.object(redator_ia, "disponivel", return_value=True), \
+             patch.object(redator_ia, "_chamar", return_value=sem_titulo):
+            resposta = self.client.post("/verba/fechamento/", {"mensagem_ia": "1"})
+        self.assertContains(resposta, "não começou com *Verba*")
+
+    def test_view_recusa_orcamento_configurado_omitido(self):
+        self.client.post("/verba/", {
+            "cliente": "Rei do Celular", "orcamento": "990,00",
+            "periodicidade": "mensal", "estrutura": "cbo",
+            "arquivo": _anexo("c.xlsx", CAMPANHAS)})
+        sem_configurado = RESPOSTA_IA_VERBA_CONFIGURADA.replace(
+            "*Configurado no Meta:* R$ 32/dia\n", "")
+        with patch.object(redator_ia, "disponivel", return_value=True), \
+             patch.object(redator_ia, "_chamar", return_value=sem_configurado):
+            resposta = self.client.post("/verba/fechamento/", {"mensagem_ia": "1"})
+        self.assertContains(resposta, "omitiu orcamento configurado")
+
+    def test_view_recusa_causa_especifica_inventada(self):
+        self.client.post("/verba/", {
+            "cliente": "Rei do Celular", "orcamento": "990,00",
+            "periodicidade": "mensal", "estrutura": "cbo",
+            "arquivo": _anexo("c.xlsx", CAMPANHAS)})
+        causal = RESPOSTA_IA_VERBA_CONFIGURADA.replace(
+            "distribuição de entrega da plataforma", "concorrência no leilão")
+        with patch.object(redator_ia, "disponivel", return_value=True), \
+             patch.object(redator_ia, "_chamar", return_value=causal):
+            resposta = self.client.post("/verba/fechamento/", {"mensagem_ia": "1"})
+        self.assertContains(resposta, "citou concorrencia")
+
     def test_resposta_com_mais_de_dez_linhas_e_recusada(self):
         with self.assertRaises(redator_ia.ErroDeIA) as ctx:
             self._gerar(RESPOSTA_IA_VERBA + "\n" + "\n".join(
@@ -711,8 +871,8 @@ class MensagemVerbaIATest(TestCase):
 
     def test_resposta_com_metrica_de_performance_e_recusada(self):
         ruim = RESPOSTA_IA_VERBA.replace(
-            "O ritmo do período ficou alinhado",
-            "O CPM subiu e o ritmo do período ficou alinhado")
+            "A configuração permanece alinhada",
+            "O CPM subiu e a configuração permanece alinhada")
         with self.assertRaises(redator_ia.ErroDeIA) as ctx:
             self._gerar(ruim)
         self.assertIn("cpm", str(ctx.exception))
@@ -761,14 +921,14 @@ class MensagemVerbaIATest(TestCase):
             base, arquivo=_anexo("c.xlsx", CAMPANHAS)))
         with patch.object(redator_ia, "disponivel", return_value=True), \
              patch.object(redator_ia, "reescrever",
-                          return_value=RESPOSTA_IA_VERBA):
+                          return_value=RESPOSTA_IA_VERBA_CONFIGURADA):
             r = self.client.post("/verba/fechamento/", {"mensagem_ia": "1"})
         self.assertIn("reescrita pela IA", r.content.decode())
 
         r = self.client.post("/verba/fechamento/", {"voltar_ao_motor": "1"})
         html = r.content.decode()
         self.assertIn("do cálculo", html)
-        self.assertNotIn(RESPOSTA_IA_VERBA.splitlines()[0], html)
+        self.assertNotIn(RESPOSTA_IA_VERBA_CONFIGURADA.splitlines()[0], html)
 
 
 class TrilhoDoPeriodoTest(TestCase):
@@ -1565,16 +1725,15 @@ class DeQuemEAEntregaTest(SimpleTestCase):
         """Sem isto, a reescrita reintroduz o tom que o motor tirou — o modelo
         preenche a lacuna com o pedido de desculpa que ele viu mil vezes."""
         prompt = redator_ia.PROMPT_REESCRITA_VERBA
-        self.assertIn("a agência CONFIGURA o orçamento", prompt)
-        self.assertIn("sistema de entrega do Meta", prompt)
-        self.assertIn("NÃO é falha da agência", prompt)
-        for proibido in ("não conseguimos gastar", "vou verificar o que houve",
-                         "peço desculpas"):
+        self.assertIn("orçamento configurado orienta a entrega", prompt)
+        self.assertIn("distribuição de entrega da plataforma", prompt)
+        self.assertIn("não é automaticamente erro", prompt)
+        for proibido in ("faltou gastar", "verba não utilizada",
+                          "deveria ter gasto"):
             with self.subTest(proibido=proibido):
                 self.assertIn(proibido, prompt)
 
     def test_o_lado_de_cima_tambem_e_da_plataforma(self):
-        """O Meta pode consumir mais que o diário num dia e compensar noutro —
-        o prompt diz isso para a reescrita não culpar ninguém do outro lado."""
-        self.assertIn("consumir mais que o diário em um dia",
+        """A variação não vira automaticamente falha ou excesso."""
+        self.assertIn("pode oscilar ao longo do período",
                       redator_ia.PROMPT_REESCRITA_VERBA)

@@ -363,10 +363,12 @@ class VerbaSemRecalcularTest(TestCase):
         destino = self._abrir()
         # Só números que o motor produziu: a guarda descarta a
         # resposta inteira ao ver um valor que não estava no original.
-        nova = ("Passando o fechamento pra confirmar\n\n"
+        nova = ("*Verba*\n\nPassando o fechamento pra confirmar\n\n"
                 "*Contratado:* R$ 990/mês\n*Equivale a:* R$ 32/dia\n"
+                "*Configurado no Meta:* R$ 32/dia\n"
                 "*Período de 01/08 a 24/08:* 24 dias\n"
-                "*Previsto no período:* R$ 766\n*Gasto:* R$ 740\n\n"
+                "*Referência do período:* R$ 766\n"
+                "*Investimento realizado:* R$ 740\n\n"
                 "Podemos seguir assim?")
         with mock.patch.object(redator_ia, "_chamar", return_value=nova):
             with mock.patch.object(redator_ia, "disponivel",
@@ -382,10 +384,12 @@ class VerbaSemRecalcularTest(TestCase):
         destino = self._abrir()
         # Só números que o motor produziu: a guarda descarta a
         # resposta inteira ao ver um valor que não estava no original.
-        nova = ("Passando o fechamento pra confirmar\n\n"
+        nova = ("*Verba*\n\nPassando o fechamento pra confirmar\n\n"
                 "*Contratado:* R$ 990/mês\n*Equivale a:* R$ 32/dia\n"
+                "*Configurado no Meta:* R$ 32/dia\n"
                 "*Período de 01/08 a 24/08:* 24 dias\n"
-                "*Previsto no período:* R$ 766\n*Gasto:* R$ 740\n\n"
+                "*Referência do período:* R$ 766\n"
+                "*Investimento realizado:* R$ 740\n\n"
                 "Podemos seguir assim?")
         with mock.patch.object(redator_ia, "_chamar", return_value=nova):
             with mock.patch.object(redator_ia, "disponivel",
@@ -426,23 +430,33 @@ class SuperficieDaReescritaTest(SimpleTestCase):
             with self.subTest(modulo=modulo.__name__):
                 self.assertIn(prompt, fonte)
 
-    def test_so_desempenho_monta_mensagem_usuario_especifica(self):
+    def test_desempenho_e_verba_montam_mensagem_usuario_especifica(self):
         from relatorios import (views_desempenho, views_leitura,
                                 views_rastreamento, views_verba)
-        desempenho = io.open(views_desempenho.__file__, encoding="utf-8").read()
-        self.assertIn("mensagem_usuario=", desempenho)
-        for modulo in (views_leitura, views_rastreamento, views_verba):
+        for modulo in (views_desempenho, views_verba):
+            fonte = io.open(modulo.__file__, encoding="utf-8").read()
+            with self.subTest(modulo=modulo.__name__):
+                self.assertIn("mensagem_usuario=", fonte)
+        for modulo in (views_leitura, views_rastreamento):
             fonte = io.open(modulo.__file__, encoding="utf-8").read()
             with self.subTest(modulo=modulo.__name__):
                 self.assertNotIn("mensagem_usuario=", fonte)
 
-    def test_outros_prompts_nao_herdam_o_contrato_de_quatro_paragrafos(self):
+    def test_prompts_compartilhados_nao_herdam_o_contrato_de_quatro_paragrafos(self):
         for prompt in (redator_ia.PROMPT_REESCRITA_LEITURA,
-                       redator_ia.PROMPT_REESCRITA_RASTREAMENTO,
-                       redator_ia.PROMPT_REESCRITA_VERBA):
+                       redator_ia.PROMPT_REESCRITA_RASTREAMENTO):
             with self.subTest(prompt=prompt[:40]):
                 self.assertNotIn("PARÁGRAFO 4", prompt)
                 self.assertIn("REGRAS ABSOLUTAS", prompt)
+
+    def test_refino_da_verba_nao_vaza_para_os_outros_prompts(self):
+        for prompt in (redator_ia.PROMPT_REESCRITA_DESEMPENHO,
+                       redator_ia.PROMPT_REESCRITA_LEITURA,
+                       redator_ia.PROMPT_REESCRITA_RASTREAMENTO):
+            with self.subTest(prompt=prompt[:40]):
+                self.assertNotIn("STATUS CONTRATADO X CONFIGURADO", prompt)
+                self.assertNotIn("Comece obrigatoriamente com a linha exata `*Verba*`",
+                                 prompt)
 
     def test_a_reescrita_nunca_recebe_o_arquivo(self):
         """O modelo não recebe o que ele poderia inventar: só os números que

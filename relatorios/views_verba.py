@@ -14,6 +14,7 @@ orçamento vitalício depende de quantos dias tem o mês analisado.
 """
 
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from django.shortcuts import redirect, render
 
@@ -34,6 +35,21 @@ CAMPO_IA_VERBA = "mensagem_ia"
 # descartava a redação da IA como efeito colateral de refazer os números. Com
 # ele fora, a volta virou um botão explícito, que é o que ela sempre foi.
 CAMPO_MOTOR_VERBA = "voltar_ao_motor"
+
+
+_CAMPOS_DA_MENSAGEM_IA_VERBA = (
+    ("CLIENTE", "cliente"),
+    ("TIPO DE CONTRATO", "tipo_contrato"),
+    ("VALOR CONTRATADO", "valor_contratado"),
+    ("EQUIVALENTE DIÁRIO", "equivalente_diario"),
+    ("ESTRUTURA", "estrutura"),
+    ("ORÇAMENTO CONFIGURADO", "orcamento_configurado"),
+    ("PERÍODO ANALISADO", "periodo_analisado"),
+    ("QUANTIDADE DE DIAS", "dias_apurados"),
+    ("REFERÊNCIA DO PERÍODO", "referencia_periodo"),
+    ("INVESTIMENTO REALIZADO", "investimento_realizado"),
+    ("STATUS CONTRATADO X CONFIGURADO", "status_configuracao"),
+)
 
 
 def painel(request):
@@ -268,25 +284,193 @@ def _voltar_ao_motor(request, dados):
     return dados, {"restaurado": True}
 
 
+def _decimal_finito(valor):
+    """`Decimal` para comparação financeira, ou `None` para valor ausente."""
+    if valor is None or valor == "":
+        return None
+    try:
+        numero = Decimal(str(valor))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return numero if numero.is_finite() else None
+
+
+def _orcamento_configurado_diario(estruturas):
+    """Soma operacional do orçamento diário configurado nas estruturas ativas.
+
+    O parser já converte orçamento vitalício para equivalente diário e já
+    identifica o nível correto (campanha no CBO, conjunto no ABO). Esta leitura
+    serve somente ao contexto da reescrita: não entra nas fórmulas nem altera o
+    texto determinístico do fechamento.
+    """
+    valores = []
+    for estrutura in estruturas:
+        if not estrutura.get("ativa"):
+            continue
+        valor = _decimal_finito(estrutura.get("orcamento"))
+        if valor is not None:
+            valores.append(valor)
+    return sum(valores, Decimal("0")) if valores else None
+
+
+def _status_configuracao(contratado_diario, configurado_diario):
+    """Classificação determinística da configuração que orienta a pergunta.
+
+    A igualdade acompanha a precisão exibida pela frente (`reais`, sem
+    centavos). Assim, a IA nunca recebe dois valores visualmente iguais junto
+    de um status de divergência por fração não mostrada ao cliente.
+    """
+    contratado = _decimal_finito(contratado_diario)
+    configurado = _decimal_finito(configurado_diario)
+    if contratado is None or configurado is None:
+        return None
+    if fechamento_verba.reais(contratado) == fechamento_verba.reais(configurado):
+        return "aligned"
+    return ("configured_below" if configurado < contratado
+            else "configured_above")
+
+
+def _valor_presente_na_ia(valor):
+    """Impede que ausência técnica vire texto (`None`, `NaN`, `undefined`)."""
+    if valor is None:
+        return False
+    if isinstance(valor, (float, Decimal)):
+        numero = _decimal_finito(valor)
+        if numero is None:
+            return False
+    texto = str(valor).strip()
+    return bool(texto) and texto.lower() not in {
+        "none", "nan", "null", "undefined", "—",
+    }
+
+
+def _payload_ia_verba(dados, estruturas, calc):
+    """Fatos financeiros validados para a IA, sem linhas do XLSX."""
+    unidade = fechamento_verba.vocabulario(calc)["unidade"]
+    contratado = calc.get("contratado_unidade")
+    contratado_diario = calc.get("contratado_diario")
+    configurado_diario = _orcamento_configurado_diario(estruturas)
+
+    payload = {
+        "cliente": dados.get("cliente"),
+        "tipo_contrato": calc.get("periodo"),
+        "valor_contratado": (
+            f"{fechamento_verba.reais(contratado)}/{unidade}"
+            if contratado is not None else None),
+        "equivalente_diario": (
+            f"{fechamento_verba.reais(contratado_diario)}/dia"
+            if contratado_diario is not None else None),
+        "estrutura": str(dados.get("estrutura") or "").upper(),
+        "orcamento_configurado": (
+            f"{fechamento_verba.reais(configurado_diario)}/dia"
+            if configurado_diario is not None else None),
+        "periodo_analisado": (
+            f"{calc['desde']:%d/%m} a {calc['ate']:%d/%m}"
+            if calc.get("desde") and calc.get("ate") else None),
+        "dias_apurados": calc.get("dias_apurados"),
+        "referencia_periodo": (
+            fechamento_verba.reais(calc.get("previsto_periodo"))
+            if calc.get("previsto_periodo") is not None else None),
+        "investimento_realizado": (
+            fechamento_verba.reais(calc.get("gasto"))
+            if calc.get("gasto") is not None else None),
+        "status_configuracao": _status_configuracao(
+            contratado_diario, configurado_diario),
+    }
+    return {chave: valor for chave, valor in payload.items()
+            if _valor_presente_na_ia(valor)}
+
+
+def _mensagem_usuario_ia_verba(texto, payload):
+    """User Prompt próprio: dados estruturados primeiro, texto como apoio."""
+    secoes = ["DADOS FINANCEIROS E OPERACIONAIS VALIDADOS PELA APLICAÇÃO"]
+    for titulo, chave in _CAMPOS_DA_MENSAGEM_IA_VERBA:
+        valor = payload.get(chave)
+        if _valor_presente_na_ia(valor):
+            secoes.append(f"{titulo}\n{valor}")
+
+    status = payload.get("status_configuracao")
+    if status == "aligned":
+        direcao = ("Finalize perguntando se podemos manter a configuração "
+                   "atual no próximo período.")
+    elif status in {"configured_below", "configured_above"}:
+        direcao = ("Finalize perguntando se podemos ajustar o orçamento "
+                   "configurado para o valor contratado.")
+    else:
+        direcao = ("Como não há status de comparação disponível, não declare "
+                   "alinhamento ou divergência e faça uma pergunta neutra "
+                   "sobre a continuidade da configuração.")
+
+    secoes.extend((
+        "TEXTO DETERMINÍSTICO — REFERÊNCIA FACTUAL SECUNDÁRIA\n" + texto,
+        "TAREFA\nProduza uma nova mensagem para o cliente. Use os dados "
+        "estruturados como fonte principal e não faça uma paráfrase linha por "
+        "linha. Explique claramente a relação entre orçamento configurado, "
+        "referência do período e investimento realizado. Não trate a "
+        "diferença entre referência e investimento como erro. " + direcao,
+    ))
+    return "\n\n".join(secoes)
+
+
+def _fonte_numerica_ia_verba(texto, payload):
+    """Autoriza na guarda comum os números estruturados além do texto base."""
+    return "\n".join([texto] + [str(valor) for valor in payload.values()
+                                if _valor_presente_na_ia(valor)])
+
+
+def _validar_reescrita_verba(texto, payload):
+    blocos = redator_ia._blocos(texto)
+    if not blocos or blocos[0] != "*Verba*":
+        raise redator_ia.ErroDeIA(
+            "A reescrita não começou com *Verba*. Mantida a mensagem do "
+            "cálculo.", "formato")
+
+    # Os quatro fatos que sustentam a comunicação financeira não podem sumir
+    # na melhora de redação. Campo ausente no XLSX/contexto não é cobrado.
+    fatos = {
+        "valor_contratado": "contrat",
+        "orcamento_configurado": "configur",
+        "periodo_analisado": "period",
+        "referencia_periodo": "referenc",
+        "investimento_realizado": "invest",
+    }
+    linhas = [redator_ia._sem_acento(linha) for linha in texto.splitlines()
+              if linha.strip()]
+    for chave, radical in fatos.items():
+        valor = payload.get(chave)
+        valor_normal = redator_ia._sem_acento(str(valor or ""))
+        presente = any(valor_normal in linha and radical in linha
+                       for linha in linhas)
+        if _valor_presente_na_ia(valor) and not presente:
+            raise redator_ia.ErroDeIA(
+                f"A reescrita omitiu {chave.replace('_', ' ')}. Mantida a "
+                "mensagem do cálculo.", "formato")
+    return texto
+
+
 def _reescrever_com_ia(request, dados):
     """Pede ao modelo outra redação da mesma mensagem.
 
     Falhar aqui não custa nada: a mensagem do motor continua na tela e o erro
     vira aviso. É o mesmo contrato das outras três frentes.
     """
-    _, _, calc = _apurar(dados)
+    estruturas, _, calc = _apurar(dados)
+    original = fechamento_verba.mensagem(calc, dados["cliente"])
+    payload = _payload_ia_verba(dados, estruturas, calc)
+    mensagem_usuario = _mensagem_usuario_ia_verba(original, payload)
     try:
         texto = redator_ia.reescrever(
-            fechamento_verba.mensagem(calc, dados["cliente"]),
-            redator_ia.numeros_do_fechamento(calc),
+            _fonte_numerica_ia_verba(original, payload),
+            payload,
             redator_ia.PROMPT_REESCRITA_VERBA,
-            # As garantias que a verba já tinha, preservadas: dez linhas de
-            # teto, nenhuma métrica de performance (o preset não as traz, então
-            # citá-las é inventá-las) e a pergunta fechada no fim, que é o que
-            # autoriza o gestor a seguir.
-            proibidos=redator_ia.TERMOS_DE_PERFORMANCE,
+            # Além das métricas de performance, a guarda recusa linguagem que
+            # transformaria oscilação de entrega em erro ou causa inventada.
+            proibidos=(redator_ia.TERMOS_DE_PERFORMANCE
+                       + redator_ia.TERMOS_INDEVIDOS_VERBA),
             max_linhas=redator_ia.LINHAS_MAXIMAS_VERBA,
-            termina_em_pergunta=True)
+            termina_em_pergunta=True,
+            mensagem_usuario=mensagem_usuario)
+        texto = _validar_reescrita_verba(texto, payload)
     except redator_ia.ErroDeIA as e:
         definitivo = e.motivo in redator_ia.DEFINITIVOS
         return dados, {"erro_ia": str(e),
