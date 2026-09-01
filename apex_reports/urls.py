@@ -26,6 +26,8 @@ urlpatterns = [
     path("desempenho/", views_desempenho.painel, name="desempenho"),
     path("desempenho/analise/", views_desempenho.analise,
          name="desempenho_analise"),
+    path("desempenho/consolidado/", views_desempenho.consolidado,
+         name="desempenho_consolidado"),
     # A Leitura Rápida saiu da home em 30/08/2026: o que estava aqui não é a
     # frente que o produto quer com esse nome (ver docs/CONTEXTO.md). A rota
     # continua publicada e testada, sem link para ela, até o fluxo novo ser

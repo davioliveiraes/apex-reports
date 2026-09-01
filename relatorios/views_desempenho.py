@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Análise de Desempenho — as duas telas da leitura de conjuntos.
+Análise de Desempenho — os fluxos Individual e Consolidado.
 
 Arquivo separado de `views.py` pelo mesmo motivo do `views_verba.py`: são
 frentes que não compartilham nada além do visual. A Análise Geral lê o export
@@ -13,22 +13,44 @@ a consolidação a cada renderização é barato (um laço sobre as linhas) e ev
 um estado calculado que possa discordar da tabela de conferência ao lado.
 """
 
+import os
+import re
+
 from django.shortcuts import redirect, render
 
-from . import analise_desempenho, redator_ia, selecao_campanhas
+from . import (analise_desempenho, desempenho_consolidado, redator_ia,
+               selecao_campanhas)
 from .analysis.numeros import decimal, inteiro, moeda
 from .forms import DesempenhoUploadForm
-from .parser_desempenho import ler_arquivo_desempenho
+from .parser_desempenho import ler_arquivo_desempenho, periodo_do_relatorio
 
 SESSAO_DESEMPENHO = "desempenho_apex"
+SESSAO_DESEMPENHO_CONSOLIDADO = "desempenho_consolidado_apex"
 
 
 def painel(request):
-    """Tela 01 — o nome do cliente e um export do preset DESEMPENHO."""
-    erro, faltando = None, []
+    """Tela 01 — escolhe o modo e lê um ou vários exports DESEMPENHO."""
+    erro, faltando, erros_arquivos = None, [], []
     if request.method == "POST":
         form = DesempenhoUploadForm(request.POST, request.FILES)
         if form.is_valid():
+            if form.cleaned_data["modo"] == form.MODO_CONSOLIDADO:
+                validos, erros_arquivos = _ler_consolidado(request, form)
+                if len(validos) >= desempenho_consolidado.MIN_UNIDADES:
+                    request.session[SESSAO_DESEMPENHO_CONSOLIDADO] = {
+                        "cliente": form.cleaned_data["cliente"],
+                        "produto": form.cleaned_data["produto"],
+                        "unidades": validos,
+                        "arquivos_invalidos": erros_arquivos,
+                    }
+                    return redirect("desempenho_consolidado")
+                erro = ("O consolidado precisa de pelo menos 2 arquivos "
+                        "válidos com o preset DESEMPENHO.")
+                return render(request, "relatorios/desempenho_index.html", {
+                    "form": form, "erro": erro, "faltando": [],
+                    "erros_arquivos": erros_arquivos,
+                })
+
             linhas, erro, faltando = ler_arquivo_desempenho(
                 form.cleaned_data["arquivo"])
             if not erro:
@@ -40,7 +62,150 @@ def painel(request):
     else:
         form = DesempenhoUploadForm()
     return render(request, "relatorios/desempenho_index.html",
-                  {"form": form, "erro": erro, "faltando": faltando})
+                  {"form": form, "erro": erro, "faltando": faltando,
+                   "erros_arquivos": erros_arquivos})
+
+
+def _nome_unidade(nome_arquivo):
+    """Sugestão editável; o nome do arquivo nunca é tratado como verdade."""
+    base = os.path.splitext(os.path.basename(nome_arquivo))[0]
+    base = re.sub(r"^\[[^]]+\]", "", base)
+    return re.sub(r"[-_]+", " ", base).strip() or "Unidade"
+
+
+def _ler_consolidado(request, form):
+    """Valida cada anexo sem deixar um arquivo incompatível passar calado."""
+    nomes = request.POST.getlist("unidades")
+    validos, invalidos = [], []
+    for indice, arquivo in enumerate(form.cleaned_data["arquivos"]):
+        linhas, erro, faltando = ler_arquivo_desempenho(arquivo)
+        unidade = (nomes[indice].strip() if indice < len(nomes) else "")
+        unidade = (unidade or _nome_unidade(arquivo.name))[:120]
+        if erro:
+            invalidos.append({
+                "arquivo": arquivo.name, "unidade": unidade,
+                "erro": erro, "faltando": faltando,
+            })
+            continue
+        validos.append({
+            "arquivo": arquivo.name, "unidade": unidade, "linhas": linhas,
+        })
+    return validos, invalidos
+
+
+def _opcoes_de_campanha(unidade):
+    """Opções de um arquivo, com escolha automática só quando inequívoca."""
+    grupos = selecao_campanhas.grupos(unidade.get("linhas") or [])
+    atual = unidade.get("campanha")
+    chaves = {g["chave"] for g in grupos}
+    if atual not in chaves:
+        com_entrega = [g for g in grupos if g["entregou"]]
+        candidatos = com_entrega or grupos
+        atual = candidatos[0]["chave"] if len(candidatos) == 1 else None
+
+    opcoes = []
+    for grupo in grupos:
+        nomes = grupo["campanhas"]
+        rotulo = " · ".join(nomes) if nomes else grupo["chave"]
+        opcoes.append(dict(grupo, rotulo=rotulo,
+                           selecionada=grupo["chave"] == atual))
+    return opcoes, atual
+
+
+def _campanha_para_conferencia(opcoes, chave):
+    for opcao in opcoes:
+        if opcao["chave"] == chave:
+            return opcao["rotulo"]
+    return chave or ""
+
+
+def consolidado(request):
+    """Seleção por unidade, totais, texto copiável e conferência interna."""
+    dados = request.session.get(SESSAO_DESEMPENHO_CONSOLIDADO)
+    if not dados:
+        return redirect("desempenho")
+
+    unidades = dados.get("unidades") or []
+    erros = []
+    telas = []
+
+    # Primeiro estabelece as opções/padrões para que o POST só aceite chaves
+    # que realmente pertencem àquele arquivo.
+    for indice, unidade in enumerate(unidades):
+        opcoes, atual = _opcoes_de_campanha(unidade)
+        telas.append({"indice": indice, "dados": unidade,
+                      "opcoes": opcoes, "selecionada": atual})
+
+    if request.method == "POST":
+        for tela in telas:
+            indice = tela["indice"]
+            unidade = tela["dados"]
+            nome = request.POST.get(f"unidade_{indice}", "").strip()
+            if not nome:
+                erros.append(
+                    f"Informe o nome da unidade do arquivo {unidade['arquivo']}.")
+            else:
+                unidade["unidade"] = nome[:120]
+
+            pedida = request.POST.get(f"campanha_{indice}", "").strip()
+            validas = {opcao["chave"] for opcao in tela["opcoes"]}
+            if pedida not in validas:
+                erros.append(
+                    f"Escolha a campanha da unidade {unidade['unidade']}.")
+                tela["selecionada"] = None
+            else:
+                unidade["campanha"] = pedida
+                tela["selecionada"] = pedida
+
+        dados["unidades"] = unidades
+        request.session[SESSAO_DESEMPENHO_CONSOLIDADO] = dados
+        request.session.modified = True
+
+    # Reflete a seleção atual nas opções depois de um POST.
+    for tela in telas:
+        for opcao in tela["opcoes"]:
+            opcao["selecionada"] = opcao["chave"] == tela["selecionada"]
+        inicio, termino = periodo_do_relatorio(tela["dados"].get("linhas") or [])
+        tela["periodo"] = desempenho_consolidado.periodo_texto(inicio, termino)
+        tela["status"] = ("DESEMPENHO válido · campanha selecionada"
+                          if tela["selecionada"] else
+                          "DESEMPENHO válido · escolha a campanha")
+
+    resultado = None
+    periodos_divergentes = []
+    todas_escolhidas = bool(telas) and all(t["selecionada"] for t in telas)
+    if todas_escolhidas and not erros:
+        preparadas = []
+        for tela in telas:
+            unidade = tela["dados"]
+            chave = tela["selecionada"]
+            preparadas.append({
+                "cliente": dados["cliente"], "produto": dados["produto"],
+                "unidade": unidade["unidade"], "arquivo": unidade["arquivo"],
+                "campanha": _campanha_para_conferencia(tela["opcoes"], chave),
+                "linhas": selecao_campanhas.filtrar(unidade["linhas"], [chave]),
+            })
+        try:
+            resultado = desempenho_consolidado.consolidar(preparadas)
+        except desempenho_consolidado.PeriodosDivergentes as exc:
+            erros.append(str(exc))
+            periodos_divergentes = exc.periodos
+        except desempenho_consolidado.ErroDeConsolidacao as exc:
+            erros.append(str(exc))
+
+    contexto = {
+        "cliente": dados["cliente"], "produto": dados["produto"],
+        "unidades": telas, "n_unidades": len(telas), "erros": erros,
+        "arquivos_invalidos": dados.get("arquivos_invalidos") or [],
+        "periodos_divergentes": periodos_divergentes,
+        "todas_escolhidas": todas_escolhidas,
+        "resultado": resultado,
+        "metricas": desempenho_consolidado.resumo(resultado) if resultado else [],
+        "texto": desempenho_consolidado.redigir(resultado) if resultado else "",
+        "conferencia": (desempenho_consolidado.conferencia(resultado)
+                        if resultado else []),
+    }
+    return render(request, "relatorios/desempenho_consolidado.html", contexto)
 
 
 def analise(request):

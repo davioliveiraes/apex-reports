@@ -2883,7 +2883,7 @@ class CabecalhoTest(TestCase):
 
 class SuperficieExpostaTest(TestCase):
     """
-    A aplicação publica sete rotas, e nada mais.
+    A aplicação publica somente as rotas explícitas abaixo.
 
     O `/admin` do projeto recém-criado sobreviveu até aqui sem ter o que
     administrar — não existe um único modelo. Na prática era um segundo
@@ -2899,6 +2899,7 @@ class SuperficieExpostaTest(TestCase):
         self.assertEqual([str(p.pattern) for p in urlpatterns],
                          ["", "geral/", "geral/revisao/",
                           "desempenho/", "desempenho/analise/",
+                          "desempenho/consolidado/",
                           "leitura/", "leitura/mensagem/",
                           "verba/", "verba/fechamento/",
                           "rastreamento/", "rastreamento/analise/"])

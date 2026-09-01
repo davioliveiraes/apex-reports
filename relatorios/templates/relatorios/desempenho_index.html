@@ -2,73 +2,154 @@
 {% block title %}Apex Acelera | Análise de Desempenho{% endblock %}
 {% block topo_sub %}Análise de desempenho{% endblock %}
 {% block nome_etapa1 %}Importar export{% endblock %}
-{% block nome_etapa2 %}Copiar o texto{% endblock %}
+{% block nome_etapa2 %}Conferir e copiar{% endblock %}
 {% block form_extra %}enctype="multipart/form-data"{% endblock %}
+
+{% block estilos %}
+  #form-painel .upload-modo[hidden]{display:none}
+  #form-painel .desempenho-anexos .anexos-head,
+  #form-painel .desempenho-anexos .anexo{
+    grid-template-columns:38px minmax(150px,220px) minmax(180px,1fr) 155px 68px 38px
+  }
+  #form-painel .anexo-status{display:flex;align-items:center;padding:8px 10px;
+    color:var(--faint);font:11px/1.35 var(--mono)}
+  #form-painel .anexo-status::before{content:"";width:6px;height:6px;
+    margin-right:7px;border-radius:50%;background:var(--drift);flex-shrink:0}
+  @media(max-width:820px){
+    #form-painel .desempenho-anexos .anexos-head,
+    #form-painel .desempenho-anexos .anexo{
+      grid-template-columns:32px minmax(130px,1fr) 120px 32px
+    }
+    #form-painel .desempenho-anexos .anexos-head span:nth-child(3),
+    #form-painel .desempenho-anexos .anexo-nome,
+    #form-painel .desempenho-anexos .anexos-head span:nth-child(5),
+    #form-painel .desempenho-anexos .anexo-tam{display:none}
+  }
+{% endblock %}
 
 {% block conteudo %}
 <h1>Análise de Desempenho</h1>
-<p class="sub">Analise as principais métricas de desempenho exportadas do Meta
-  Ads e gere uma leitura pronta para compartilhar com o cliente.</p>
+<p class="sub">Analise uma campanha individualmente ou consolide o mesmo
+  recorte de 2 a 20 contas usando o preset DESEMPENHO.</p>
 
 {% if erro %}
-<div class="erro">
-  <div class="erro-corpo">
+<div class="erro"><div class="erro-corpo">
   {{ erro }}
-  {% if faltando %}
-  {% comment %}
-  A lista vem separada do texto de propósito: "faltam Alcance, Frequência e
-  CPM" resolve o problema em uma ida ao personalizador de colunas; a mesma
-  informação diluída num parágrafo obriga a reler.
-  {% endcomment %}
-  <ul class="erro-lista">
+  {% if faltando %}<ul class="erro-lista">
     {% for coluna in faltando %}<li>{{ coluna }}</li>{% endfor %}
+  </ul>{% endif %}
+</div></div>
+{% endif %}
+
+{% if erros_arquivos %}
+<div class="erro"><div class="erro-corpo">
+  <b>Arquivos incompatíveis com o preset DESEMPENHO:</b>
+  <ul class="erro-lista">
+    {% for item in erros_arquivos %}
+    <li>{{ item.arquivo }} — {{ item.erro }}
+      {% if item.faltando %} Colunas ausentes: {{ item.faltando|join:", " }}.{% endif %}</li>
+    {% endfor %}
   </ul>
-  {% endif %}
-  </div>
-</div>
+</div></div>
 {% endif %}
 
 <div class="bloco">
-  <span class="bloco-idx">01</span><span class="bloco-nome">Cliente</span>
+  <span class="bloco-idx">01</span><span class="bloco-nome">Modo da análise</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="modos" id="modos-desempenho">
+  <label class="modo-row">
+    <input type="radio" name="modo" value="individual"
+           {% if form.modo.value != "consolidado" %}checked{% endif %}>
+    <span class="modo-marca" aria-hidden="true"></span>
+    <span class="modo-corpo">
+      <span class="modo-top"><strong>Individual</strong>
+        <span class="modo-chip">1 conta</span></span>
+      <span class="modo-desc">Leitura da campanha selecionada, com texto para
+        o cliente e reescrita opcional por IA.</span>
+    </span>
+  </label>
+  <label class="modo-row">
+    <input type="radio" name="modo" value="consolidado"
+           {% if form.modo.value == "consolidado" %}checked{% endif %}>
+    <span class="modo-marca" aria-hidden="true"></span>
+    <span class="modo-corpo">
+      <span class="modo-top"><strong>Consolidado</strong>
+        <span class="modo-chip">2 a 20 contas</span></span>
+      <span class="modo-desc">Métricas somadas em uma visão única para
+        acompanhamento do grupo ou das unidades.</span>
+    </span>
+  </label>
+</div>
+{{ form.modo.errors }}
+
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Identificação</span>
   <span class="bloco-rule"></span>
 </div>
 <div class="campos">
   <div class="campo">
-    <label for="{{ form.cliente.id_for_label }}">{{ form.cliente.label }}</label>
+    <label for="{{ form.cliente.id_for_label }}" id="rotulo-cliente">Cliente / unidade</label>
     {{ form.cliente }}
-    <span class="ajuda">{{ form.cliente.help_text }}</span>
+    <span class="ajuda" id="ajuda-cliente">Identifica a análise na tela; não entra no texto.</span>
     {{ form.cliente.errors }}
+  </div>
+  <div class="campo" id="campo-produto">
+    <label for="{{ form.produto.id_for_label }}">{{ form.produto.label }}</label>
+    {{ form.produto }}
+    <span class="ajuda">{{ form.produto.help_text }}</span>
+    {{ form.produto.errors }}
   </div>
 </div>
 
 <div class="bloco">
-  <span class="bloco-idx">02</span><span class="bloco-nome">Export do preset DESEMPENHO</span>
+  <span class="bloco-idx">03</span><span class="bloco-nome" id="titulo-upload">Export do preset DESEMPENHO</span>
   <span class="bloco-rule"></span>
+  <span class="bloco-meta" id="contador-arquivos">01 arquivo</span>
 </div>
 
-<div class="dropzone" id="dropzone" tabindex="0" role="button"
-     aria-label="Selecionar arquivo XLSX">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
-    <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
-  </svg>
-  <span class="dropzone-txt" id="dropzone-txt">
-    <strong>Selecionar arquivo XLSX</strong> ou arraste para cá</span>
-  <span class="dropzone-meta">conjuntos de anúncios · 10 MB</span>
-  {{ form.arquivo }}
+<div class="upload-modo" id="upload-individual">
+  <div class="dropzone" id="dropzone-individual" tabindex="0" role="button"
+       aria-label="Selecionar arquivo XLSX">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
+      <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
+    </svg>
+    <span class="dropzone-txt" id="texto-individual">
+      <strong>Selecionar arquivo XLSX</strong> ou arraste para cá</span>
+    <span class="dropzone-meta">1 export · 10 MB</span>
+    {{ form.arquivo }}
+  </div>
+  {{ form.arquivo.errors }}
 </div>
-{{ form.arquivo.errors }}
 
-<p class="legenda">Use o arquivo exportado do Meta Ads com o preset
-  DESEMPENHO.</p>
+<div class="upload-modo" id="upload-consolidado" hidden>
+  <div class="dropzone" id="dropzone-consolidado" tabindex="0" role="button"
+       aria-label="Selecionar arquivos XLSX">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="1.5"></rect>
+      <path d="M3.5 9h17M9 9v11.5M15 9V20.5"></path>
+    </svg>
+    <span class="dropzone-txt"><strong>Selecionar arquivos XLSX</strong> ou arraste para cá</span>
+    <span class="dropzone-meta">2 a 20 exports · 10 MB cada</span>
+    {{ form.arquivos }}
+  </div>
+  <div class="anexos desempenho-anexos" id="lista-arquivos" hidden>
+    <div class="anexos-head">
+      <span>#</span><span>Unidade</span><span>Arquivo</span><span>Status</span>
+      <span class="num-col">Tam.</span><span></span>
+    </div>
+  </div>
+  <p class="anexos-nota" id="nota-arquivos" hidden>Revise o nome de cada
+    unidade. O arquivo sugere o nome, mas não é tratado como fonte definitiva.</p>
+  {{ form.arquivos.errors }}
+</div>
 
-{% comment %}
-A lista de colunas fica na tela do envio, e não só na mensagem de erro: é
-antes de exportar que ela evita a viagem ao Gerenciador. As duas últimas
-aparecem marcadas como opcionais porque vêm vazias no export real, e um
-operador que as visse na lista sem a ressalva iria procurá-las.
-{% endcomment %}
+<p class="legenda">Use exports do Meta Ads com a predefinição DESEMPENHO.
+  Cada arquivo do consolidado representa uma conta ou unidade.</p>
+
 <details class="detalhe">
   <summary>Quais colunas o preset precisa ter</summary>
   <p class="legenda">No Gerenciador, aba <b>Conjuntos de anúncios</b> →
@@ -90,16 +171,16 @@ operador que as visse na lista sem a ressalva iria procurá-las.
 {% block resumo %}
 <div class="resumo-titulo">Resumo do envio</div>
 <dl class="resumo-lista">
-  <div class="resumo-item"><dt>Frente</dt><dd>Análise de Desempenho</dd></div>
+  <div class="resumo-item"><dt>Modo</dt><dd id="rs-modo">Individual</dd></div>
   <div class="resumo-item"><dt>Preset</dt><dd>DESEMPENHO</dd></div>
-  <div class="resumo-item"><dt>Anexo</dt><dd class="num" id="rs-anexo">nenhum</dd></div>
-  <div class="resumo-item"><dt>Saída</dt><dd>Texto para o cliente</dd></div>
+  <div class="resumo-item"><dt>Anexos</dt><dd class="num" id="rs-anexos">nenhum</dd></div>
+  <div class="resumo-item"><dt>Saída</dt><dd id="rs-saida">Texto para o cliente</dd></div>
 </dl>
 
 <div class="resumo-titulo" style="margin:22px 0 12px">Pré-requisitos</div>
 <div class="checks">
-  <div class="check falta" id="ck-cliente"><i>!</i><span>Informe o cliente</span></div>
-  <div class="check falta" id="ck-arquivo"><i>!</i><span>Envie o export .xlsx</span></div>
+  <div class="check falta" id="ck-ident"><i>!</i><span>Informe o cliente</span></div>
+  <div class="check falta" id="ck-arquivos"><i>!</i><span>Envie o export .xlsx</span></div>
 </div>
 
 <div class="acao">
@@ -110,8 +191,8 @@ operador que as visse na lista sem a ressalva iria procurá-las.
       <path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>
     </svg>
   </button>
-  <p class="acao-nota">A leitura sai dos números do próprio export. O período
-    analisado vem do arquivo — não é preciso informar datas.</p>
+  <p class="acao-nota" id="acao-nota">O período vem do próprio export.
+    Depois da leitura você confere a campanha antes de copiar.</p>
   <div class="status">
     <span class="status-eixo" aria-hidden="true"></span>
     <span class="status-txt" id="status-txt">Nenhum anexo — selecione o .xlsx para começar</span>
@@ -121,23 +202,40 @@ operador que as visse na lista sem a ressalva iria procurá-las.
 
 {% block scripts %}
 <script>
-  // Um arquivo, sem lista e sem remover — o <input> nativo já guarda a
-  // escolha e aqui só se reflete o estado dele na tela. Mesmo painel da tela
-  // de verba, com os rótulos desta frente.
-  const dz = document.getElementById('dropzone');
-  const input = dz.querySelector('input[type=file]');
-  const txt = document.getElementById('dropzone-txt');
+  const modos = document.getElementById('modos-desempenho');
+  const inputCliente = document.getElementById('{{ form.cliente.auto_id }}');
+  const inputProduto = document.getElementById('{{ form.produto.auto_id }}');
+  const campoProduto = document.getElementById('campo-produto');
+  const rotuloCliente = document.getElementById('rotulo-cliente');
+  const ajudaCliente = document.getElementById('ajuda-cliente');
+  const uploadIndividual = document.getElementById('upload-individual');
+  const uploadConsolidado = document.getElementById('upload-consolidado');
+  const dzIndividual = document.getElementById('dropzone-individual');
+  const dzConsolidado = document.getElementById('dropzone-consolidado');
+  const inputIndividual = dzIndividual.querySelector('input[type=file]');
+  const inputConsolidado = dzConsolidado.querySelector('input[type=file]');
+  const textoIndividual = document.getElementById('texto-individual');
+  const lista = document.getElementById('lista-arquivos');
+  const nota = document.getElementById('nota-arquivos');
+  const contador = document.getElementById('contador-arquivos');
   const btn = document.getElementById('btn-enviar');
   const btnRotulo = document.getElementById('btn-rotulo');
   const statusTxt = document.getElementById('status-txt');
   const statusEixo = document.querySelector('.status-eixo');
-  const rsAnexo = document.getElementById('rs-anexo');
-  const ckCliente = document.getElementById('ck-cliente');
-  const ckArquivo = document.getElementById('ck-arquivo');
-  const inputCliente = document.getElementById('{{ form.cliente.auto_id }}');
+  const ckIdent = document.getElementById('ck-ident');
+  const ckArquivos = document.getElementById('ck-arquivos');
+  const rsModo = document.getElementById('rs-modo');
+  const rsAnexos = document.getElementById('rs-anexos');
+  const rsSaida = document.getElementById('rs-saida');
+  const acaoNota = document.getElementById('acao-nota');
+  let arquivos = [];
 
+  const modoAtual = () => modos.querySelector('input[name=modo]:checked').value;
   const tamanho = b => b < 1024 * 1024
     ? `${(b / 1024).toFixed(0)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+  const pad = n => String(n).padStart(2, '0');
+  const sugerirUnidade = nome => nome.replace(/\.xlsx$/i, '')
+    .replace(/^\[[^\]]+\]/, '').replace(/[-_]+/g, ' ').trim() || 'Unidade';
 
   function marcar(check, ok, texto) {
     check.classList.toggle('falta', !ok);
@@ -145,53 +243,158 @@ operador que as visse na lista sem a ressalva iria procurá-las.
     check.querySelector('span').textContent = texto;
   }
 
-  function avaliar() {
-    const f = input.files[0];
-    const okCliente = inputCliente.value.trim() !== '';
+  function linha(f, i) {
+    const el = document.createElement('div');
+    el.className = 'anexo';
 
-    txt.innerHTML = f
-      ? `<strong>${f.name}</strong> · ${tamanho(f.size)}`
-      : '<strong>Selecionar arquivo XLSX</strong> ou arraste para cá';
-    rsAnexo.textContent = f ? tamanho(f.size) : 'nenhum';
+    const indice = document.createElement('span');
+    indice.className = 'anexo-alca';
+    indice.innerHTML = `<span class="anexo-num">${pad(i + 1)}</span>`;
 
-    marcar(ckCliente, okCliente,
-      okCliente ? 'Cliente preenchido' : 'Informe o cliente');
-    marcar(ckArquivo, !!f, f ? 'Export pronto para análise'
-                             : 'Envie o export .xlsx');
+    const celulaUnidade = document.createElement('span');
+    celulaUnidade.className = 'anexo-conta';
+    const unidade = document.createElement('input');
+    unidade.type = 'text'; unidade.name = 'unidades'; unidade.maxLength = 120;
+    unidade.value = f.unidade || sugerirUnidade(f.name);
+    unidade.setAttribute('aria-label', `Unidade do arquivo ${f.name}`);
+    unidade.addEventListener('input', () => { f.unidade = unidade.value; avaliar(); });
+    celulaUnidade.appendChild(unidade);
 
-    btn.disabled = !(f && okCliente);
-    statusEixo.classList.toggle('ativo', !btn.disabled);
-    statusTxt.textContent = !f ? 'Nenhum anexo — selecione o .xlsx para começar'
-      : btn.disabled ? 'Falta o nome do cliente'
-      : 'Pronto para analisar';
+    const nome = document.createElement('span');
+    nome.className = 'anexo-nome'; nome.textContent = f.name; nome.title = f.name;
+    const status = document.createElement('span');
+    status.className = 'anexo-status'; status.textContent = 'validar ao continuar';
+    const tam = document.createElement('span');
+    tam.className = 'anexo-tam'; tam.textContent = tamanho(f.size);
+    const celulaRemover = document.createElement('span');
+    const remover = document.createElement('button');
+    remover.type = 'button'; remover.className = 'anexo-remover'; remover.textContent = '×';
+    remover.setAttribute('aria-label', `Remover ${f.name}`);
+    remover.addEventListener('click', () => { arquivos.splice(i, 1); sincronizar(); });
+    celulaRemover.appendChild(remover);
+    el.append(indice, celulaUnidade, nome, status, tam, celulaRemover);
+    return el;
   }
 
-  inputCliente.addEventListener('input', avaliar);
-  input.addEventListener('change', avaliar);
-  dz.addEventListener('click', () => input.click());
-  dz.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
-  });
-  ['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => {
-    e.preventDefault(); dz.classList.add('arrastando'); }));
-  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => {
-    e.preventDefault(); dz.classList.remove('arrastando'); }));
-  dz.addEventListener('drop', e => {
+  function sincronizar() {
     const dt = new DataTransfer();
-    if (e.dataTransfer.files[0]) dt.items.add(e.dataTransfer.files[0]);
-    input.files = dt.files;
+    arquivos.forEach(f => dt.items.add(f));
+    inputConsolidado.files = dt.files;
+    lista.querySelectorAll('.anexo').forEach(el => el.remove());
+    arquivos.forEach((f, i) => lista.appendChild(linha(f, i)));
+    lista.hidden = !arquivos.length;
+    nota.hidden = !arquivos.length;
     avaliar();
-  });
+  }
+
+  function adicionar(novos) {
+    for (const f of novos) {
+      if (!arquivos.some(a => a.name === f.name && a.size === f.size)) {
+        f.unidade = sugerirUnidade(f.name);
+        arquivos.push(f);
+      }
+    }
+    sincronizar();
+  }
+
+  function avaliar() {
+    const consolidado = modoAtual() === 'consolidado';
+    const n = consolidado ? arquivos.length : (inputIndividual.files[0] ? 1 : 0);
+    const okArquivos = consolidado ? n >= 2 && n <= 20 : n === 1;
+    const okCliente = inputCliente.value.trim() !== '';
+    const okProduto = !consolidado || inputProduto.value.trim() !== '';
+    const okUnidades = !consolidado || arquivos.every(f =>
+      (f.unidade || sugerirUnidade(f.name)).trim() !== '');
+    const okIdent = okCliente && okProduto && okUnidades;
+
+    marcar(ckIdent, okIdent, okIdent ? 'Identificação preenchida'
+      : consolidado ? 'Informe cliente, produto e unidades' : 'Informe o cliente / unidade');
+    marcar(ckArquivos, okArquivos, okArquivos
+      ? `${n} ${n === 1 ? 'arquivo pronto' : 'arquivos prontos'}`
+      : consolidado ? 'Adicione de 2 a 20 arquivos' : 'Envie 1 export .xlsx');
+
+    contador.textContent = consolidado ? `${pad(n)} / 20` : '01 arquivo';
+    contador.classList.toggle('excedido', n > 20);
+    rsModo.textContent = consolidado ? 'Consolidado' : 'Individual';
+    rsAnexos.textContent = n ? String(n) : 'nenhum';
+    rsSaida.textContent = consolidado ? 'Resumo + conferência' : 'Texto para o cliente';
+    btnRotulo.textContent = consolidado ? 'Validar e consolidar' : 'Ler planilhas';
+    btn.disabled = !(okArquivos && okIdent);
+    statusEixo.classList.toggle('ativo', !btn.disabled);
+    statusTxt.textContent = !n ? 'Nenhum anexo — selecione o .xlsx para começar'
+      : btn.disabled ? 'Ajuste os pré-requisitos para continuar'
+      : consolidado ? `Pronto para validar ${n} arquivos` : 'Pronto para analisar';
+  }
+
+  function atualizarModo() {
+    const consolidado = modoAtual() === 'consolidado';
+    uploadIndividual.hidden = consolidado;
+    uploadConsolidado.hidden = !consolidado;
+    inputIndividual.disabled = consolidado;
+    inputConsolidado.disabled = !consolidado;
+    inputProduto.disabled = !consolidado;
+    campoProduto.querySelector('.ajuda').textContent = consolidado
+      ? 'Usado somente no cabeçalho do consolidado.'
+      : 'Disponível somente no modo Consolidado.';
+    rotuloCliente.textContent = consolidado ? 'Cliente' : 'Cliente / unidade';
+    ajudaCliente.textContent = consolidado
+      ? 'Usado no cabeçalho do texto consolidado.'
+      : 'Identifica a análise na tela; não entra no texto.';
+    document.getElementById('titulo-upload').textContent = consolidado
+      ? 'Exports do preset DESEMPENHO' : 'Export do preset DESEMPENHO';
+    acaoNota.textContent = consolidado
+      ? 'Cada arquivo será validado separadamente. Campanha e período são conferidos antes da soma.'
+      : 'O período vem do próprio export. Depois da leitura você confere a campanha antes de copiar.';
+    avaliar();
+  }
+
+  function ligarDropzone(dz, input, multiplo) {
+    dz.addEventListener('click', () => input.click());
+    dz.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+    });
+    ['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => {
+      e.preventDefault(); dz.classList.add('arrastando');
+    }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => {
+      e.preventDefault(); dz.classList.remove('arrastando');
+    }));
+    dz.addEventListener('drop', e => {
+      if (multiplo) adicionar([...e.dataTransfer.files]);
+      else {
+        const dt = new DataTransfer();
+        if (e.dataTransfer.files[0]) dt.items.add(e.dataTransfer.files[0]);
+        input.files = dt.files; atualizarIndividual();
+      }
+    });
+  }
+
+  function atualizarIndividual() {
+    const f = inputIndividual.files[0];
+    textoIndividual.innerHTML = f
+      ? `<strong>${f.name}</strong> · ${tamanho(f.size)}`
+      : '<strong>Selecionar arquivo XLSX</strong> ou arraste para cá';
+    avaliar();
+  }
+
+  modos.addEventListener('change', atualizarModo);
+  inputCliente.addEventListener('input', avaliar);
+  inputProduto.addEventListener('input', avaliar);
+  inputIndividual.addEventListener('change', atualizarIndividual);
+  inputConsolidado.addEventListener('change', () => adicionar([...inputConsolidado.files]));
+  ligarDropzone(dzIndividual, inputIndividual, false);
+  ligarDropzone(dzConsolidado, inputConsolidado, true);
 
   document.getElementById('form-painel').addEventListener('submit', () => {
     if (btn.disabled) return;
-    btn.classList.add('carregando');
-    btnRotulo.textContent = 'Analisando…';
-    btn.disabled = true;
+    btn.classList.add('carregando'); btn.disabled = true;
+    btnRotulo.textContent = modoAtual() === 'consolidado'
+      ? 'Validando planilhas…' : 'Analisando…';
     statusEixo.classList.add('ativo');
-    statusTxt.textContent = 'Lendo a planilha…';
+    statusTxt.textContent = 'Lendo os dados do preset DESEMPENHO…';
   });
 
-  avaliar();
+  atualizarModo();
+  atualizarIndividual();
 </script>
 {% endblock %}

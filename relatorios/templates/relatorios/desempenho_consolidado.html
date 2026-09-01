@@ -1,0 +1,238 @@
+{% extends "relatorios/base.html" %}
+{% block title %}Apex Acelera | Consolidado de Desempenho{% endblock %}
+{% block topo_sub %}Consolidado de desempenho{% endblock %}
+{% block form_id %}form-desempenho-consolidado{% endblock %}
+{% block nome_etapa1 %}Importar contas{% endblock %}
+{% block nome_etapa2 %}Conferir e copiar{% endblock %}
+{% block cls_etapa1 %}concluida{% endblock %}
+{% block cls_etapa2 %}ativa{% endblock %}
+
+{% block estilos %}
+  #form-desempenho-consolidado{--aside-w:330px;--leitura:1340px}
+  #form-desempenho-consolidado .trabalho{padding-inline:clamp(24px,2.5vw,42px)}
+  #form-desempenho-consolidado .unidades-grade{display:grid;gap:10px}
+  #form-desempenho-consolidado .unidade-card{display:grid;
+    grid-template-columns:minmax(150px,.7fr) minmax(260px,1.5fr) auto;
+    gap:14px;align-items:end;padding:14px 16px;background:var(--riser);
+    border:1px solid var(--edge);border-radius:var(--r)}
+  #form-desempenho-consolidado .unidade-arquivo{display:block;margin-top:6px;
+    color:var(--faint);font:11px/1.4 var(--mono);overflow-wrap:anywhere}
+  #form-desempenho-consolidado .unidade-periodo{display:flex;flex-direction:column;
+    justify-content:flex-end;min-width:178px;padding:0 0 4px}
+  #form-desempenho-consolidado .unidade-periodo small{color:var(--faint);
+    font:10px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+  #form-desempenho-consolidado .unidade-periodo b{margin-top:5px;color:var(--read);
+    font:600 12px/1.35 var(--mono)}
+  #form-desempenho-consolidado .unidade-status{display:block;margin-top:5px;
+    color:var(--pace);font:11px/1.35 var(--sans)}
+  #form-desempenho-consolidado .unidade-status.pendente{color:var(--drift)}
+  #form-desempenho-consolidado .consolidado-aplicar{margin-top:14px;width:auto}
+  #form-desempenho-consolidado .kpis{grid-template-columns:repeat(6,minmax(0,1fr));
+    gap:10px}
+  #form-desempenho-consolidado .kpi{padding:14px 10px}
+  #form-desempenho-consolidado .kpi b{font-size:21px}
+  #form-desempenho-consolidado .consolidado-saida{box-shadow:var(--sombra)}
+  #form-desempenho-consolidado .consolidado-texto{min-height:260px;resize:none;
+    font:13.5px/1.7 var(--mono);color:var(--bright)}
+  #form-desempenho-consolidado .copiar-feedback{margin-left:3px;color:var(--pace);
+    font:11px/1.3 var(--sans)}
+  #form-desempenho-consolidado tr.total td{background:var(--slab);
+    border-top:2px solid var(--apex);color:var(--bright);font-weight:700}
+  #form-desempenho-consolidado .nota-calculo{margin:10px 0 0;color:var(--faint);
+    font:11.5px/1.55 var(--sans)}
+  @media(max-width:1220px){
+    #form-desempenho-consolidado .kpis{grid-template-columns:repeat(3,1fr)}
+    #form-desempenho-consolidado .unidade-card{
+      grid-template-columns:minmax(150px,.8fr) minmax(240px,1.4fr)}
+    #form-desempenho-consolidado .unidade-periodo{grid-column:1 / -1}
+  }
+  @media(max-width:720px){
+    #form-desempenho-consolidado .trabalho{padding-inline:18px}
+    #form-desempenho-consolidado .unidade-card{grid-template-columns:1fr}
+    #form-desempenho-consolidado .unidade-periodo{grid-column:auto}
+    #form-desempenho-consolidado .kpis{grid-template-columns:1fr 1fr}
+  }
+{% endblock %}
+
+{% block conteudo %}
+<h1>Consolidado de Desempenho</h1>
+<p class="sub">{{ cliente }} · {{ produto }} · {{ n_unidades }}
+  unidade{{ n_unidades|pluralize }} válida{{ n_unidades|pluralize }}</p>
+
+{% if arquivos_invalidos %}
+<div class="aviso"><div class="erro-corpo">
+  <b>{% if arquivos_invalidos|length == 1 %}1 arquivo incompatível não entrou no consolidado.{% else %}{{ arquivos_invalidos|length }} arquivos incompatíveis não entraram no consolidado.{% endif %}</b>
+  <ul class="erro-lista">
+    {% for item in arquivos_invalidos %}
+    <li>{{ item.unidade }} — {{ item.arquivo }}: {{ item.erro }}
+      {% if item.faltando %} Colunas ausentes: {{ item.faltando|join:", " }}.{% endif %}</li>
+    {% endfor %}
+  </ul>
+</div></div>
+{% endif %}
+
+{% if erros %}
+<div class="erro"><div class="erro-corpo">
+  {% for item in erros %}{% if not forloop.first %}<br>{% endif %}{{ item }}{% endfor %}
+  {% if periodos_divergentes %}
+  <ul class="erro-lista">
+    {% for item in periodos_divergentes %}
+    <li>{{ item.unidade }} — {{ item.periodo }}</li>
+    {% endfor %}
+  </ul>
+  <span>Corrija os exports antes de consolidar; períodos diferentes não são somados.</span>
+  {% endif %}
+</div></div>
+{% endif %}
+
+<div class="bloco">
+  <span class="bloco-idx">01</span><span class="bloco-nome">Unidades incluídas</span>
+  <span class="bloco-rule"></span><span class="bloco-meta">{{ n_unidades }} válidas</span>
+</div>
+<div class="unidades-grade">
+  {% for item in unidades %}
+  <article class="unidade-card">
+    <div class="campo">
+      <label for="unidade-{{ item.indice }}">Unidade</label>
+      <input type="text" id="unidade-{{ item.indice }}" name="unidade_{{ item.indice }}"
+             maxlength="120" value="{{ item.dados.unidade }}" required>
+      <span class="unidade-arquivo">{{ item.dados.arquivo }}</span>
+    </div>
+    <div class="campo">
+      <label for="campanha-{{ item.indice }}">Campanha selecionada</label>
+      <select id="campanha-{{ item.indice }}" name="campanha_{{ item.indice }}" required>
+        <option value="">Escolha a campanha deste arquivo</option>
+        {% for opcao in item.opcoes %}
+        <option value="{{ opcao.chave }}" {% if opcao.selecionada %}selected{% endif %}>
+          {{ opcao.rotulo }}{% if not opcao.entregou %} — sem entrega{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+      <span class="unidade-status{% if not item.selecionada %} pendente{% endif %}">
+        {{ item.status }}</span>
+    </div>
+    <div class="unidade-periodo">
+      <small>Período do export</small><b>{{ item.periodo }}</b>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+<button class="botao botao-sec consolidado-aplicar" type="submit"
+        name="aplicar_consolidado" value="1">
+  <span>{% if resultado %}Atualizar consolidado{% else %}Consolidar desempenho{% endif %}</span>
+</button>
+
+{% if resultado %}
+<div class="bloco">
+  <span class="bloco-idx">02</span><span class="bloco-nome">Consolidado de desempenho</span>
+  <span class="bloco-rule"></span><span class="bloco-meta">{{ resultado.periodo }}</span>
+</div>
+<div class="kpis">
+  {% for metrica in metricas %}
+  <div class="kpi"><small>{{ metrica.rotulo }}</small><b>{{ metrica.valor }}</b></div>
+  {% endfor %}
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">03</span><span class="bloco-nome">Texto consolidado</span>
+  <span class="bloco-rule"></span>
+</div>
+<div class="saida consolidado-saida">
+  <div class="saida-cabeca">
+    <b>WhatsApp / Notion</b><span>somente o resumo do cliente</span>
+    <span class="copiar-feedback" id="feedback-copia" role="status" aria-live="polite"></span>
+    <button type="button" class="copiar" data-alvo="txt-consolidado">Copiar consolidado</button>
+  </div>
+  <textarea class="saida-texto consolidado-texto" id="txt-consolidado"
+            readonly aria-label="Texto consolidado de desempenho">{{ texto }}</textarea>
+</div>
+
+<div class="bloco">
+  <span class="bloco-idx">04</span><span class="bloco-nome">Conferência</span>
+  <span class="bloco-rule"></span><span class="bloco-meta">uma linha por unidade</span>
+</div>
+<div class="tabela-rolagem">
+  <table>
+    <thead><tr>
+      <th>Unidade</th><th>Campanha</th><th>Alcance</th><th>Impressões</th>
+      <th>Frequência</th><th>Conversas</th><th>Custo/conversa</th><th>Novos contatos</th>
+    </tr></thead>
+    <tbody>
+      {% for linha in conferencia %}
+      <tr{% if linha.consolidado %} class="total"{% endif %}>
+        <td>{{ linha.unidade }}</td><td>{{ linha.campanha }}</td>
+        <td>{{ linha.alcance }}</td><td>{{ linha.impressoes }}</td>
+        <td>{{ linha.frequencia }}</td><td>{{ linha.conversas }}</td>
+        <td>{{ linha.custo_conversa }}</td><td>{{ linha.novos_contatos }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="nota-calculo">O alcance consolidado é a soma operacional das contas,
+  sem deduplicação entre unidades. O custo por conversa é ponderado pelo volume
+  de conversas reportado em cada export.</p>
+{% endif %}
+{% endblock %}
+
+{% block resumo %}
+<div class="resumo-titulo">Consolidado</div>
+<dl class="resumo-lista">
+  <div class="resumo-item"><dt>Cliente</dt><dd>{{ cliente }}</dd></div>
+  <div class="resumo-item"><dt>Produto</dt><dd>{{ produto }}</dd></div>
+  <div class="resumo-item"><dt>Unidades</dt><dd class="num">{{ n_unidades }}</dd></div>
+  {% if resultado %}<div class="resumo-item"><dt>Período</dt><dd>{{ resultado.periodo_curto }}</dd></div>{% endif %}
+</dl>
+
+<div class="resumo-titulo" style="margin:22px 0 12px">Validação</div>
+<div class="checks">
+  <div class="check"><i>✓</i><span>{{ n_unidades }} arquivos DESEMPENHO válidos</span></div>
+  <div class="check{% if not todas_escolhidas %} falta{% endif %}">
+    <i>{% if todas_escolhidas %}✓{% else %}!{% endif %}</i>
+    <span>{% if todas_escolhidas %}Campanha definida por unidade{% else %}Selecione todas as campanhas{% endif %}</span>
+  </div>
+  <div class="check{% if not resultado %} falta{% endif %}">
+    <i>{% if resultado %}✓{% else %}!{% endif %}</i>
+    <span>{% if resultado %}Períodos conferidos{% else %}Aguardando período uniforme{% endif %}</span>
+  </div>
+</div>
+
+<div class="acao">
+  <a class="botao botao-sec" href="{% url 'desempenho' %}"><span>Novo consolidado</span></a>
+  <p class="acao-nota">O modo Consolidado é determinístico e não utiliza IA.
+    Para o texto consultivo de uma conta, use o modo Individual.</p>
+  <div class="status">
+    <span class="status-eixo{% if resultado %} ativo{% endif %}" aria-hidden="true"></span>
+    <span class="status-txt">{% if resultado %}Consolidado pronto para copiar{% else %}Revise as unidades acima{% endif %}</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const botaoCopiar = document.querySelector('.copiar');
+  if (botaoCopiar) {
+    const feedback = document.getElementById('feedback-copia');
+    const rotulo = botaoCopiar.textContent;
+    botaoCopiar.addEventListener('click', async () => {
+      const campo = document.getElementById(botaoCopiar.dataset.alvo);
+      try {
+        await navigator.clipboard.writeText(campo.value);
+      } catch (e) {
+        campo.focus(); campo.select();
+        botaoCopiar.textContent = 'Ctrl+C';
+        feedback.textContent = 'Texto selecionado.';
+        return;
+      }
+      botaoCopiar.textContent = 'Copiado';
+      botaoCopiar.classList.add('feito');
+      feedback.textContent = 'Consolidado copiado.';
+      setTimeout(() => {
+        botaoCopiar.textContent = rotulo;
+        botaoCopiar.classList.remove('feito');
+        feedback.textContent = '';
+      }, 2000);
+    });
+  }
+</script>
+{% endblock %}

@@ -454,37 +454,91 @@ class LeituraUploadForm(forms.Form):
 # Análise de Desempenho
 # ----------------------------------------------------------------------
 class DesempenhoUploadForm(forms.Form):
-    """A tela inteira da Análise de Desempenho: um nome e um arquivo.
+    """Entrada dos modos Individual e Consolidado de Desempenho.
 
-    Mesma forma da tela da verba, e pelo mesmo motivo: a saída é um texto para
-    colar num grupo, e cada campo a mais é um segundo a mais entre "abri a
-    planilha" e "mandei a leitura". Não há perfil de negócio nem meta de CPA
-    porque não há classificação — ver `analise_desempenho.classificar`.
+    Os campos continuam separados de propósito: ``arquivo`` mantém intacto o
+    contrato do fluxo Individual e ``arquivos`` atende apenas o Consolidado.
+    Assim um POST antigo, sem ``modo``, permanece sendo individual.
     """
 
     MAX_BYTES = 10 * 1024 * 1024
+    MAX_ARQUIVOS = 20
+    MODO_INDIVIDUAL = "individual"
+    MODO_CONSOLIDADO = "consolidado"
+
+    modo = forms.ChoiceField(
+        label="Modo da análise", required=False, initial=MODO_INDIVIDUAL,
+        choices=((MODO_INDIVIDUAL, "Individual"),
+                 (MODO_CONSOLIDADO, "Consolidado")),
+        widget=forms.RadioSelect,
+    )
 
     cliente = forms.CharField(
         label="Cliente / unidade", max_length=120,
         widget=forms.TextInput(attrs={"placeholder": "Ex.: TIM Brasil"}),
         help_text="Identifica a análise na tela; não entra no texto.",
     )
+    produto = forms.CharField(
+        label="Produto", max_length=120, required=False,
+        widget=forms.TextInput(attrs={"placeholder": "Ex.: Celular no Boleto"}),
+        help_text="Usado somente no cabeçalho do consolidado.",
+    )
     arquivo = forms.FileField(
         label="Export do preset DESEMPENHO (.xlsx)",
         widget=forms.ClearableFileInput(attrs={"accept": ".xlsx"}),
         help_text="Da aba Conjuntos de anúncios, com a predefinição "
                   "DESEMPENHO aplicada em Colunas → Personalizar colunas.",
+        required=False,
+    )
+    arquivos = MultipleFileField(
+        label="Exports do preset DESEMPENHO (.xlsx)",
+        widget=MultipleFileInput(attrs={"accept": ".xlsx", "multiple": True}),
+        help_text="Adicione de 2 a 20 exports do Meta Ads com o preset "
+                  "DESEMPENHO.",
+        required=False,
     )
 
     def clean_arquivo(self):
-        f = self.cleaned_data["arquivo"]
+        f = self.cleaned_data.get("arquivo")
+        if not f:
+            return None
+        self._validar_arquivo(f)
+        return f
+
+    def clean_arquivos(self):
+        arquivos = [f for f in (self.cleaned_data.get("arquivos") or []) if f]
+        if len(arquivos) > self.MAX_ARQUIVOS:
+            raise forms.ValidationError(
+                f"Máximo de {self.MAX_ARQUIVOS} arquivos no consolidado "
+                f"(você enviou {len(arquivos)}).")
+        for arquivo in arquivos:
+            self._validar_arquivo(arquivo)
+        return arquivos
+
+    def _validar_arquivo(self, f):
         if not f.name.lower().endswith(".xlsx"):
             raise forms.ValidationError(
                 f'"{f.name}" não é um .xlsx — envie o arquivo exportado do '
                 "Gerenciador de Anúncios.")
         if f.size > self.MAX_BYTES:
             raise forms.ValidationError(f'"{f.name}" está acima de 10 MB.')
-        return f
+
+    def clean(self):
+        cd = super().clean()
+        modo = cd.get("modo") or self.MODO_INDIVIDUAL
+        cd["modo"] = modo
+        if modo == self.MODO_INDIVIDUAL:
+            if not cd.get("arquivo") and "arquivo" not in self.errors:
+                self.add_error("arquivo", "Envie 1 arquivo XLSX.")
+            return cd
+
+        arquivos = cd.get("arquivos") or []
+        if not cd.get("produto"):
+            self.add_error("produto", "Informe o produto do consolidado.")
+        if len(arquivos) < 2 and "arquivos" not in self.errors:
+            self.add_error(
+                "arquivos", "O consolidado precisa de pelo menos 2 arquivos.")
+        return cd
 
 
 # ----------------------------------------------------------------------
